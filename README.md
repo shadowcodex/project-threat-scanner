@@ -25,8 +25,11 @@ Host (macOS)
 
 - macOS with Apple Silicon
 - [Lima](https://lima-vm.io) (`brew install lima`)
+- [tmux](https://github.com/tmux/tmux) (`brew install tmux`) — optional, for split-pane UI with live logs
 - Python 3.11+
-- `ANTHROPIC_API_KEY` environment variable (unless using `--skip-ai`)
+- AI credentials (unless using `--skip-ai`) — one of:
+  - `ANTHROPIC_API_KEY` environment variable, **or**
+  - An active Claude login session (`claude login`) — the OAuth token is read from the macOS Keychain automatically
 
 ## Install
 
@@ -50,6 +53,30 @@ threat-scan https://github.com/owner/repo --cpus 8 --memory 16 --disk 100 --dept
 threat-scan https://github.com/owner/repo --output ./my-report
 ```
 
+### Running without installing
+
+If you use [uv](https://docs.astral.sh/uv/), you can run directly from the source tree without installing:
+
+```bash
+uv run threat-scan https://github.com/owner/repo --skip-ai
+```
+
+`uv run` automatically resolves dependencies and makes the `threat-scan` entry point available without a separate install step.
+
+### Tmux UI
+
+By default, scans launch in a tmux split-pane layout: scan progress on the left, live logs on the right.
+
+| Key | Action |
+|-----|--------|
+| `Ctrl-b h` | Switch to left pane (scan) |
+| `Ctrl-b l` | Switch to right pane (logs) |
+| `Ctrl-b z` | Zoom current pane full-screen (toggle) |
+| `Ctrl-b [` | Scroll mode (`q` to exit) |
+| `Ctrl-b q` | Quit — kills scan and closes tmux |
+
+To disable tmux, use `--no-tmux` or set `tmux = false` in `scanner.toml`. If tmux is not installed, the scan runs normally without it.
+
 ### Options
 
 | Flag | Default | Description |
@@ -61,18 +88,22 @@ threat-scan https://github.com/owner/repo --output ./my-report
 | `--cpus N` | 4 | VM CPU count |
 | `--memory N` | 8 | VM memory in GiB |
 | `--disk N` | 50 | VM disk in GiB |
+| `--no-tmux` | off | Disable tmux split-pane UI |
 
 ### Configuration
 
-Optional config file at `~/.config/threat-scanner/config.yaml`:
+Copy `scanner.toml.example` to `scanner.toml` in the project root to customize defaults. CLI flags override these values.
 
-```yaml
-default_depth: 2
-model: sonnet
-vm:
-  cpus: 4
-  memory: 8
-  disk: 50
+```toml
+model = "sonnet"
+depth = 2
+output_dir = "./scan-results"
+tmux = true
+
+[vm]
+cpus = 4
+memory = 8   # GB
+disk = 50    # GB
 ```
 
 ## Output
@@ -107,9 +138,18 @@ Reports are written to the output directory:
 | Syft | SBOM | Bill of materials (feeds Grype) |
 | Grype | SCA | Known CVEs in dependencies |
 | OSV-Scanner | SCA + MAL | CVEs and malicious package advisories |
+| Trivy | SCA + IaC | Container image CVEs, IaC misconfigurations |
 | Semgrep | SAST | Code vulnerabilities and dangerous patterns |
+| Bandit | SAST (Python) | Python-specific security anti-patterns (pickle, weak crypto, shell injection) |
+| Checkov | IaC | Dockerfile, Terraform, K8s, Helm, CloudFormation misconfigurations |
+| Hadolint | IaC (Docker) | Dockerfile best practices + ShellCheck on RUN instructions |
 | GuardDog | Supply Chain | Suspicious package behaviors (typosquatting, exfiltration) |
 | Gitleaks | Secrets | Hardcoded API keys, tokens, credentials |
+| YARA | Malware | Known malware signatures via community rules |
+| capa | Binary Analysis | Capabilities in compiled binaries (networking, crypto, persistence) |
+| govulncheck | SCA (Go) | Go vulnerabilities with call-graph analysis (reduced false positives) |
+| cargo-audit | SCA (Rust) | Rust vulnerabilities from the RustSec advisory database |
+| ScanCode | License | License compliance from file contents, not just manifests |
 
 ## Security Model
 
@@ -118,7 +158,7 @@ Reports are written to the output directory:
 - **Dependency sandbox**: Docker containers inside the VM for untrusted dependency downloads
 - **Source-only downloads**: `pip download --no-binary`, `npm pack`, `cargo vendor` -- no install scripts executed
 - **Ephemeral**: Fresh VM per scan, force-deleted after. No cross-contamination between scans
-- **API key handling**: Passed via SSH environment variables, never written to disk
+- **Credential handling**: API key or OAuth token passed via SSH environment variables, never written to disk. `ANTHROPIC_API_KEY` takes precedence if both are available
 
 ## License
 

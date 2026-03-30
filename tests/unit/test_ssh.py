@@ -54,47 +54,65 @@ class TestShellQuote:
         assert "$HOME" in result
 
 
+def _mock_popen(stdout_data="", stderr_data="", returncode=0):
+    """Create a mock Popen with real file descriptors for selectors."""
+    import io
+    import os
+
+    # Create real pipes so selectors.DefaultSelector works
+    stdout_r, stdout_w = os.pipe()
+    stderr_r, stderr_w = os.pipe()
+
+    # Write data and close write ends so reads see EOF
+    os.write(stdout_w, stdout_data.encode())
+    os.close(stdout_w)
+    os.write(stderr_w, stderr_data.encode())
+    os.close(stderr_w)
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = io.TextIOWrapper(io.FileIO(stdout_r, closefd=True))
+    mock_proc.stderr = io.TextIOWrapper(io.FileIO(stderr_r, closefd=True))
+    mock_proc.returncode = returncode
+    mock_proc.wait.return_value = returncode
+    mock_proc.kill = MagicMock()
+    return mock_proc
+
+
 class TestSSHExec:
-    @patch("threat_scanner.vm.ssh.subprocess.run")
-    def test_returns_ssh_result(self, mock_run):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="hello", stderr=""
-        )
+    @patch("threat_scanner.vm.ssh.subprocess.Popen")
+    def test_returns_ssh_result(self, mock_popen_cls):
+        mock_popen_cls.return_value = _mock_popen(stdout_data="hello\n")
         result = ssh_exec("test-vm", "echo hello")
         assert isinstance(result, SSHResult)
-        assert result.stdout == "hello"
+        assert result.stdout == "hello\n"
         assert result.exit_code == 0
 
-    @patch("threat_scanner.vm.ssh.subprocess.run")
-    def test_env_uses_export(self, mock_run):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+    @patch("threat_scanner.vm.ssh.subprocess.Popen")
+    def test_env_uses_export(self, mock_popen_cls):
+        mock_popen_cls.return_value = _mock_popen()
         ssh_exec("vm", "cmd", env={"FOO": "bar"})
-        cmd_list = mock_run.call_args[0][0]
+        cmd_list = mock_popen_cls.call_args[0][0]
         full_cmd = cmd_list[-1]  # bash -c "..."
         assert "export FOO=" in full_cmd
 
-    @patch("threat_scanner.vm.ssh.subprocess.run")
-    def test_no_env(self, mock_run):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+    @patch("threat_scanner.vm.ssh.subprocess.Popen")
+    def test_no_env(self, mock_popen_cls):
+        mock_popen_cls.return_value = _mock_popen()
         ssh_exec("vm", "echo hi")
-        cmd_list = mock_run.call_args[0][0]
+        cmd_list = mock_popen_cls.call_args[0][0]
         full_cmd = cmd_list[-1]
         assert "export" not in full_cmd
         assert "echo hi" in full_cmd
 
-    @patch("threat_scanner.vm.ssh.subprocess.run")
-    def test_timeout_raises_ssh_error(self, mock_run):
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="test", timeout=5)
+    @patch("threat_scanner.vm.ssh.subprocess.Popen")
+    def test_timeout_raises_ssh_error(self, mock_popen_cls):
+        mock_popen_cls.return_value = _mock_popen()
         with pytest.raises(SSHError, match="timed out"):
-            ssh_exec("vm", "slow", timeout=5)
+            ssh_exec("vm", "slow", timeout=0)
 
-    @patch("threat_scanner.vm.ssh.subprocess.run")
-    def test_missing_limactl_raises_ssh_error(self, mock_run):
-        mock_run.side_effect = FileNotFoundError()
+    @patch("threat_scanner.vm.ssh.subprocess.Popen")
+    def test_missing_limactl_raises_ssh_error(self, mock_popen_cls):
+        mock_popen_cls.side_effect = FileNotFoundError()
         with pytest.raises(SSHError, match="limactl not found"):
             ssh_exec("vm", "cmd")
 

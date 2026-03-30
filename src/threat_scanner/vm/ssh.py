@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import NamedTuple
+
+logger = logging.getLogger(__name__)
 
 
 class SSHError(Exception):
@@ -29,17 +32,8 @@ def ssh_exec(
 ) -> SSHResult:
     """Run a command inside the Lima VM via limactl shell.
 
-    Args:
-        vm_name: Name of the Lima VM.
-        command: Shell command to execute inside the VM.
-        timeout: Timeout in seconds (default 300).
-        env: Optional environment variables to set in the remote shell.
-
-    Returns:
-        SSHResult with stdout, stderr, and exit_code attributes.
-
-    Raises:
-        SSHError: If the command times out or limactl itself fails.
+    Streams stdout and stderr to the logger in real time so they appear
+    in the log pane, while still capturing full output for the caller.
     """
     # Build the full command with exported env vars so they propagate
     # through &&-chained commands and subshells.
@@ -51,25 +45,69 @@ def ssh_exec(
     else:
         full_command = command
 
+    # Log a short label (first 80 chars of the command, no secrets)
+    label = command[:80]
+    logger.info("vm:%s> %s", vm_name, label)
+
     cmd = ["limactl", "shell", vm_name, "bash", "-c", full_command]
 
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
         )
-    except subprocess.TimeoutExpired as exc:
-        raise SSHError(
-            f"Command timed out after {timeout}s in VM '{vm_name}': {command}"
-        ) from exc
     except FileNotFoundError as exc:
         raise SSHError(
             "limactl not found. Is Lima installed?"
         ) from exc
 
-    return SSHResult(result.stdout, result.stderr, result.returncode)
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+
+    try:
+        import selectors
+        import time
+
+        sel = selectors.DefaultSelector()
+        sel.register(proc.stdout, selectors.EVENT_READ)
+        sel.register(proc.stderr, selectors.EVENT_READ)
+
+        try:
+            deadline = time.monotonic() + timeout
+            while sel.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    proc.kill()
+                    proc.wait()
+                    raise SSHError(
+                        f"Command timed out after {timeout}s in VM '{vm_name}': {command}"
+                    )
+                events = sel.select(timeout=min(remaining, 1.0))
+                for key, _ in events:
+                    line = key.fileobj.readline()  # type: ignore[union-attr]
+                    if not line:
+                        sel.unregister(key.fileobj)
+                        continue
+                    stripped = line.rstrip("\n")
+                    if key.fileobj is proc.stdout:
+                        stdout_lines.append(line)
+                        logger.info("  %s", stripped)
+                    else:
+                        stderr_lines.append(line)
+                        logger.warning("  %s", stripped)
+        finally:
+            sel.close()
+
+        proc.wait()
+        return SSHResult("".join(stdout_lines), "".join(stderr_lines), proc.returncode)
+    finally:
+        # Ensure pipes are closed to avoid ResourceWarnings
+        if proc.stdout:
+            proc.stdout.close()
+        if proc.stderr:
+            proc.stderr.close()
 
 
 def ssh_copy_to(vm_name: str, local_path: str, remote_path: str) -> None:

@@ -2,14 +2,43 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import subprocess
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
+logger = logging.getLogger(__name__)
+
+KEYCHAIN_SERVICE = "Claude Code-credentials"
 
 
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "threat-scanner" / "config.yaml"
+def _get_oauth_token_from_keychain() -> str:
+    """Extract Claude OAuth token from the macOS Keychain.
+
+    Returns the access token string, or empty string if unavailable.
+    """
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return ""
+        creds = json.loads(result.stdout.strip())
+        token = creds.get("claudeAiOauth", {}).get("accessToken", "")
+        if token:
+            logger.debug("OAuth token found in macOS Keychain")
+        return token
+    except (json.JSONDecodeError, subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
+DEFAULT_CONFIG_PATH = Path("scanner.toml")
 
 
 @dataclass
@@ -28,15 +57,35 @@ class ScanConfig:
     output_dir: str = "./scan-results"
     vm: VMConfig = field(default_factory=VMConfig)
     anthropic_api_key: str = ""
+    oauth_token: str = ""
     model: str = "sonnet"
+    tmux: bool = True
+
+    @property
+    def has_ai_credentials(self) -> bool:
+        """True if either an API key or OAuth token is available."""
+        return bool(self.anthropic_api_key or self.oauth_token)
+
+    def ai_env(self) -> dict[str, str]:
+        """Build env dict with the appropriate AI credential.
+
+        ANTHROPIC_API_KEY takes precedence over OAuth token.
+        """
+        env: dict[str, str] = {}
+        if self.anthropic_api_key:
+            env["ANTHROPIC_API_KEY"] = self.anthropic_api_key
+        elif self.oauth_token:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = self.oauth_token
+        return env
 
     def validate(self) -> list[str]:
         errors = []
         if not self.repo_url:
             errors.append("repo_url is required")
-        if not self.skip_ai and not self.anthropic_api_key:
+        if not self.skip_ai and not self.has_ai_credentials:
             errors.append(
-                "ANTHROPIC_API_KEY env var required (or use --skip-ai for deterministic-only scan)"
+                "No AI credentials found. Set ANTHROPIC_API_KEY, "
+                "log in with `claude login`, or use --skip-ai"
             )
         if self.depth < 1:
             errors.append("depth must be >= 1")
@@ -60,12 +109,16 @@ def load_config(
     # Load config file if it exists
     path = config_path or DEFAULT_CONFIG_PATH
     if path.exists():
-        with open(path) as f:
-            data = yaml.safe_load(f) or {}
-        if "default_depth" in data:
-            config.depth = data["default_depth"]
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        if "depth" in data:
+            config.depth = data["depth"]
         if "model" in data:
             config.model = data["model"]
+        if "output_dir" in data:
+            config.output_dir = data["output_dir"]
+        if "tmux" in data:
+            config.tmux = data["tmux"]
         vm_data = data.get("vm", {})
         if "cpus" in vm_data:
             config.vm.cpus = vm_data["cpus"]
@@ -89,7 +142,9 @@ def load_config(
     if disk is not None:
         config.vm.disk = disk
 
-    # API key from env
+    # API key from env, with OAuth keychain fallback
     config.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not config.anthropic_api_key and not config.skip_ai:
+        config.oauth_token = _get_oauth_token_from_keychain()
 
     return config

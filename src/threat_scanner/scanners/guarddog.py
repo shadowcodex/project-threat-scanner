@@ -28,7 +28,7 @@ def run_guarddog(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
         ScanResults with parsed Finding objects.
     """
     output_path = f"{output_dir}/guarddog.json"
-    cmd = f"guarddog scan {target_dir} --output-format json > {output_path} 2>&1"
+    cmd = f"guarddog scan {target_dir} --output-format json > {output_path} 2>/dev/null"
 
     start = time.monotonic()
     try:

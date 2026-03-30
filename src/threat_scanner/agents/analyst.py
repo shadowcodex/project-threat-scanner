@@ -383,9 +383,7 @@ def run_analysis(
         f"--max-turns 30"
     )
 
-    env: dict[str, str] = {}
-    if config.anthropic_api_key:
-        env["ANTHROPIC_API_KEY"] = config.anthropic_api_key
+    env = config.ai_env()
 
     logger.info("Invoking analyst agent in VM %s", vm_name)
     try:

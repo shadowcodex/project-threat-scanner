@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import click
 
 from threat_scanner.config import ScanConfig, load_config
+
+LOG_DIR = Path(tempfile.gettempdir()) / "threat-scanner" / "logs"
+LOG_FILE = LOG_DIR / "scan.log"  # symlink to latest, for tmux tail
+
+_TMUX_SESSION = "threat-scan"
+_TMUX_ENV_FLAG = "_THREAT_SCAN_IN_TMUX"
 
 
 def print_stage(stage: int, total: int, message: str) -> None:
@@ -32,6 +43,7 @@ def print_success(message: str) -> None:
 @click.option("--cpus", type=int, default=None, help="VM CPU count (default: 4)")
 @click.option("--memory", type=int, default=None, help="VM memory in GB (default: 8)")
 @click.option("--disk", type=int, default=None, help="VM disk in GB (default: 50)")
+@click.option("--no-tmux", is_flag=True, help="Disable tmux split-pane UI")
 def main(
     repo_url: str,
     depth: int | None,
@@ -41,8 +53,11 @@ def main(
     cpus: int | None,
     memory: int | None,
     disk: int | None,
+    no_tmux: bool,
 ) -> None:
     """Scan an open source repository for security threats and supply chain risks."""
+    _setup_logging(verbose)
+
     config = load_config(
         repo_url=repo_url,
         depth=depth,
@@ -60,6 +75,18 @@ def main(
             print_error(err)
         sys.exit(1)
 
+    # Launch under tmux if enabled and not already inside our session
+    use_tmux = config.tmux and not no_tmux
+    if use_tmux and not os.environ.get(_TMUX_ENV_FLAG):
+        _exec_in_tmux(sys.argv)
+        return  # unreachable if exec succeeds
+
+    if not config.skip_ai:
+        if config.anthropic_api_key:
+            click.secho("Auth: using ANTHROPIC_API_KEY", fg="blue")
+        elif config.oauth_token:
+            click.secho("Auth: using OAuth token from macOS Keychain", fg="blue")
+
     try:
         run_scan(config)
     except KeyboardInterrupt:
@@ -70,21 +97,135 @@ def main(
         sys.exit(1)
 
 
+def _exec_in_tmux(argv: list[str]) -> None:
+    """Re-exec the current command inside a tmux split-pane layout.
+
+    Left pane:  the scan (re-invoked with _THREAT_SCAN_IN_TMUX set)
+    Right pane: tail -f on the log file
+
+    Navigation:
+        Ctrl-b h/l   Switch panes
+        Ctrl-b z     Zoom pane (toggle)
+        Ctrl-b [     Scroll mode (q to exit)
+        Ctrl-b q     Quit session
+    """
+    if not shutil.which("tmux"):
+        click.secho("tmux not found — running without split-pane UI.", fg="yellow")
+        click.secho("Install with: brew install tmux", fg="yellow")
+        os.environ[_TMUX_ENV_FLAG] = "1"
+        # Fall through — just run normally
+        return
+
+    # Prepare log file
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_FILE.write_text("")
+
+    # Kill any previous session
+    subprocess.run(
+        ["tmux", "kill-session", "-t", _TMUX_SESSION],
+        capture_output=True,
+    )
+
+    # Build the scan command that runs inside the left pane
+    inner_cmd = " ".join(shlex.quote(a) for a in argv)
+    scan_cmd = (
+        f"export {_TMUX_ENV_FLAG}=1; "
+        f"{inner_cmd}; "
+        f"echo ''; echo 'Scan finished. Press Ctrl-b + q to exit.'; read -r"
+    )
+
+    # Create session with scan in first pane
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", _TMUX_SESSION, "bash", "-c", scan_cmd],
+        check=True,
+    )
+
+    # Split right pane for logs (40% width)
+    subprocess.run(
+        ["tmux", "split-window", "-h", "-t", _TMUX_SESSION, "-p", "40",
+         "tail", "-f", str(LOG_FILE)],
+        check=True,
+    )
+
+    # Pane titles
+    for pane, title in [("0.0", "Scan"), ("0.1", "Logs")]:
+        subprocess.run(
+            ["tmux", "select-pane", "-t", f"{_TMUX_SESSION}:{pane}", "-T", title],
+            check=True,
+        )
+
+    # Show pane borders with titles
+    subprocess.run(
+        ["tmux", "set-option", "-t", _TMUX_SESSION, "pane-border-status", "top"],
+        check=True,
+    )
+    subprocess.run(
+        ["tmux", "set-option", "-t", _TMUX_SESSION, "pane-border-format",
+         " #{pane_title} "],
+        check=True,
+    )
+
+    # Enable mouse — scroll, click to switch panes, resize
+    subprocess.run(
+        ["tmux", "set-option", "-t", _TMUX_SESSION, "mouse", "on"],
+        check=True,
+    )
+
+    # Keybindings: h/l to switch panes, q to kill session
+    subprocess.run(["tmux", "bind-key", "-T", "prefix", "h", "select-pane", "-L"])
+    subprocess.run(["tmux", "bind-key", "-T", "prefix", "l", "select-pane", "-R"])
+    subprocess.run(
+        ["tmux", "bind-key", "-T", "prefix", "q",
+         "kill-session", "-t", _TMUX_SESSION],
+    )
+
+    # Focus scan pane and attach
+    subprocess.run(
+        ["tmux", "select-pane", "-t", f"{_TMUX_SESSION}:0.0"],
+        check=True,
+    )
+
+    # Attach to tmux session — blocks until session ends
+    subprocess.run(["tmux", "attach-session", "-t", _TMUX_SESSION])
+
+    # Session exited (Ctrl-b q, or scan finished and user closed it)
+    # Clean up any leftover scanner VMs
+    stop_all()
+
+
 def run_scan(config: ScanConfig) -> None:
     """Execute the full scan pipeline."""
-    total_stages = 5 if not config.skip_ai else 3
+    from threat_scanner.vm.lima import (
+        BASE_VM_NAME,
+        base_exists,
+        clean_working_dirs,
+        create_vm,
+        destroy_vm,
+        ensure_base_running,
+        provision_vm,
+        stop_vm,
+    )
 
-    # Stage 1: Create and provision VM
-    print_stage(1, total_stages, "Creating isolated VM...")
-    from threat_scanner.vm.lima import create_vm, destroy_vm, provision_vm
+    using_base = base_exists()
+    total_stages = 6 if not config.skip_ai else 4
 
     vm_name = None
     try:
-        vm_name = create_vm(config)
-        provision_vm(vm_name, config)
+        if using_base:
+            # Reuse the pre-provisioned base VM
+            print_stage(1, total_stages, "Starting cached base VM...")
+            vm_name = ensure_base_running()
+            print_stage(2, total_stages, "Cleaning working directories...")
+            clean_working_dirs(vm_name)
+        else:
+            # Ephemeral flow: create from scratch
+            print_stage(1, total_stages, "Creating isolated VM...")
+            vm_name = create_vm(config)
+            print_stage(2, total_stages, "Provisioning VM (installing scanners)...")
+            provision_vm(vm_name, config)
 
-        # Stage 2: Clone repo and download dependencies
-        print_stage(2, total_stages, "Cloning repo and downloading dependencies...")
+        # Stage 3: Clone repo and download dependencies
+        print_stage(3, total_stages, "Cloning repo and downloading dependencies...")
         from threat_scanner.vm.ssh import ssh_exec
         from threat_scanner.docker.sandbox import download_dependencies
 
@@ -94,9 +235,8 @@ def run_scan(config: ScanConfig) -> None:
             raise RuntimeError(f"git clone failed (exit {rc}): {stderr}")
         download_dependencies(vm_name, config)
 
-        # Stage 3: Run deterministic scanners
-        stage_num = 3
-        print_stage(stage_num, total_stages, "Running deterministic scanners...")
+        # Stage 4: Run deterministic scanners
+        print_stage(4, total_stages, "Running deterministic scanners...")
         from threat_scanner.scanners.runner import run_all_scanners
 
         scanner_results_raw = run_all_scanners(vm_name, config)
@@ -107,9 +247,8 @@ def run_scan(config: ScanConfig) -> None:
         }
 
         if not config.skip_ai:
-            # Stage 4: AI analysis
-            stage_num = 4
-            print_stage(stage_num, total_stages, "Running AI analysis agents...")
+            # Stage 5: AI analysis
+            print_stage(5, total_stages, "Running AI analysis agents...")
             from threat_scanner.agents.analyst import run_analysis
             from threat_scanner.agents.adversarial import run_adversarial_verification
 
@@ -128,18 +267,158 @@ def run_scan(config: ScanConfig) -> None:
 
         # Retrieve report from VM
         from threat_scanner.vm.ssh import ssh_copy_from
+        import datetime
 
-        output = Path(config.output_dir)
+        # Build timestamped output dir: <output_dir>/<repo-name>-<timestamp>
+        repo_name = config.repo_url.rstrip("/").rsplit("/", 1)[-1]
+        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        output = Path(config.output_dir) / f"{repo_name}-{ts}"
         output.mkdir(parents=True, exist_ok=True)
         ssh_copy_from(vm_name, report_path, str(output))
 
         print_success(f"\nScan complete. Report saved to: {output}")
 
     finally:
-        # Always destroy the ephemeral VM
         if vm_name:
-            click.echo("Destroying VM...")
-            destroy_vm(vm_name)
+            if using_base:
+                # Base VM: stop but keep for next scan
+                click.echo("Stopping base VM...")
+                stop_vm(vm_name)
+            else:
+                # Ephemeral VM: destroy completely
+                click.echo("Destroying VM...")
+                destroy_vm(vm_name)
+
+
+@click.command()
+@click.option("--cpus", type=int, default=None, help="VM CPU count (default: 4)")
+@click.option("--memory", type=int, default=None, help="VM memory in GB (default: 8)")
+@click.option("--disk", type=int, default=None, help="VM disk in GB (default: 50)")
+@click.option("--verbose", is_flag=True, help="Show detailed output")
+@click.option("--no-tmux", is_flag=True, help="Disable tmux split-pane UI")
+def build(
+    cpus: int | None,
+    memory: int | None,
+    disk: int | None,
+    verbose: bool,
+    no_tmux: bool,
+) -> None:
+    """Build (or rebuild) the cached base VM image.
+
+    Provisions the VM with all scanners and tools, then stops it.
+    Subsequent ``threat-scan`` runs will reuse this image instead of
+    provisioning from scratch each time.
+    """
+    _setup_logging(verbose)
+
+    config = load_config(
+        repo_url="",  # not scanning, just building
+        skip_ai=True,
+        verbose=verbose,
+        cpus=cpus,
+        memory=memory,
+        disk=disk,
+    )
+
+    # Launch under tmux if enabled
+    use_tmux = config.tmux and not no_tmux
+    if use_tmux and not os.environ.get(_TMUX_ENV_FLAG):
+        _exec_in_tmux(sys.argv)
+        return
+
+    from threat_scanner.vm.lima import build_base
+
+    try:
+        click.secho("Building base VM image (this may take 5-10 minutes)...", fg="cyan", bold=True)
+        build_base(config)
+        print_success("Base VM image built successfully. Future scans will start in seconds.")
+    except KeyboardInterrupt:
+        click.echo("\nBuild interrupted.")
+        sys.exit(130)
+    except Exception as e:
+        print_error(str(e))
+        sys.exit(1)
+
+
+def _setup_logging(verbose: bool) -> None:
+    """Configure logging to file (always) and stderr (if verbose).
+
+    Each run gets its own timestamped log file.  A ``scan.log`` symlink
+    always points to the latest so the tmux pane can ``tail -f`` it.
+    """
+    import datetime
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_log = LOG_DIR / f"scan-{ts}.log"
+    run_log.write_text("")
+
+    # Point the stable symlink at this run's log
+    LOG_FILE.unlink(missing_ok=True)
+    LOG_FILE.symlink_to(run_log)
+
+    root = logging.getLogger("threat_scanner")
+    root.setLevel(logging.DEBUG)
+
+    fmt = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    # Always log to file (write to the actual run log, not the symlink)
+    fh = logging.FileHandler(run_log)
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+    # Verbose mode also logs to stderr
+    if verbose:
+        sh = logging.StreamHandler(sys.stderr)
+        sh.setLevel(logging.DEBUG)
+        sh.setFormatter(fmt)
+        root.addHandler(sh)
+
+
+def stop_all() -> None:
+    """Kill all scanner VMs and the tmux session.
+
+    The base VM (``scanner-base``) is stopped but preserved.
+    Ephemeral VMs (``scanner-<timestamp>``) are destroyed.
+    """
+    import subprocess as sp
+
+    from threat_scanner.vm.lima import BASE_VM_NAME
+
+    # Kill tmux session
+    sp.run(["tmux", "kill-session", "-t", _TMUX_SESSION], capture_output=True)
+
+    # List scanner VMs
+    result = sp.run(
+        ["limactl", "list", "--format", "{{.Name}}"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        click.echo("No Lima VMs found.")
+        return
+
+    vms = [name for name in result.stdout.strip().splitlines() if name.startswith("scanner-")]
+    if not vms:
+        click.echo("No scanner VMs running.")
+        return
+
+    count = 0
+    for vm in vms:
+        if vm == BASE_VM_NAME:
+            click.echo(f"Stopping {vm} (preserving base image)...")
+            sp.run(["limactl", "stop", vm], capture_output=True)
+        else:
+            click.echo(f"Destroying {vm}...")
+            sp.run(["limactl", "delete", "-f", vm], capture_output=True)
+        count += 1
+
+    click.secho(f"Stopped {count} VM(s).", fg="green")
 
 
 if __name__ == "__main__":

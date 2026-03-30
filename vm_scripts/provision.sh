@@ -11,6 +11,15 @@ log() {
 }
 
 # ---------------------------------------------------------------------------
+# Fix hostname resolution (Lima VMs may not have their hostname in /etc/hosts)
+# ---------------------------------------------------------------------------
+HOSTNAME=$(hostname)
+if ! grep -q "$HOSTNAME" /etc/hosts 2>/dev/null; then
+    log "Adding $HOSTNAME to /etc/hosts..."
+    echo "127.0.0.1 $HOSTNAME" | sudo tee -a /etc/hosts >/dev/null
+fi
+
+# ---------------------------------------------------------------------------
 # System update
 # ---------------------------------------------------------------------------
 log "Updating apt package lists..."
@@ -122,7 +131,7 @@ else
     log "Go installed: $(go version)"
 fi
 
-# Ensure GOPATH/bin is on PATH
+# Ensure GOPATH/bin is on PATH for this script
 export PATH="${PATH}:$(go env GOPATH)/bin:/usr/local/go/bin"
 
 # ---------------------------------------------------------------------------
@@ -196,6 +205,130 @@ else
     log "Gitleaks installed."
 fi
 
+# --- Checkov (IaC scanning: Dockerfile, Terraform, K8s, Helm, CloudFormation) ---
+if command -v checkov &>/dev/null; then
+    log "Checkov already installed: $(checkov --version 2>/dev/null || echo 'version check skipped')"
+else
+    log "Installing Checkov..."
+    python3 -m pip install --break-system-packages --ignore-installed checkov
+    log "Checkov installed."
+fi
+
+# --- Bandit (Python-specific SAST) ---
+if command -v bandit &>/dev/null; then
+    log "Bandit already installed: $(bandit --version 2>/dev/null || echo 'version check skipped')"
+else
+    log "Installing Bandit..."
+    python3 -m pip install --break-system-packages --ignore-installed bandit
+    log "Bandit installed."
+fi
+
+# --- Hadolint (Dockerfile linter with ShellCheck) ---
+if command -v hadolint &>/dev/null; then
+    log "Hadolint already installed: $(hadolint --version 2>/dev/null || echo 'version check skipped')"
+else
+    log "Installing Hadolint..."
+    HADOLINT_ARCH="$(dpkg --print-architecture)"
+    if [ "$HADOLINT_ARCH" = "arm64" ]; then HADOLINT_ARCH="arm64"; else HADOLINT_ARCH="x86_64"; fi
+    curl -sSfL "https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-${HADOLINT_ARCH}" -o /usr/local/bin/hadolint
+    sudo chmod +x /usr/local/bin/hadolint
+    log "Hadolint installed."
+fi
+
+# --- Trivy (container image + IaC + vulnerability scanner) ---
+if command -v trivy &>/dev/null; then
+    log "Trivy already installed: $(trivy version 2>/dev/null | head -1 || echo 'version check skipped')"
+else
+    log "Installing Trivy..."
+    curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+    log "Trivy installed."
+fi
+
+# --- govulncheck (Go call-graph-aware vulnerability scanner) ---
+if command -v govulncheck &>/dev/null; then
+    log "govulncheck already installed."
+else
+    log "Installing govulncheck..."
+    go install golang.org/x/vuln/cmd/govulncheck@latest
+    log "govulncheck installed."
+fi
+
+# --- cargo-audit (Rust vulnerability scanner) ---
+if command -v cargo-audit &>/dev/null; then
+    log "cargo-audit already installed."
+else
+    log "Installing cargo-audit..."
+    cargo install cargo-audit --quiet
+    log "cargo-audit installed."
+fi
+
+# --- YARA (malware signature matching) ---
+if command -v yara &>/dev/null; then
+    log "YARA already installed: $(yara --version 2>/dev/null || echo 'version check skipped')"
+else
+    log "Installing YARA..."
+    sudo apt-get install -y -qq yara
+    log "YARA installed."
+fi
+
+# --- YARA community rules ---
+YARA_RULES_DIR="/opt/yara-rules"
+if [ -d "$YARA_RULES_DIR" ]; then
+    log "YARA community rules already present."
+else
+    log "Downloading YARA community rules..."
+    sudo git clone --depth=1 https://github.com/Yara-Rules/rules.git "$YARA_RULES_DIR"
+    log "YARA community rules installed to $YARA_RULES_DIR"
+fi
+
+# --- capa (binary capability detection from Mandiant) ---
+if command -v capa &>/dev/null; then
+    log "capa already installed."
+else
+    log "Installing capa..."
+    CAPA_ARCH="$(dpkg --print-architecture)"
+    if [ "$CAPA_ARCH" = "arm64" ]; then CAPA_SUFFIX="linux-aarch64"; else CAPA_SUFFIX="linux"; fi
+    CAPA_VERSION=$(curl -sSf https://api.github.com/repos/mandiant/capa/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/')
+    curl -sSfL "https://github.com/mandiant/capa/releases/download/v${CAPA_VERSION}/capa-v${CAPA_VERSION}-${CAPA_SUFFIX}.zip" -o /tmp/capa.zip
+    cd /tmp && unzip -o capa.zip -d capa-extract && sudo cp capa-extract/capa /usr/local/bin/ && sudo chmod +x /usr/local/bin/capa
+    rm -rf /tmp/capa.zip /tmp/capa-extract
+    log "capa installed."
+fi
+
+# --- ScanCode Toolkit (license compliance) ---
+if command -v scancode &>/dev/null; then
+    log "ScanCode already installed."
+else
+    log "Installing ScanCode Toolkit..."
+    python3 -m pip install --break-system-packages --ignore-installed scancode-toolkit
+    log "ScanCode installed."
+fi
+
+# ---------------------------------------------------------------------------
+# Copy Go-installed binaries into /usr/local/bin so they're on PATH
+# for non-login SSH sessions (limactl shell uses bash -c).
+# We copy instead of symlink because go install runs as root and
+# /root/go/bin is not accessible to the SSH user.
+# ---------------------------------------------------------------------------
+GOPATH_BIN="$(go env GOPATH)/bin"
+for bin in osv-scanner gitleaks govulncheck; do
+    if [ -f "${GOPATH_BIN}/${bin}" ]; then
+        sudo cp "${GOPATH_BIN}/${bin}" /usr/local/bin/
+        sudo chmod +x "/usr/local/bin/${bin}"
+        log "Copied ${bin} -> /usr/local/bin/"
+    fi
+done
+
+# Copy cargo-installed binaries
+CARGO_BIN="$HOME/.cargo/bin"
+for bin in cargo-audit; do
+    if [ -f "${CARGO_BIN}/${bin}" ]; then
+        sudo cp "${CARGO_BIN}/${bin}" /usr/local/bin/
+        sudo chmod +x "/usr/local/bin/${bin}"
+        log "Copied ${bin} -> /usr/local/bin/"
+    fi
+done
+
 # ---------------------------------------------------------------------------
 # Create working directories
 # ---------------------------------------------------------------------------
@@ -205,7 +338,8 @@ sudo mkdir -p /opt/deps
 sudo mkdir -p /opt/scan-results
 sudo mkdir -p /opt/security-reports
 
-# Make directories writable by current user
-sudo chown -R "$USER:$USER" /opt/target /opt/deps /opt/scan-results /opt/security-reports
+# Make directories writable by any user (the SSH user that runs scans
+# differs from the sudo context that runs this script)
+sudo chmod -R 777 /opt/target /opt/deps /opt/scan-results /opt/security-reports
 
 log "Provisioning complete. All tools installed and directories created."

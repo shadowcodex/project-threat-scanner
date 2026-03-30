@@ -245,9 +245,7 @@ def _generate_agent_report(
         "--max-turns 15"
     )
 
-    env: dict[str, str] = {}
-    if config.anthropic_api_key:
-        env["ANTHROPIC_API_KEY"] = config.anthropic_api_key
+    env = config.ai_env()
 
     _stdout, _stderr, exit_code = ssh_exec(
         vm_name, claude_cmd, timeout=1800, env=env or None

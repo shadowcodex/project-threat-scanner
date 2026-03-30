@@ -118,54 +118,97 @@ def detect_ecosystems(vm_name: str, target_dir: str) -> list[str]:
     return result
 
 
+def _find_package_dirs(vm_name: str, target_dir: str, ecosystem: str) -> list[str]:
+    """Find all directories containing packages for an ecosystem.
+
+    Searches recursively for indicator files, returning the directories
+    that contain them. Supports monorepos with multiple packages.
+
+    Returns:
+        List of directory paths inside the VM, sorted by depth (shallowest first).
+    """
+    from threat_scanner.vm.ssh import ssh_exec
+
+    indicators = [f for f, eco in ECOSYSTEM_INDICATORS.items() if eco == ecosystem]
+    find_parts = []
+    for ind in indicators:
+        find_parts.append(f'-name "{ind}"')
+
+    find_expr = " -o ".join(find_parts)
+    # Exclude node_modules, .git, vendor, __pycache__ etc.
+    cmd = (
+        f"find {target_dir} "
+        f"\\( -name node_modules -o -name .git -o -name vendor -o -name __pycache__ \\) -prune "
+        f"-o \\( {find_expr} \\) -print 2>/dev/null | sort"
+    )
+    stdout, _, _ = ssh_exec(vm_name, cmd)
+
+    # Deduplicate by directory — multiple indicators in the same dir count once
+    dirs: dict[str, None] = {}  # ordered dict behavior
+    for line in stdout.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        import posixpath
+        dirs[posixpath.dirname(line)] = None
+
+    result = list(dirs.keys())
+    logger.info("Found %d %s package dir(s): %s", len(result), ecosystem, result)
+    return result
+
+
 def _download_python(
     vm_name: str, target_dir: str, deps_dir: str, depth: int
 ) -> list[dict[str, str]]:
     """Download Python dependencies source-only via pip download.
 
-    Args:
-        vm_name: Name of the Lima VM.
-        target_dir: Path to the target repo inside the VM.
-        deps_dir: Base path for dependency output inside the VM.
-        depth: Maximum transitive dependency depth.
-
-    Returns:
-        List of dependency info dicts with name, version, path.
+    Supports monorepos: finds all directories containing requirements.txt,
+    pyproject.toml, or setup.py and downloads deps for each.
     """
     output_dir = f"{deps_dir}/python"
-    # Determine which requirements source to use.
-    # pip download --no-binary :all: --no-deps downloads source-only without
-    # executing install scripts. We use --no-deps and iterate for depth control.
-    # For depth=1 (direct only), use --no-deps. For depth>1, allow pip to
-    # resolve transitives naturally.
     no_deps_flag = "--no-deps" if depth <= 1 else ""
 
-    # Try requirements.txt first, fall back to pyproject.toml/setup.py.
-    cmd = (
-        f"mkdir -p {output_dir} && "
-        f"if [ -f {target_dir}/requirements.txt ]; then "
-        f"  pip download --no-binary :all: {no_deps_flag} "
-        f"    -d {output_dir} -r {target_dir}/requirements.txt 2>&1; "
-        f"elif [ -f {target_dir}/pyproject.toml ] || [ -f {target_dir}/setup.py ]; then "
-        f"  pip download --no-binary :all: {no_deps_flag} "
-        f"    -d {output_dir} {target_dir} 2>&1; "
-        f"else "
-        f"  echo 'No Python dependency file found' >&2; exit 1; "
-        f"fi"
-    )
+    pkg_dirs = _find_package_dirs(vm_name, target_dir, "python")
+    if not pkg_dirs:
+        logger.warning("No Python package directories found in %s", target_dir)
+        return []
 
     mounts = [
         (target_dir, target_dir, "ro"),
         (deps_dir, deps_dir, "rw"),
     ]
 
-    stdout, stderr, exit_code = _docker_run(
-        vm_name, ECOSYSTEM_IMAGES["python"], cmd, mounts, network=True
-    )
+    all_errors: list[str] = []
 
-    if exit_code != 0:
-        logger.error("Python dependency download failed: %s", stderr)
-        raise RuntimeError(f"Python dependency download failed (exit {exit_code}): {stderr}")
+    for pkg_dir in pkg_dirs:
+        # Try requirements.txt first, fall back to pyproject.toml/setup.py
+        cmd = (
+            f"mkdir -p {output_dir} && "
+            f"if [ -f {pkg_dir}/requirements.txt ]; then "
+            f"  pip download --no-binary :all: {no_deps_flag} "
+            f"    -d {output_dir} -r {pkg_dir}/requirements.txt 2>&1; "
+            f"elif [ -f {pkg_dir}/pyproject.toml ] || [ -f {pkg_dir}/setup.py ]; then "
+            f"  pip download --no-binary :all: {no_deps_flag} "
+            f"    -d {output_dir} {pkg_dir} 2>&1; "
+            f"else "
+            f"  echo 'No Python dependency file found in {pkg_dir}' >&2; exit 1; "
+            f"fi"
+        )
+
+        logger.info("Downloading Python deps from %s", pkg_dir)
+        _stdout, stderr, exit_code = _docker_run(
+            vm_name, ECOSYSTEM_IMAGES["python"], cmd, mounts, network=True
+        )
+
+        if exit_code != 0:
+            logger.warning("Python deps failed for %s (exit %d): %s", pkg_dir, exit_code, stderr)
+            all_errors.append(f"{pkg_dir}: exit {exit_code}")
+            # Continue with other packages
+
+    if all_errors and not _list_downloaded_packages(vm_name, output_dir, "python"):
+        raise RuntimeError(
+            f"All Python dependency downloads failed: {'; '.join(all_errors)}"
+        )
 
     return _list_downloaded_packages(vm_name, output_dir, "python")
 

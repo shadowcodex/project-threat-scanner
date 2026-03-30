@@ -396,9 +396,7 @@ def run_adversarial_verification(
         f"--max-turns 20"
     )
 
-    env: dict[str, str] = {}
-    if config.anthropic_api_key:
-        env["ANTHROPIC_API_KEY"] = config.anthropic_api_key
+    env = config.ai_env()
 
     logger.info("Invoking adversarial agent in VM %s", vm_name)
     try:

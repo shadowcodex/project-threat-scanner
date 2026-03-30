@@ -10,7 +10,6 @@ requires-python = ">=3.11"
 license = {text = "MIT"}
 dependencies = [
     "click>=8.1",
-    "pyyaml>=6.0",
     "jinja2>=3.1",
 ]
 
@@ -22,6 +21,8 @@ dev = [
 
 [project.scripts]
 threat-scan = "threat_scanner.cli:main"
+threat-scan-build = "threat_scanner.cli:build"
+threat-scan-stop = "threat_scanner.cli:stop_all"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

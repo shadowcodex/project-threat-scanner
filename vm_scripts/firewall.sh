@@ -27,6 +27,13 @@ declare -A WHITELIST_DOMAINS=(
     ["proxy.golang.org"]="Go module proxy"
     ["api.first.org"]="EPSS vulnerability scoring"
     ["services.nvd.nist.gov"]="NVD vulnerability database"
+    ["toolbox-data.anchore.io"]="Grype/Syft vulnerability DB"
+    ["grype.anchore.io"]="Grype vulnerability DB listings"
+    ["api.osv.dev"]="OSV vulnerability database"
+    ["semgrep.dev"]="Semgrep rule registry"
+    ["ghcr.io"]="GitHub Container Registry (Trivy DB)"
+    ["pkg-containers.githubusercontent.com"]="GitHub packages CDN (Trivy DB)"
+    ["vuln.go.dev"]="Go vulnerability database"
 )
 
 resolve_domain() {
