@@ -1,6 +1,6 @@
 # InfoSec Background
 
-A primer on the security concepts, attack types, and industry standards that Project Threat Scanner is designed to detect and report on. This document is for anyone who wants to understand the "why" behind the tool's design.
+A primer on the security concepts, attack types, and industry standards that Thresher is designed to detect and report on. This document is for anyone who wants to understand the "why" behind the tool's design.
 
 ## Supply Chain Security
 
@@ -56,7 +56,7 @@ Injecting malicious code into lifecycle scripts that run during package installa
 | Node | `postinstall`, `preinstall` | `package.json` scripts |
 | Rust | `build.rs` | Build script |
 
-This is why Project Threat Scanner downloads dependencies as **source only** without executing install hooks.
+This is why Thresher downloads dependencies as **source only** without executing install hooks.
 
 #### Backdoors and Data Exfiltration
 
@@ -106,13 +106,13 @@ EPSS complements CVSS by estimating the **probability** that a vulnerability wil
 
 **Why both CVSS and EPSS?** A vulnerability can have a high CVSS score (severe impact) but low EPSS score (unlikely to be exploited) — for example, a complex attack that requires physical access. Conversely, a medium-CVSS vulnerability with a high EPSS score is more urgent because it's actively being exploited.
 
-Project Threat Scanner uses both signals in its [priority computation](scoring-and-reports.md).
+Thresher uses both signals in its [priority computation](scoring-and-reports.md).
 
 ### CISA KEV (Known Exploited Vulnerabilities)
 
 The [CISA KEV catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) is maintained by the US Cybersecurity and Infrastructure Security Agency. It lists vulnerabilities that are **confirmed to be actively exploited** in the wild.
 
-A CVE in the KEV catalog is the strongest signal that immediate action is needed. Project Threat Scanner assigns **P0 priority** (the highest) to any finding in the KEV catalog.
+A CVE in the KEV catalog is the strongest signal that immediate action is needed. Thresher assigns **P0 priority** (the highest) to any finding in the KEV catalog.
 
 ## Scanner Categories
 

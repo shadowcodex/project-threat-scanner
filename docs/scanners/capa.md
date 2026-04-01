@@ -5,7 +5,7 @@
 [capa](https://github.com/mandiant/capa) is Mandiant's tool for identifying capabilities in executable files. It tells you what a binary *can do* — networking, file encryption, persistence, anti-analysis — and maps findings to MITRE ATT&CK techniques.
 
 **Category**: Binary Analysis
-**Source file**: `src/threat_scanner/scanners/capa_scanner.py`
+**Source file**: `src/thresher/scanners/capa_scanner.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

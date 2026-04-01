@@ -1,10 +1,10 @@
-"""Tests for threat_scanner.agents.analyst."""
+"""Tests for thresher.agents.analyst."""
 
 from __future__ import annotations
 
 import json
 
-from threat_scanner.agents.analyst import (
+from thresher.agents.analyst import (
     _empty_findings,
     _extract_json_from_text,
     _extract_result_from_stream,

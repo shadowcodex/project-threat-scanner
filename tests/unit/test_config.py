@@ -1,4 +1,4 @@
-"""Tests for threat_scanner.config."""
+"""Tests for thresher.config."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 
 from unittest.mock import patch
 
-from threat_scanner.config import ScanConfig, VMConfig, load_config
+from thresher.config import ScanConfig, VMConfig, load_config
 
 
 class TestScanConfigValidate:
@@ -59,7 +59,7 @@ class TestLoadConfig:
         assert cfg.vm.memory == 8
         assert cfg.vm.disk == 50
         assert cfg.skip_ai is False
-        assert cfg.output_dir == "./scan-results"
+        assert cfg.output_dir == "./thresher-reports"
 
     def test_cli_overrides(self):
         cfg = load_config(
@@ -77,7 +77,7 @@ class TestLoadConfig:
         assert cfg.output_dir == "/tmp/out"
 
     def test_config_file(self, tmp_path: Path):
-        config_file = tmp_path / "scanner.toml"
+        config_file = tmp_path / "thresher.toml"
         config_file.write_text(textwrap.dedent("""\
             depth = 4
             model = "opus"
@@ -100,7 +100,7 @@ class TestLoadConfig:
         assert cfg.vm.disk == 100
 
     def test_cli_overrides_config_file(self, tmp_path: Path):
-        config_file = tmp_path / "scanner.toml"
+        config_file = tmp_path / "thresher.toml"
         config_file.write_text('depth = 4\n')
         cfg = load_config(
             repo_url="https://github.com/x/y",
@@ -151,7 +151,7 @@ class TestAiCredentials:
         cfg = ScanConfig(repo_url="https://github.com/x/y")
         assert cfg.ai_env() == {}
 
-    @patch("threat_scanner.config._get_oauth_token_from_keychain", return_value="kc-token")
+    @patch("thresher.config._get_oauth_token_from_keychain", return_value="kc-token")
     def test_load_config_keychain_fallback(self, mock_kc, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         cfg = load_config(repo_url="https://github.com/x/y")
@@ -159,7 +159,7 @@ class TestAiCredentials:
         assert cfg.anthropic_api_key == ""
         mock_kc.assert_called_once()
 
-    @patch("threat_scanner.config._get_oauth_token_from_keychain", return_value="kc-token")
+    @patch("thresher.config._get_oauth_token_from_keychain", return_value="kc-token")
     def test_load_config_api_key_skips_keychain(self, mock_kc, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
         cfg = load_config(repo_url="https://github.com/x/y")
@@ -167,7 +167,7 @@ class TestAiCredentials:
         assert cfg.oauth_token == ""
         mock_kc.assert_not_called()
 
-    @patch("threat_scanner.config._get_oauth_token_from_keychain", return_value="kc-token")
+    @patch("thresher.config._get_oauth_token_from_keychain", return_value="kc-token")
     def test_load_config_skip_ai_skips_keychain(self, mock_kc, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         cfg = load_config(repo_url="https://github.com/x/y", skip_ai=True)

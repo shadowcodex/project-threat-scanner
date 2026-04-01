@@ -5,7 +5,7 @@
 [Hadolint](https://github.com/hadolint/hadolint) is a Dockerfile linter that checks for best practices and runs ShellCheck on `RUN` instructions. It catches Dockerfile anti-patterns that general IaC scanners miss.
 
 **Category**: IaC (Docker-specific)
-**Source file**: `src/threat_scanner/scanners/hadolint.py`
+**Source file**: `src/thresher/scanners/hadolint.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

@@ -1,10 +1,10 @@
-"""Tests for threat_scanner.report.scoring."""
+"""Tests for thresher.report.scoring."""
 
 from __future__ import annotations
 
 from unittest.mock import patch
 
-from threat_scanner.report.scoring import (
+from thresher.report.scoring import (
     EPSS_BATCH_SIZE,
     compute_composite_priority,
     enrich_findings,
@@ -110,8 +110,8 @@ class TestCompositeLow:
 
 
 class TestEnrichFindings:
-    @patch("threat_scanner.report.scoring.load_kev_catalog")
-    @patch("threat_scanner.report.scoring.fetch_epss_scores")
+    @patch("thresher.report.scoring.load_kev_catalog")
+    @patch("thresher.report.scoring.fetch_epss_scores")
     def test_adds_fields(self, mock_epss, mock_kev):
         mock_epss.return_value = {"CVE-2024-1": 0.85}
         mock_kev.return_value = set()
@@ -123,8 +123,8 @@ class TestEnrichFindings:
         assert enriched[0]["in_kev"] is False
         assert enriched[0]["composite_priority"] == "high"
 
-    @patch("threat_scanner.report.scoring.load_kev_catalog")
-    @patch("threat_scanner.report.scoring.fetch_epss_scores")
+    @patch("thresher.report.scoring.load_kev_catalog")
+    @patch("thresher.report.scoring.fetch_epss_scores")
     def test_kev_flag(self, mock_epss, mock_kev):
         mock_epss.return_value = {}
         mock_kev.return_value = {"CVE-2024-1"}
@@ -139,14 +139,14 @@ class TestFetchEPSS:
     def test_empty_input(self):
         assert fetch_epss_scores([]) == {}
 
-    @patch("threat_scanner.report.scoring._fetch_epss_batch")
+    @patch("thresher.report.scoring._fetch_epss_batch")
     def test_batching(self, mock_batch):
         mock_batch.return_value = {}
         cves = [f"CVE-2024-{i}" for i in range(EPSS_BATCH_SIZE + 10)]
         fetch_epss_scores(cves)
         assert mock_batch.call_count == 2
 
-    @patch("threat_scanner.report.scoring._fetch_epss_batch")
+    @patch("thresher.report.scoring._fetch_epss_batch")
     def test_deduplicates(self, mock_batch):
         mock_batch.return_value = {"CVE-2024-1": 0.5}
         result = fetch_epss_scores(["CVE-2024-1", "CVE-2024-1", "CVE-2024-1"])

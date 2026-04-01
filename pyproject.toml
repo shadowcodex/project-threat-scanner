@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "threat-scanner"
+name = "thresher"
 version = "0.1.0"
 description = "AI-powered supply chain security scanner for open source packages"
 requires-python = ">=3.11"
@@ -20,9 +20,9 @@ dev = [
 ]
 
 [project.scripts]
-threat-scan = "threat_scanner.cli:main"
-threat-scan-build = "threat_scanner.cli:build"
-threat-scan-stop = "threat_scanner.cli:stop_all"
+thresher = "thresher.cli:main"
+thresher-build = "thresher.cli:build"
+thresher-stop = "thresher.cli:stop_all"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,4 +1,4 @@
-"""Tests for threat_scanner.vm.ssh."""
+"""Tests for thresher.vm.ssh."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-from threat_scanner.vm.ssh import (
+from thresher.vm.ssh import (
     SSHError,
     SSHResult,
     _shell_quote,
@@ -79,7 +79,7 @@ def _mock_popen(stdout_data="", stderr_data="", returncode=0):
 
 
 class TestSSHExec:
-    @patch("threat_scanner.vm.ssh.subprocess.Popen")
+    @patch("thresher.vm.ssh.subprocess.Popen")
     def test_returns_ssh_result(self, mock_popen_cls):
         mock_popen_cls.return_value = _mock_popen(stdout_data="hello\n")
         result = ssh_exec("test-vm", "echo hello")
@@ -87,7 +87,7 @@ class TestSSHExec:
         assert result.stdout == "hello\n"
         assert result.exit_code == 0
 
-    @patch("threat_scanner.vm.ssh.subprocess.Popen")
+    @patch("thresher.vm.ssh.subprocess.Popen")
     def test_env_uses_export(self, mock_popen_cls):
         mock_popen_cls.return_value = _mock_popen()
         ssh_exec("vm", "cmd", env={"FOO": "bar"})
@@ -95,7 +95,7 @@ class TestSSHExec:
         full_cmd = cmd_list[-1]  # bash -c "..."
         assert "export FOO=" in full_cmd
 
-    @patch("threat_scanner.vm.ssh.subprocess.Popen")
+    @patch("thresher.vm.ssh.subprocess.Popen")
     def test_no_env(self, mock_popen_cls):
         mock_popen_cls.return_value = _mock_popen()
         ssh_exec("vm", "echo hi")
@@ -104,13 +104,13 @@ class TestSSHExec:
         assert "export" not in full_cmd
         assert "echo hi" in full_cmd
 
-    @patch("threat_scanner.vm.ssh.subprocess.Popen")
+    @patch("thresher.vm.ssh.subprocess.Popen")
     def test_timeout_raises_ssh_error(self, mock_popen_cls):
         mock_popen_cls.return_value = _mock_popen()
         with pytest.raises(SSHError, match="timed out"):
             ssh_exec("vm", "slow", timeout=0)
 
-    @patch("threat_scanner.vm.ssh.subprocess.Popen")
+    @patch("thresher.vm.ssh.subprocess.Popen")
     def test_missing_limactl_raises_ssh_error(self, mock_popen_cls):
         mock_popen_cls.side_effect = FileNotFoundError()
         with pytest.raises(SSHError, match="limactl not found"):
@@ -118,7 +118,7 @@ class TestSSHExec:
 
 
 class TestSSHCopyFrom:
-    @patch("threat_scanner.vm.ssh.subprocess.run")
+    @patch("thresher.vm.ssh.subprocess.run")
     def test_recursive_flag(self, mock_run, tmp_path):
         mock_run.return_value = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="", stderr=""
@@ -129,7 +129,7 @@ class TestSSHCopyFrom:
 
 
 class TestSSHWriteFile:
-    @patch("threat_scanner.vm.ssh.ssh_copy_to")
+    @patch("thresher.vm.ssh.ssh_copy_to")
     def test_writes_and_cleans_up(self, mock_copy_to):
         ssh_write_file("vm", "content here", "/remote/file.txt")
         assert mock_copy_to.called
@@ -137,7 +137,7 @@ class TestSSHWriteFile:
         local_path = mock_copy_to.call_args[0][1]
         assert not Path(local_path).exists()
 
-    @patch("threat_scanner.vm.ssh.ssh_copy_to")
+    @patch("thresher.vm.ssh.ssh_copy_to")
     def test_content_matches(self, mock_copy_to, tmp_path):
         # We can't easily check content since temp file is deleted,
         # but we can verify the remote path is correct

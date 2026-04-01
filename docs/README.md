@@ -1,6 +1,6 @@
-# Project Threat Scanner Documentation
+# Thresher Documentation
 
-Welcome to the documentation for **Project Threat Scanner** — an AI-powered supply chain security scanner for evaluating open source packages before adoption.
+Welcome to the documentation for **Thresher** — an AI-powered supply chain security scanner for evaluating open source packages before adoption.
 
 ## Table of Contents
 

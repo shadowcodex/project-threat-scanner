@@ -15,17 +15,17 @@
 ### From source (recommended)
 
 ```bash
-git clone https://github.com/<owner>/project-threat-scanner.git
-cd project-threat-scanner
+git clone https://github.com/<owner>/project-thresherner.git
+cd project-thresherner
 pip install -e .
 ```
 
 ### With uv (no install needed)
 
 ```bash
-git clone https://github.com/<owner>/project-threat-scanner.git
-cd project-threat-scanner
-uv run threat-scan --help
+git clone https://github.com/<owner>/project-thresherner.git
+cd project-thresherner
+uv run thresher --help
 ```
 
 ## Configuration
@@ -45,15 +45,15 @@ Alternatively, if you have Claude Code installed and logged in (`claude login`),
 Copy the example config to customize defaults:
 
 ```bash
-cp scanner.toml.example scanner.toml
+cp thresher.toml.example thresher.toml
 ```
 
-Edit `scanner.toml`:
+Edit `thresher.toml`:
 
 ```toml
 model = "sonnet"              # Claude model for AI agents
 depth = 2                     # Transitive dependency depth
-output_dir = "./scan-results" # Where reports go
+output_dir = "./thresher-reports" # Where reports go
 log_dir = "./logs"            # Where logs go
 tmux = true                   # Split-pane UI
 
@@ -70,19 +70,19 @@ CLI flags override config file values. Environment variables override both for c
 ### Quick scan (no AI, no API key needed)
 
 ```bash
-threat-scan https://github.com/owner/repo --skip-ai
+thresher https://github.com/owner/repo --skip-ai
 ```
 
 ### Full scan with AI analysis
 
 ```bash
-threat-scan https://github.com/owner/repo
+thresher https://github.com/owner/repo
 ```
 
 ### Pre-build the base VM (speeds up future scans)
 
 ```bash
-threat-scan-build
+thresher-build
 ```
 
 This provisions the base VM with all scanner tools and databases. Subsequent scans reuse this base image instead of provisioning from scratch.
@@ -100,10 +100,10 @@ This provisions the base VM with all scanner tools and databases. Subsequent sca
 
 ## CLI Reference
 
-### `threat-scan` — Run a scan
+### `thresher` — Run a scan
 
 ```bash
-threat-scan <repo-url> [OPTIONS]
+thresher <repo-url> [OPTIONS]
 ```
 
 | Flag | Default | Description |
@@ -111,24 +111,24 @@ threat-scan <repo-url> [OPTIONS]
 | `--depth N` | 2 | Transitive dependency depth |
 | `--skip-ai` | off | Deterministic scanners only (no AI agents) |
 | `--verbose` | off | Show detailed tool output |
-| `--output DIR` | `./scan-results` | Host directory for report output |
+| `--output DIR` | `./thresher-reports` | Host directory for report output |
 | `--cpus N` | 4 | VM CPU count |
 | `--memory N` | 8 | VM memory in GiB |
 | `--disk N` | 50 | VM disk in GiB |
 | `--no-tmux` | off | Disable tmux split-pane UI |
 
-### `threat-scan-build` — Pre-build base VM
+### `thresher-build` — Pre-build base VM
 
 ```bash
-threat-scan-build [--cpus N] [--memory N] [--disk N]
+thresher-build [--cpus N] [--memory N] [--disk N]
 ```
 
 Provisions a reusable base VM with all tools pre-installed.
 
-### `threat-scan-stop` — Stop all VMs
+### `thresher-stop` — Stop all VMs
 
 ```bash
-threat-scan-stop
+thresher-stop
 ```
 
 Force-stops and deletes all scanner VMs. Use this if a scan crashed and left VMs running.
@@ -145,7 +145,7 @@ By default, scans launch in a tmux split-pane layout: scan progress on the left,
 | `Ctrl-b [` | Scroll mode (`q` to exit) |
 | `Ctrl-b q` | Quit — kills scan and closes tmux |
 
-Disable with `--no-tmux` or `tmux = false` in `scanner.toml`.
+Disable with `--no-tmux` or `tmux = false` in `thresher.toml`.
 
 ## Reading the Output
 
@@ -174,10 +174,10 @@ The base VM requires about **15 GiB** of disk space for tools and databases. Wit
 limactl list
 
 # Force-stop all scanner VMs
-threat-scan-stop
+thresher-stop
 
 # Delete stale VMs manually
-limactl delete --force scanner-base
+limactl delete --force thresher-base
 ```
 
 ### Scan hangs
@@ -185,14 +185,14 @@ limactl delete --force scanner-base
 Check if the VM is responsive:
 
 ```bash
-limactl shell scanner-base -- echo "alive"
+limactl shell thresher-base -- echo "alive"
 ```
 
 If not, force-stop and retry:
 
 ```bash
-threat-scan-stop
-threat-scan <repo-url>
+thresher-stop
+thresher <repo-url>
 ```
 
 ### Out of disk space in VM
@@ -201,8 +201,8 @@ Increase the disk size:
 
 ```bash
 # Rebuild base with more disk
-threat-scan-stop
-threat-scan-build --disk 100
+thresher-stop
+thresher-build --disk 100
 ```
 
 ### API key issues

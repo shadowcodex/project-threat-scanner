@@ -5,7 +5,7 @@
 [Bandit](https://github.com/PyCQA/bandit) is a Python-specific static analysis tool that finds common security issues in Python code. It's designed to find security problems that Semgrep's generic rules might miss.
 
 **Category**: SAST (Python-specific)
-**Source file**: `src/threat_scanner/scanners/bandit.py`
+**Source file**: `src/thresher/scanners/bandit.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

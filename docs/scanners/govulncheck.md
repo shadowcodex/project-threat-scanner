@@ -5,7 +5,7 @@
 [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) is Go's official vulnerability scanner. Its key advantage is **call-graph analysis** — it only reports vulnerabilities in functions your code actually calls, dramatically reducing false positives compared to SCA tools that flag all vulnerable packages.
 
 **Category**: SCA (Go-specific)
-**Source file**: `src/threat_scanner/scanners/govulncheck.py`
+**Source file**: `src/thresher/scanners/govulncheck.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

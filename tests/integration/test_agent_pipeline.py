@@ -6,10 +6,10 @@ import json
 from pathlib import Path
 from unittest.mock import patch, call
 
-from threat_scanner.agents.analyst import run_analysis
-from threat_scanner.agents.adversarial import run_adversarial_verification
-from threat_scanner.config import ScanConfig, VMConfig
-from threat_scanner.vm.ssh import SSHResult
+from thresher.agents.analyst import run_analysis
+from thresher.agents.adversarial import run_adversarial_verification
+from thresher.config import ScanConfig, VMConfig
+from thresher.vm.ssh import SSHResult
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
@@ -27,8 +27,8 @@ def _load_agent_fixture(name: str) -> str:
 
 
 class TestAnalystPipeline:
-    @patch("threat_scanner.agents.analyst.ssh_write_file")
-    @patch("threat_scanner.agents.analyst.ssh_exec")
+    @patch("thresher.agents.analyst.ssh_write_file")
+    @patch("thresher.agents.analyst.ssh_exec")
     def test_passes_api_key(self, mock_exec, mock_write):
         mock_exec.return_value = SSHResult(
             _load_agent_fixture("analyst_clean.json"), "", 0
@@ -41,8 +41,8 @@ class TestAnalystPipeline:
         claude_call = mock_exec.call_args
         assert claude_call.kwargs.get("env") == {"ANTHROPIC_API_KEY": "sk-ant-test-key"}
 
-    @patch("threat_scanner.agents.analyst.ssh_write_file")
-    @patch("threat_scanner.agents.analyst.ssh_exec")
+    @patch("thresher.agents.analyst.ssh_write_file")
+    @patch("thresher.agents.analyst.ssh_exec")
     def test_timeout(self, mock_exec, mock_write):
         mock_exec.return_value = SSHResult("{}", "", 0)
         mock_write.return_value = None
@@ -52,8 +52,8 @@ class TestAnalystPipeline:
         claude_call = mock_exec.call_args
         assert claude_call.kwargs.get("timeout") == 3600
 
-    @patch("threat_scanner.agents.analyst.ssh_write_file")
-    @patch("threat_scanner.agents.analyst.ssh_exec")
+    @patch("thresher.agents.analyst.ssh_write_file")
+    @patch("thresher.agents.analyst.ssh_exec")
     def test_writes_prompt_safely(self, mock_exec, mock_write):
         mock_exec.return_value = SSHResult("{}", "", 0)
         mock_write.return_value = None
@@ -64,8 +64,8 @@ class TestAnalystPipeline:
         write_call = mock_write.call_args_list[0]
         assert write_call[0][2] == "/tmp/analyst_prompt.txt"
 
-    @patch("threat_scanner.agents.analyst.ssh_write_file")
-    @patch("threat_scanner.agents.analyst.ssh_exec")
+    @patch("thresher.agents.analyst.ssh_write_file")
+    @patch("thresher.agents.analyst.ssh_exec")
     def test_returns_parsed_findings(self, mock_exec, mock_write):
         mock_exec.return_value = SSHResult(
             _load_agent_fixture("analyst_clean.json"), "", 0
@@ -77,8 +77,8 @@ class TestAnalystPipeline:
 
 
 class TestAdversarialPipeline:
-    @patch("threat_scanner.agents.adversarial.ssh_write_file")
-    @patch("threat_scanner.agents.adversarial.ssh_exec")
+    @patch("thresher.agents.adversarial.ssh_write_file")
+    @patch("thresher.agents.adversarial.ssh_exec")
     def test_passes_api_key(self, mock_exec, mock_write):
         mock_exec.return_value = SSHResult(
             _load_agent_fixture("adversarial.json"), "", 0
@@ -97,7 +97,7 @@ class TestAdversarialPipeline:
         claude_call = mock_exec.call_args
         assert claude_call.kwargs.get("env") == {"ANTHROPIC_API_KEY": "sk-ant-test-key"}
 
-    @patch("threat_scanner.agents.adversarial.ssh_exec")
+    @patch("thresher.agents.adversarial.ssh_exec")
     def test_skips_no_high_risk(self, mock_exec):
         ai_findings = {
             "findings": [
@@ -108,8 +108,8 @@ class TestAdversarialPipeline:
         assert result == ai_findings
         mock_exec.assert_not_called()
 
-    @patch("threat_scanner.agents.adversarial.ssh_write_file")
-    @patch("threat_scanner.agents.adversarial.ssh_exec")
+    @patch("thresher.agents.adversarial.ssh_write_file")
+    @patch("thresher.agents.adversarial.ssh_exec")
     def test_merge_flow(self, mock_exec, mock_write):
         mock_exec.return_value = SSHResult(
             _load_agent_fixture("adversarial.json"), "", 0

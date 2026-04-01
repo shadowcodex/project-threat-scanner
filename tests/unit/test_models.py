@@ -1,8 +1,8 @@
-"""Tests for threat_scanner.scanners.models."""
+"""Tests for thresher.scanners.models."""
 
 from __future__ import annotations
 
-from threat_scanner.scanners.models import Finding, ScanResults
+from thresher.scanners.models import Finding, ScanResults
 
 
 class TestFinding:

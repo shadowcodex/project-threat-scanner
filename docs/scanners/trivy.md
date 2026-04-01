@@ -5,7 +5,7 @@
 [Trivy](https://github.com/aquasecurity/trivy) is Aqua Security's comprehensive security scanner. In this pipeline, it's used in filesystem mode to detect vulnerabilities in dependencies and IaC misconfigurations.
 
 **Category**: SCA + IaC
-**Source file**: `src/threat_scanner/scanners/trivy.py`
+**Source file**: `src/thresher/scanners/trivy.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

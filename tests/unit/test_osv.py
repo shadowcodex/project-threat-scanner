@@ -1,8 +1,8 @@
-"""Tests for threat_scanner.scanners.osv."""
+"""Tests for thresher.scanners.osv."""
 
 from __future__ import annotations
 
-from threat_scanner.scanners.osv import (
+from thresher.scanners.osv import (
     _extract_fix_version,
     _extract_severity,
     parse_osv_output,

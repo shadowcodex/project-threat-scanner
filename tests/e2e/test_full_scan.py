@@ -11,9 +11,9 @@ import subprocess
 
 import pytest
 
-from threat_scanner.vm.lima import create_vm, destroy_vm, provision_vm, vm_status, LimaError
-from threat_scanner.vm.ssh import ssh_exec
-from threat_scanner.config import ScanConfig, VMConfig
+from thresher.vm.lima import create_vm, destroy_vm, provision_vm, vm_status, LimaError
+from thresher.vm.ssh import ssh_exec
+from thresher.config import ScanConfig, VMConfig
 
 
 pytestmark = [

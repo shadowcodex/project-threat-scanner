@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
-from threat_scanner.cli import build, main
+from thresher.cli import build, main
 
 
 class TestCLI:
@@ -17,7 +17,7 @@ class TestCLI:
 
     def test_missing_credentials(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        with patch("threat_scanner.config._get_oauth_token_from_keychain", return_value=""):
+        with patch("thresher.config._get_oauth_token_from_keychain", return_value=""):
             runner = CliRunner()
             result = runner.invoke(main, ["https://github.com/x/y"])
             assert result.exit_code == 1
@@ -26,7 +26,7 @@ class TestCLI:
     def test_skip_ai_no_key(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         runner = CliRunner()
-        with patch("threat_scanner.cli.run_scan") as mock_scan:
+        with patch("thresher.cli.run_scan") as mock_scan:
             result = runner.invoke(main, ["https://github.com/x/y", "--skip-ai", "--no-tmux"])
         # Should not error on missing key
         assert result.exit_code == 0
@@ -37,7 +37,7 @@ class TestCLI:
     def test_custom_options(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         runner = CliRunner()
-        with patch("threat_scanner.cli.run_scan") as mock_scan:
+        with patch("thresher.cli.run_scan") as mock_scan:
             result = runner.invoke(main, [
                 "https://github.com/x/y",
                 "--cpus", "16",
@@ -60,14 +60,14 @@ class TestCLI:
     def test_keyboard_interrupt(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         runner = CliRunner()
-        with patch("threat_scanner.cli.run_scan", side_effect=KeyboardInterrupt):
+        with patch("thresher.cli.run_scan", side_effect=KeyboardInterrupt):
             result = runner.invoke(main, ["https://github.com/x/y", "--no-tmux"])
         assert result.exit_code == 130
 
     def test_scan_exception(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         runner = CliRunner()
-        with patch("threat_scanner.cli.run_scan", side_effect=RuntimeError("boom")):
+        with patch("thresher.cli.run_scan", side_effect=RuntimeError("boom")):
             result = runner.invoke(main, ["https://github.com/x/y", "--no-tmux"])
         assert result.exit_code == 1
         assert "boom" in result.output
@@ -76,7 +76,7 @@ class TestCLI:
 class TestBuildCommand:
     def test_build_invokes_build_base(self):
         runner = CliRunner()
-        with patch("threat_scanner.vm.lima.build_base") as mock_build:
+        with patch("thresher.vm.lima.build_base") as mock_build:
             result = runner.invoke(build, ["--no-tmux"])
         assert result.exit_code == 0
         assert mock_build.called
@@ -84,7 +84,7 @@ class TestBuildCommand:
 
     def test_build_with_vm_options(self):
         runner = CliRunner()
-        with patch("threat_scanner.vm.lima.build_base") as mock_build:
+        with patch("thresher.vm.lima.build_base") as mock_build:
             result = runner.invoke(build, ["--cpus", "8", "--memory", "16", "--disk", "100", "--no-tmux"])
         assert result.exit_code == 0
         config = mock_build.call_args[0][0]
@@ -94,7 +94,7 @@ class TestBuildCommand:
 
     def test_build_error(self):
         runner = CliRunner()
-        with patch("threat_scanner.vm.lima.build_base", side_effect=RuntimeError("fail")):
+        with patch("thresher.vm.lima.build_base", side_effect=RuntimeError("fail")):
             result = runner.invoke(build, ["--no-tmux"])
         assert result.exit_code == 1
         assert "fail" in result.output

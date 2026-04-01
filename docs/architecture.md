@@ -5,8 +5,8 @@
 ```
 Host (macOS, Apple Silicon)
 │
-├── CLI (threat-scan)
-│   ├── Config loader (scanner.toml + CLI args + env vars)
+├── CLI (thresher)
+│   ├── Config loader (thresher.toml + CLI args + env vars)
 │   ├── Tmux UI orchestration
 │   └── Report output to host filesystem
 │
@@ -33,7 +33,7 @@ Host (macOS, Apple Silicon)
 ## Component Map
 
 ```
-src/threat_scanner/
+src/thresher/
 ├── cli.py                    # Entry point, tmux UI, orchestration
 ├── config.py                 # TOML config + CLI override + env vars
 │
@@ -80,7 +80,7 @@ src/threat_scanner/
 ### Phase 1: Setup
 
 ```
-CLI parses args + loads scanner.toml
+CLI parses args + loads thresher.toml
     │
     ├── Load/validate config (ScanConfig)
     ├── Resolve API credentials (env var or Keychain OAuth)
@@ -89,12 +89,12 @@ CLI parses args + loads scanner.toml
     ▼
 VM Lifecycle
     │
-    ├── Check for existing base VM (scanner-base)
+    ├── Check for existing base VM (thresher-base)
     │   ├── Exists + running → reuse
     │   ├── Exists + stopped → start
     │   └── Doesn't exist → create + provision
     │
-    ├── Create ephemeral VM (scanner-<timestamp>) from base
+    ├── Create ephemeral VM (thresher-<timestamp>) from base
     ├── Wait for SSH readiness (poll)
     └── Apply firewall rules
 ```

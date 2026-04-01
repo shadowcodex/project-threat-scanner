@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import patch, call
 
-from threat_scanner.config import ScanConfig
-from threat_scanner.report.synthesize import generate_report
-from threat_scanner.vm.ssh import SSHResult
+from thresher.config import ScanConfig
+from thresher.report.synthesize import generate_report
+from thresher.vm.ssh import SSHResult
 
 
 def _make_config(**kw) -> ScanConfig:
@@ -20,10 +20,10 @@ def _make_config(**kw) -> ScanConfig:
 
 
 class TestGenerateReport:
-    @patch("threat_scanner.report.synthesize.ssh_write_file")
-    @patch("threat_scanner.report.synthesize.ssh_exec")
-    @patch("threat_scanner.report.scoring.load_kev_catalog")
-    @patch("threat_scanner.report.scoring.fetch_epss_scores")
+    @patch("thresher.report.synthesize.ssh_write_file")
+    @patch("thresher.report.synthesize.ssh_exec")
+    @patch("thresher.report.scoring.load_kev_catalog")
+    @patch("thresher.report.scoring.fetch_epss_scores")
     def test_skip_ai_template_report(self, mock_epss, mock_kev, mock_exec, mock_write):
         mock_epss.return_value = {}
         mock_kev.return_value = set()
@@ -57,10 +57,10 @@ class TestGenerateReport:
         assert any("executive-summary.md" in p for p in remote_paths)
         assert any("detailed-report.md" in p for p in remote_paths)
 
-    @patch("threat_scanner.report.synthesize.ssh_write_file")
-    @patch("threat_scanner.report.synthesize.ssh_exec")
-    @patch("threat_scanner.report.scoring.load_kev_catalog")
-    @patch("threat_scanner.report.scoring.fetch_epss_scores")
+    @patch("thresher.report.synthesize.ssh_write_file")
+    @patch("thresher.report.synthesize.ssh_exec")
+    @patch("thresher.report.scoring.load_kev_catalog")
+    @patch("thresher.report.scoring.fetch_epss_scores")
     def test_agent_fallback_on_failure(self, mock_epss, mock_kev, mock_exec, mock_write):
         mock_epss.return_value = {}
         mock_kev.return_value = set()
@@ -84,10 +84,10 @@ class TestGenerateReport:
         remote_paths = [c[0][2] for c in write_calls]
         assert any("executive-summary.md" in p for p in remote_paths)
 
-    @patch("threat_scanner.report.synthesize.ssh_write_file")
-    @patch("threat_scanner.report.synthesize.ssh_exec")
-    @patch("threat_scanner.report.scoring.load_kev_catalog")
-    @patch("threat_scanner.report.scoring.fetch_epss_scores")
+    @patch("thresher.report.synthesize.ssh_write_file")
+    @patch("thresher.report.synthesize.ssh_exec")
+    @patch("thresher.report.scoring.load_kev_catalog")
+    @patch("thresher.report.scoring.fetch_epss_scores")
     def test_enrichment_applied(self, mock_epss, mock_kev, mock_exec, mock_write):
         mock_epss.return_value = {"CVE-2024-1": 0.95}
         mock_kev.return_value = {"CVE-2024-1"}
@@ -113,10 +113,10 @@ class TestGenerateReport:
         assert findings[0]["epss_score"] == 0.95
         assert findings[0]["composite_priority"] == "P0"
 
-    @patch("threat_scanner.report.synthesize.ssh_write_file")
-    @patch("threat_scanner.report.synthesize.ssh_exec")
-    @patch("threat_scanner.report.scoring.load_kev_catalog")
-    @patch("threat_scanner.report.scoring.fetch_epss_scores")
+    @patch("thresher.report.synthesize.ssh_write_file")
+    @patch("thresher.report.synthesize.ssh_exec")
+    @patch("thresher.report.scoring.load_kev_catalog")
+    @patch("thresher.report.scoring.fetch_epss_scores")
     def test_report_dir_timestamped(self, mock_epss, mock_kev, mock_exec, mock_write):
         mock_epss.return_value = {}
         mock_kev.return_value = set()

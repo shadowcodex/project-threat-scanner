@@ -1,8 +1,8 @@
-"""Tests for threat_scanner.scanners.grype."""
+"""Tests for thresher.scanners.grype."""
 
 from __future__ import annotations
 
-from threat_scanner.scanners.grype import (
+from thresher.scanners.grype import (
     _extract_cvss_score,
     parse_grype_output,
 )

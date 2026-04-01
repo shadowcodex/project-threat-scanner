@@ -5,7 +5,7 @@
 [Checkov](https://github.com/bridgecrewio/checkov) scans infrastructure-as-code (IaC) files for security misconfigurations. It supports Dockerfiles, Terraform, Kubernetes, Helm, CloudFormation, and more.
 
 **Category**: IaC
-**Source file**: `src/threat_scanner/scanners/checkov.py`
+**Source file**: `src/thresher/scanners/checkov.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

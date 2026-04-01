@@ -5,7 +5,7 @@
 [OSV-Scanner](https://github.com/google/osv-scanner) is Google's vulnerability scanner that queries the Open Source Vulnerabilities (OSV) database. Its key differentiator is support for **MAL-*** advisories — malicious package detections that other SCA tools miss.
 
 **Category**: SCA + Malicious Packages
-**Source file**: `src/threat_scanner/scanners/osv.py`
+**Source file**: `src/thresher/scanners/osv.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

@@ -5,7 +5,7 @@
 [GuardDog](https://github.com/DataDog/guarddog) is DataDog's supply chain security tool that analyzes packages for malicious behaviors. It detects typosquatting, data exfiltration, and other supply chain attack patterns by examining package source code and metadata.
 
 **Category**: Supply Chain
-**Source file**: `src/threat_scanner/scanners/guarddog.py`
+**Source file**: `src/thresher/scanners/guarddog.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

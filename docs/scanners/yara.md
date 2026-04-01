@@ -5,7 +5,7 @@
 [YARA](https://github.com/VirusTotal/yara) is a pattern-matching tool used to identify and classify malware. It matches files against community-maintained rule sets that describe known malware families, packers, and suspicious patterns.
 
 **Category**: Malware
-**Source file**: `src/threat_scanner/scanners/yara_scanner.py`
+**Source file**: `src/thresher/scanners/yara_scanner.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed
@@ -111,8 +111,8 @@ limactl shell <vm-name> -- yara --version
 **Fix**:
 ```bash
 # Rebuild base VM
-threat-scan-stop
-threat-scan-build
+thresher-stop
+thresher-build
 ```
 
 ### False positives
