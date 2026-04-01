@@ -114,6 +114,33 @@ class TestLoadConfig:
         cfg = load_config(repo_url="https://github.com/x/y")
         assert cfg.anthropic_api_key == "sk-ant-from-env"
 
+    def test_limits_from_config(self, tmp_path: Path):
+        config_file = tmp_path / "thresher.toml"
+        config_file.write_text(textwrap.dedent("""\
+            [limits]
+            max_json_size_mb = 20
+            max_file_size_mb = 100
+            max_copy_size_mb = 1000
+            max_stdout_mb = 75
+        """))
+        cfg = load_config(
+            repo_url="https://github.com/x/y",
+            config_path=config_file,
+        )
+        assert cfg.limits.max_json_size_mb == 20
+        assert cfg.limits.max_file_size_mb == 100
+        assert cfg.limits.max_copy_size_mb == 1000
+        assert cfg.limits.max_stdout_mb == 75
+        assert cfg.limits.max_json_size_bytes == 20 * 1024 * 1024
+        assert cfg.limits.max_stdout_bytes == 75 * 1024 * 1024
+
+    def test_limits_defaults(self):
+        cfg = load_config(repo_url="https://github.com/x/y")
+        assert cfg.limits.max_json_size_mb == 10
+        assert cfg.limits.max_file_size_mb == 50
+        assert cfg.limits.max_copy_size_mb == 500
+        assert cfg.limits.max_stdout_mb == 50
+
 
 class TestAiCredentials:
     def test_has_ai_credentials_api_key(self):

@@ -9,9 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+from thresher.config import LimitsConfig, active_limits
 from thresher.vm.safe_io import (
-    MAX_JSON_SIZE_BYTES,
-    MAX_FILE_SIZE_BYTES,
     ALLOWED_EXTENSIONS,
     safe_json_loads,
     validate_copied_tree,
@@ -19,6 +18,10 @@ from thresher.vm.safe_io import (
     ssh_copy_from_safe,
 )
 from thresher.vm.ssh import SSHError
+
+# Read current limits for test assertions
+MAX_JSON_SIZE_BYTES = active_limits.max_json_size_bytes
+MAX_FILE_SIZE_BYTES = active_limits.max_file_size_bytes
 
 
 class TestSafeJsonLoads:

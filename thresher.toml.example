@@ -21,3 +21,11 @@ tmux = true
 cpus = 4
 memory = 8   # GB
 disk = 15    # GB
+
+[limits]
+# Host boundary hardening limits. These control the maximum sizes of
+# data allowed to cross the VM→host boundary during report retrieval.
+# max_json_size_mb = 10    # Max JSON payload from VM (MB)
+# max_file_size_mb = 50    # Max individual file in report copy (MB)
+# max_copy_size_mb = 500   # Max total size of report copy (MB)
+# max_stdout_mb = 50       # Max stdout from VM before kill (MB)
