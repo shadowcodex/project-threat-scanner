@@ -5,7 +5,7 @@
 [Semgrep](https://github.com/semgrep/semgrep) is a fast, multi-language static analysis tool that finds code vulnerabilities using pattern-matching rules. It supports 30+ languages and uses the community rule registry (`--config auto`) for broad coverage.
 
 **Category**: SAST
-**Source file**: `src/threat_scanner/scanners/semgrep.py`
+**Source file**: `src/thresher/scanners/semgrep.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

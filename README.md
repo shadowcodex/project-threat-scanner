@@ -1,4 +1,4 @@
-# Project Threat Scanner
+# Thresher
 
 AI-powered supply chain security scanner for evaluating open source packages before adoption. Scans a target repository and its dependencies for known vulnerabilities, malicious code, secrets, and supply chain risks, then produces a static go/no-go report.
 
@@ -8,7 +8,7 @@ This is WIP, no guarantee to catch anything. It is best effort, and use at your 
 
 ## Disk Usage Notice
 
-VM it creates needs about **15gb** of free disk space to operate on your mac. It's downloading a lot of tools and databases for scanners etc... You also need to have space to download the repos you expect to scan, if you do a **15gb** image (Configurable in the `scanner.toml` file) you'll end up with about `2gb` of space inside the container to download source code and dependencies with.
+VM it creates needs about **15gb** of free disk space to operate on your mac. It's downloading a lot of tools and databases for scanners etc... You also need to have space to download the repos you expect to scan, if you do a **15gb** image (Configurable in the `thresher.toml` file) you'll end up with about `2gb` of space inside the container to download source code and dependencies with.
 
 ## How It Works
 
@@ -49,16 +49,16 @@ pip install -e .
 
 ```bash
 # Full scan with AI analysis
-threat-scan https://github.com/owner/repo
+thresher https://github.com/owner/repo
 
 # Deterministic scanners only (no API key needed, faster, cheaper)
-threat-scan https://github.com/owner/repo --skip-ai
+thresher https://github.com/owner/repo --skip-ai
 
 # Customize VM resources and dependency depth
-threat-scan https://github.com/owner/repo --cpus 8 --memory 16 --disk 100 --depth 3
+thresher https://github.com/owner/repo --cpus 8 --memory 16 --disk 100 --depth 3
 
 # Specify output directory
-threat-scan https://github.com/owner/repo --output ./my-report
+thresher https://github.com/owner/repo --output ./my-report
 ```
 
 ### Running without installing
@@ -66,10 +66,10 @@ threat-scan https://github.com/owner/repo --output ./my-report
 If you use [uv](https://docs.astral.sh/uv/), you can run directly from the source tree without installing:
 
 ```bash
-uv run threat-scan https://github.com/owner/repo --skip-ai
+uv run thresher https://github.com/owner/repo --skip-ai
 ```
 
-`uv run` automatically resolves dependencies and makes the `threat-scan` entry point available without a separate install step.
+`uv run` automatically resolves dependencies and makes the `thresher` entry point available without a separate install step.
 
 ### Tmux UI
 
@@ -83,7 +83,7 @@ By default, scans launch in a tmux split-pane layout: scan progress on the left,
 | `Ctrl-b [` | Scroll mode (`q` to exit) |
 | `Ctrl-b q` | Quit — kills scan and closes tmux |
 
-To disable tmux, use `--no-tmux` or set `tmux = false` in `scanner.toml`. If tmux is not installed, the scan runs normally without it.
+To disable tmux, use `--no-tmux` or set `tmux = false` in `thresher.toml`. If tmux is not installed, the scan runs normally without it.
 
 ### Options
 
@@ -92,7 +92,7 @@ To disable tmux, use `--no-tmux` or set `tmux = false` in `scanner.toml`. If tmu
 | `--depth N` | 2 | Transitive dependency depth |
 | `--skip-ai` | off | Deterministic scanners only (no AI agents) |
 | `--verbose` | off | Show detailed tool output |
-| `--output DIR` | `./scan-results` | Host directory for report output |
+| `--output DIR` | `./thresher-reports` | Host directory for report output |
 | `--cpus N` | 4 | VM CPU count |
 | `--memory N` | 8 | VM memory in GiB |
 | `--disk N` | 50 | VM disk in GiB |
@@ -100,12 +100,12 @@ To disable tmux, use `--no-tmux` or set `tmux = false` in `scanner.toml`. If tmu
 
 ### Configuration
 
-Copy `scanner.toml.example` to `scanner.toml` in the project root to customize defaults. CLI flags override these values.
+Copy `thresher.toml.example` to `thresher.toml` in the project root to customize defaults. CLI flags override these values.
 
 ```toml
 model = "sonnet"
 depth = 2
-output_dir = "./scan-results"
+output_dir = "./thresher-reports"
 tmux = true
 
 [vm]

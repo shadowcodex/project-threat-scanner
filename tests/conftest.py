@@ -1,4 +1,4 @@
-"""Shared fixtures and helpers for threat-scanner tests."""
+"""Shared fixtures and helpers for thresher tests."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from threat_scanner.config import ScanConfig, VMConfig
-from threat_scanner.scanners.models import Finding, ScanResults
-from threat_scanner.vm.ssh import SSHResult
+from thresher.config import ScanConfig, VMConfig
+from thresher.scanners.models import Finding, ScanResults
+from thresher.vm.ssh import SSHResult
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -47,7 +47,7 @@ def sample_config() -> ScanConfig:
         depth=2,
         skip_ai=False,
         verbose=False,
-        output_dir="./scan-results",
+        output_dir="./thresher-reports",
         vm=VMConfig(),
         anthropic_api_key="sk-ant-test-key-fake",
         model="sonnet",
@@ -61,7 +61,7 @@ def sample_config_skip_ai() -> ScanConfig:
         depth=2,
         skip_ai=True,
         verbose=False,
-        output_dir="./scan-results",
+        output_dir="./thresher-reports",
         vm=VMConfig(),
         anthropic_api_key="",
         model="sonnet",
@@ -210,7 +210,7 @@ def mock_ssh_exec(monkeypatch):
             mock.side_effect = calls
         else:
             mock.return_value = SSHResult(stdout, stderr, exit_code)
-        monkeypatch.setattr("threat_scanner.vm.ssh.subprocess.run", _noop)
+        monkeypatch.setattr("thresher.vm.ssh.subprocess.run", _noop)
         return mock
 
     # We patch at the module level where ssh_exec is imported
@@ -219,20 +219,20 @@ def mock_ssh_exec(monkeypatch):
     def _patched_ssh_exec(vm_name, command, timeout=300, env=None):
         return mock(vm_name, command, timeout=timeout, env=env)
 
-    monkeypatch.setattr("threat_scanner.vm.ssh.ssh_exec", _patched_ssh_exec)
+    monkeypatch.setattr("thresher.vm.ssh.ssh_exec", _patched_ssh_exec)
     # Also patch in modules that import ssh_exec directly
     for mod in [
-        "threat_scanner.scanners.runner",
-        "threat_scanner.scanners.syft",
-        "threat_scanner.scanners.grype",
-        "threat_scanner.scanners.osv",
-        "threat_scanner.scanners.semgrep",
-        "threat_scanner.scanners.guarddog",
-        "threat_scanner.scanners.gitleaks",
-        "threat_scanner.docker.sandbox",
-        "threat_scanner.agents.analyst",
-        "threat_scanner.agents.adversarial",
-        "threat_scanner.report.synthesize",
+        "thresher.scanners.runner",
+        "thresher.scanners.syft",
+        "thresher.scanners.grype",
+        "thresher.scanners.osv",
+        "thresher.scanners.semgrep",
+        "thresher.scanners.guarddog",
+        "thresher.scanners.gitleaks",
+        "thresher.docker.sandbox",
+        "thresher.agents.analyst",
+        "thresher.agents.adversarial",
+        "thresher.report.synthesize",
     ]:
         try:
             monkeypatch.setattr(f"{mod}.ssh_exec", _patched_ssh_exec)

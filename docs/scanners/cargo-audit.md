@@ -5,7 +5,7 @@
 [cargo-audit](https://github.com/rustsec/rustsec/tree/main/cargo-audit) scans Rust projects for vulnerabilities using the [RustSec Advisory Database](https://rustsec.org/). It checks `Cargo.lock` for dependencies with known security advisories.
 
 **Category**: SCA (Rust-specific)
-**Source file**: `src/threat_scanner/scanners/cargo_audit.py`
+**Source file**: `src/thresher/scanners/cargo_audit.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

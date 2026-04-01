@@ -5,7 +5,7 @@
 [Syft](https://github.com/anchore/syft) generates a Software Bill of Materials (SBOM) for the target project. It identifies all packages, libraries, and dependencies and outputs them in CycloneDX JSON format. Syft doesn't find vulnerabilities itself — it produces the inventory that Grype uses for vulnerability matching.
 
 **Category**: SBOM
-**Source file**: `src/threat_scanner/scanners/syft.py`
+**Source file**: `src/thresher/scanners/syft.py`
 **Runs in**: Phase 1 (before all other scanners — Grype depends on it)
 
 ## Command Executed
@@ -107,8 +107,8 @@ limactl shell <vm-name> -- syft version
 
 Syft is installed during VM provisioning. Rebuild the base VM to get the latest version:
 ```bash
-threat-scan-stop
-threat-scan-build
+thresher-stop
+thresher-build
 ```
 
 ## Relationship to Other Scanners

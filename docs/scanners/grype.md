@@ -5,7 +5,7 @@
 [Grype](https://github.com/anchore/grype) is a vulnerability scanner that matches packages in an SBOM against multiple vulnerability databases. It's the primary SCA (Software Composition Analysis) tool in the pipeline.
 
 **Category**: SCA
-**Source file**: `src/threat_scanner/scanners/grype.py`
+**Source file**: `src/thresher/scanners/grype.py`
 **Runs in**: Phase 2 (parallel, after Syft completes)
 **Depends on**: Syft SBOM output
 

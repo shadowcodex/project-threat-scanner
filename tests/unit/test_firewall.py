@@ -1,8 +1,8 @@
-"""Tests for threat_scanner.vm.firewall."""
+"""Tests for thresher.vm.firewall."""
 
 from __future__ import annotations
 
-from threat_scanner.vm.firewall import WHITELISTED_DOMAINS, generate_firewall_rules
+from thresher.vm.firewall import WHITELISTED_DOMAINS, generate_firewall_rules
 
 
 class TestGenerateFirewallRules:

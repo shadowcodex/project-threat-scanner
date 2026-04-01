@@ -1,8 +1,8 @@
-"""Tests for threat_scanner.scanners.guarddog."""
+"""Tests for thresher.scanners.guarddog."""
 
 from __future__ import annotations
 
-from threat_scanner.scanners.guarddog import (
+from thresher.scanners.guarddog import (
     _parse_single_result,
     parse_guarddog_output,
 )

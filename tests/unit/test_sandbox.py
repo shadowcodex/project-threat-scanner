@@ -1,22 +1,22 @@
-"""Tests for threat_scanner.docker.sandbox."""
+"""Tests for thresher.docker.sandbox."""
 
 from __future__ import annotations
 
 from unittest.mock import patch
 
-from threat_scanner.docker.sandbox import (
+from thresher.docker.sandbox import (
     ECOSYSTEM_IMAGES,
     ECOSYSTEM_INDICATORS,
     _parse_package_name,
     detect_ecosystems,
 )
-from threat_scanner.vm.ssh import SSHResult
+from thresher.vm.ssh import SSHResult
 
 
 # sandbox.py imports ssh_exec locally inside functions via
-# "from threat_scanner.vm.ssh import ssh_exec", so we patch the
+# "from thresher.vm.ssh import ssh_exec", so we patch the
 # canonical location in the ssh module.
-SSH_EXEC_PATH = "threat_scanner.vm.ssh.ssh_exec"
+SSH_EXEC_PATH = "thresher.vm.ssh.ssh_exec"
 
 
 class TestDetectEcosystems:
@@ -102,7 +102,7 @@ class TestDockerRunUsesSudo:
     @patch(SSH_EXEC_PATH)
     def test_sudo_in_command(self, mock_exec):
         mock_exec.return_value = SSHResult("", "", 0)
-        from threat_scanner.docker.sandbox import _docker_run
+        from thresher.docker.sandbox import _docker_run
 
         _docker_run("vm", "python:3.12", "echo hi", [], network=True)
         cmd = mock_exec.call_args[0][1]
@@ -111,7 +111,7 @@ class TestDockerRunUsesSudo:
     @patch(SSH_EXEC_PATH)
     def test_network_none(self, mock_exec):
         mock_exec.return_value = SSHResult("", "", 0)
-        from threat_scanner.docker.sandbox import _docker_run
+        from thresher.docker.sandbox import _docker_run
 
         _docker_run("vm", "python:3.12", "echo hi", [], network=False)
         cmd = mock_exec.call_args[0][1]

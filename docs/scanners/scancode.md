@@ -5,7 +5,7 @@
 [ScanCode](https://github.com/nexB/scancode-toolkit) detects licenses by analyzing actual file contents rather than just reading package manifest declarations. This catches cases where the declared license differs from the actual license in the code.
 
 **Category**: License
-**Source file**: `src/threat_scanner/scanners/scancode.py`
+**Source file**: `src/thresher/scanners/scancode.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

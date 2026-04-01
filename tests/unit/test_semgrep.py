@@ -1,8 +1,8 @@
-"""Tests for threat_scanner.scanners.semgrep."""
+"""Tests for thresher.scanners.semgrep."""
 
 from __future__ import annotations
 
-from threat_scanner.scanners.semgrep import parse_semgrep_output
+from thresher.scanners.semgrep import parse_semgrep_output
 
 
 class TestParseSemgrepOutput:

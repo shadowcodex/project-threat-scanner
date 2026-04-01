@@ -1,6 +1,6 @@
 #!/bin/bash
 # provision.sh — Main provisioning script for Lima VM
-# Installs all required tools and scanners for Project Threat Scanner.
+# Installs all required tools and scanners for Thresher.
 # Designed to be idempotent: checks before installing each component.
 set -euo pipefail
 

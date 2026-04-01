@@ -1,9 +1,9 @@
-"""Tests for threat_scanner.scanners.runner."""
+"""Tests for thresher.scanners.runner."""
 
 from __future__ import annotations
 
-from threat_scanner.scanners.models import Finding, ScanResults
-from threat_scanner.scanners.runner import _richness, aggregate_findings
+from thresher.scanners.models import Finding, ScanResults
+from thresher.scanners.runner import _richness, aggregate_findings
 
 
 def _make_finding(**overrides) -> Finding:

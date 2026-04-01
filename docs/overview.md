@@ -2,7 +2,7 @@
 
 ## What Is This?
 
-Project Threat Scanner is a command-line tool that evaluates open source packages for security risks before you adopt them. It combines 16 deterministic security scanners with AI-powered code analysis to produce a static go/no-go report.
+Thresher is a command-line tool that evaluates open source packages for security risks before you adopt them. It combines 16 deterministic security scanners with AI-powered code analysis to produce a static go/no-go report.
 
 Think of it as a security review pipeline you can run against any GitHub repository. Instead of manually auditing code, dependency trees, and known vulnerabilities, you point this tool at a repo URL and get back a prioritized findings report with a clear recommendation: **GO**, **USE WITH CAUTION**, or **DO NOT USE**.
 

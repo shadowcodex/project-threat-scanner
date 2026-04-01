@@ -5,7 +5,7 @@
 [ClamAV](https://www.clamav.net/) is an open-source antivirus engine that detects known viruses, malware, trojans, and other malicious software using signature databases. It's the traditional "antivirus" layer in the scanner pipeline.
 
 **Category**: Antivirus / Malware
-**Source file**: `src/threat_scanner/scanners/clamav.py`
+**Source file**: `src/thresher/scanners/clamav.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

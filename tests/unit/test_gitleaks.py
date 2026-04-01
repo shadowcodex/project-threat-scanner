@@ -1,8 +1,8 @@
-"""Tests for threat_scanner.scanners.gitleaks."""
+"""Tests for thresher.scanners.gitleaks."""
 
 from __future__ import annotations
 
-from threat_scanner.scanners.gitleaks import parse_gitleaks_output
+from thresher.scanners.gitleaks import parse_gitleaks_output
 
 
 class TestParseGitleaksOutput:

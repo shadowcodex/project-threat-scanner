@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from threat_scanner.config import ScanConfig
-from threat_scanner.scanners.runner import run_all_scanners
-from threat_scanner.vm.ssh import SSHResult
+from thresher.config import ScanConfig
+from thresher.scanners.runner import run_all_scanners
+from thresher.vm.ssh import SSHResult
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "sample_scanner_output"
 
@@ -22,23 +22,23 @@ def _load(name: str) -> str:
 
 
 class TestRunAllScanners:
-    @patch("threat_scanner.scanners.clamav.ssh_exec")
-    @patch("threat_scanner.scanners.scancode.ssh_exec")
-    @patch("threat_scanner.scanners.cargo_audit.ssh_exec")
-    @patch("threat_scanner.scanners.govulncheck.ssh_exec")
-    @patch("threat_scanner.scanners.capa_scanner.ssh_exec")
-    @patch("threat_scanner.scanners.yara_scanner.ssh_exec")
-    @patch("threat_scanner.scanners.trivy.ssh_exec")
-    @patch("threat_scanner.scanners.hadolint.ssh_exec")
-    @patch("threat_scanner.scanners.checkov.ssh_exec")
-    @patch("threat_scanner.scanners.bandit.ssh_exec")
-    @patch("threat_scanner.scanners.runner.ssh_exec")
-    @patch("threat_scanner.scanners.syft.ssh_exec")
-    @patch("threat_scanner.scanners.grype.ssh_exec")
-    @patch("threat_scanner.scanners.osv.ssh_exec")
-    @patch("threat_scanner.scanners.semgrep.ssh_exec")
-    @patch("threat_scanner.scanners.guarddog.ssh_exec")
-    @patch("threat_scanner.scanners.gitleaks.ssh_exec")
+    @patch("thresher.scanners.clamav.ssh_exec")
+    @patch("thresher.scanners.scancode.ssh_exec")
+    @patch("thresher.scanners.cargo_audit.ssh_exec")
+    @patch("thresher.scanners.govulncheck.ssh_exec")
+    @patch("thresher.scanners.capa_scanner.ssh_exec")
+    @patch("thresher.scanners.yara_scanner.ssh_exec")
+    @patch("thresher.scanners.trivy.ssh_exec")
+    @patch("thresher.scanners.hadolint.ssh_exec")
+    @patch("thresher.scanners.checkov.ssh_exec")
+    @patch("thresher.scanners.bandit.ssh_exec")
+    @patch("thresher.scanners.runner.ssh_exec")
+    @patch("thresher.scanners.syft.ssh_exec")
+    @patch("thresher.scanners.grype.ssh_exec")
+    @patch("thresher.scanners.osv.ssh_exec")
+    @patch("thresher.scanners.semgrep.ssh_exec")
+    @patch("thresher.scanners.guarddog.ssh_exec")
+    @patch("thresher.scanners.gitleaks.ssh_exec")
     def test_happy_path(
         self,
         mock_gl, mock_gd, mock_sg, mock_osv, mock_grype, mock_syft, mock_runner_ssh,
@@ -121,23 +121,23 @@ class TestRunAllScanners:
         gitleaks_result = [r for r in results if r.tool_name == "gitleaks"][0]
         assert len(gitleaks_result.findings) == 2
 
-    @patch("threat_scanner.scanners.clamav.ssh_exec")
-    @patch("threat_scanner.scanners.scancode.ssh_exec")
-    @patch("threat_scanner.scanners.cargo_audit.ssh_exec")
-    @patch("threat_scanner.scanners.govulncheck.ssh_exec")
-    @patch("threat_scanner.scanners.capa_scanner.ssh_exec")
-    @patch("threat_scanner.scanners.yara_scanner.ssh_exec")
-    @patch("threat_scanner.scanners.trivy.ssh_exec")
-    @patch("threat_scanner.scanners.hadolint.ssh_exec")
-    @patch("threat_scanner.scanners.checkov.ssh_exec")
-    @patch("threat_scanner.scanners.bandit.ssh_exec")
-    @patch("threat_scanner.scanners.runner.ssh_exec")
-    @patch("threat_scanner.scanners.syft.ssh_exec")
-    @patch("threat_scanner.scanners.grype.ssh_exec")
-    @patch("threat_scanner.scanners.osv.ssh_exec")
-    @patch("threat_scanner.scanners.semgrep.ssh_exec")
-    @patch("threat_scanner.scanners.guarddog.ssh_exec")
-    @patch("threat_scanner.scanners.gitleaks.ssh_exec")
+    @patch("thresher.scanners.clamav.ssh_exec")
+    @patch("thresher.scanners.scancode.ssh_exec")
+    @patch("thresher.scanners.cargo_audit.ssh_exec")
+    @patch("thresher.scanners.govulncheck.ssh_exec")
+    @patch("thresher.scanners.capa_scanner.ssh_exec")
+    @patch("thresher.scanners.yara_scanner.ssh_exec")
+    @patch("thresher.scanners.trivy.ssh_exec")
+    @patch("thresher.scanners.hadolint.ssh_exec")
+    @patch("thresher.scanners.checkov.ssh_exec")
+    @patch("thresher.scanners.bandit.ssh_exec")
+    @patch("thresher.scanners.runner.ssh_exec")
+    @patch("thresher.scanners.syft.ssh_exec")
+    @patch("thresher.scanners.grype.ssh_exec")
+    @patch("thresher.scanners.osv.ssh_exec")
+    @patch("thresher.scanners.semgrep.ssh_exec")
+    @patch("thresher.scanners.guarddog.ssh_exec")
+    @patch("thresher.scanners.gitleaks.ssh_exec")
     def test_scanner_exception_handled(
         self,
         mock_gl, mock_gd, mock_sg, mock_osv, mock_grype, mock_syft, mock_runner_ssh,
@@ -190,23 +190,23 @@ class TestRunAllScanners:
         assert grype.exit_code == -1
         assert len(grype.errors) > 0
 
-    @patch("threat_scanner.scanners.clamav.ssh_exec")
-    @patch("threat_scanner.scanners.scancode.ssh_exec")
-    @patch("threat_scanner.scanners.cargo_audit.ssh_exec")
-    @patch("threat_scanner.scanners.govulncheck.ssh_exec")
-    @patch("threat_scanner.scanners.capa_scanner.ssh_exec")
-    @patch("threat_scanner.scanners.yara_scanner.ssh_exec")
-    @patch("threat_scanner.scanners.trivy.ssh_exec")
-    @patch("threat_scanner.scanners.hadolint.ssh_exec")
-    @patch("threat_scanner.scanners.checkov.ssh_exec")
-    @patch("threat_scanner.scanners.bandit.ssh_exec")
-    @patch("threat_scanner.scanners.runner.ssh_exec")
-    @patch("threat_scanner.scanners.syft.ssh_exec")
-    @patch("threat_scanner.scanners.grype.ssh_exec")
-    @patch("threat_scanner.scanners.osv.ssh_exec")
-    @patch("threat_scanner.scanners.semgrep.ssh_exec")
-    @patch("threat_scanner.scanners.guarddog.ssh_exec")
-    @patch("threat_scanner.scanners.gitleaks.ssh_exec")
+    @patch("thresher.scanners.clamav.ssh_exec")
+    @patch("thresher.scanners.scancode.ssh_exec")
+    @patch("thresher.scanners.cargo_audit.ssh_exec")
+    @patch("thresher.scanners.govulncheck.ssh_exec")
+    @patch("thresher.scanners.capa_scanner.ssh_exec")
+    @patch("thresher.scanners.yara_scanner.ssh_exec")
+    @patch("thresher.scanners.trivy.ssh_exec")
+    @patch("thresher.scanners.hadolint.ssh_exec")
+    @patch("thresher.scanners.checkov.ssh_exec")
+    @patch("thresher.scanners.bandit.ssh_exec")
+    @patch("thresher.scanners.runner.ssh_exec")
+    @patch("thresher.scanners.syft.ssh_exec")
+    @patch("thresher.scanners.grype.ssh_exec")
+    @patch("thresher.scanners.osv.ssh_exec")
+    @patch("thresher.scanners.semgrep.ssh_exec")
+    @patch("thresher.scanners.guarddog.ssh_exec")
+    @patch("thresher.scanners.gitleaks.ssh_exec")
     def test_exit_code_1_is_findings(
         self,
         mock_gl, mock_gd, mock_sg, mock_osv, mock_grype, mock_syft, mock_runner_ssh,

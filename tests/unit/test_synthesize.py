@@ -1,14 +1,14 @@
-"""Tests for threat_scanner.report.synthesize."""
+"""Tests for thresher.report.synthesize."""
 
 from __future__ import annotations
 
-from threat_scanner.report.synthesize import (
+from thresher.report.synthesize import (
     _build_template_context,
     _collect_findings,
     _build_synthesis_input,
     PRIORITY_ORDER,
 )
-from threat_scanner.config import ScanConfig
+from thresher.config import ScanConfig
 
 
 class TestCollectFindings:

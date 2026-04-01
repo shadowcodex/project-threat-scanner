@@ -5,7 +5,7 @@
 [Gitleaks](https://github.com/gitleaks/gitleaks) scans repositories for hardcoded secrets like API keys, tokens, passwords, and private keys. It uses 100+ built-in regex rules to identify credentials that should be in environment variables or a secrets manager.
 
 **Category**: Secrets
-**Source file**: `src/threat_scanner/scanners/gitleaks.py`
+**Source file**: `src/thresher/scanners/gitleaks.py`
 **Runs in**: Phase 2 (parallel)
 
 ## Command Executed

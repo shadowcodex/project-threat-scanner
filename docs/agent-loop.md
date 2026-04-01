@@ -15,9 +15,9 @@ Analyst Agent ────▶ High-risk findings ────▶ Adversarial Age
 
 **Role**: Paranoid, adversarial security researcher who assumes every repository is guilty until proven innocent.
 
-**Location**: `src/threat_scanner/agents/analyst.py`
+**Location**: `src/thresher/agents/analyst.py`
 
-**System prompt**: `ANALYST_SYSTEM_PROMPT` in `src/threat_scanner/agents/prompts.py`
+**System prompt**: `ANALYST_SYSTEM_PROMPT` in `src/thresher/agents/prompts.py`
 
 ### What It Investigates
 
@@ -112,9 +112,9 @@ The Analyst **cannot** execute code, write files, or access the network (beyond 
 
 **Role**: Defense attorney for code. Attempts to construct benign explanations for each finding and only confirms those that survive scrutiny.
 
-**Location**: `src/threat_scanner/agents/adversarial.py`
+**Location**: `src/thresher/agents/adversarial.py`
 
-**System prompt**: `ADVERSARIAL_SYSTEM_PROMPT` in `src/threat_scanner/agents/prompts.py`
+**System prompt**: `ADVERSARIAL_SYSTEM_PROMPT` in `src/thresher/agents/prompts.py`
 
 ### Input
 
@@ -193,7 +193,7 @@ This robustness ensures the pipeline doesn't fail if the agent's output format v
 
 ## Cost and Performance
 
-- **Model**: Configurable via `scanner.toml` (`model = "sonnet"` by default)
+- **Model**: Configurable via `thresher.toml` (`model = "sonnet"` by default)
 - **Typical runtime**: 3-8 minutes for both agents combined
 - **Typical cost**: A few dollars per scan (depends on repo size and number of findings)
 - **Skip with**: `--skip-ai` for free, deterministic-only scans

@@ -11,6 +11,7 @@ venv/
 .env
 *.log
 scan-results/
+thresher.toml
 scanner.toml
 logs/
 .DS_Store

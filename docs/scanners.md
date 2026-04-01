@@ -1,6 +1,6 @@
 # Scanner Overview
 
-Project Threat Scanner runs 16 deterministic security scanners in a two-phase pipeline inside the Lima VM.
+Thresher runs 16 deterministic security scanners in a two-phase pipeline inside the Lima VM.
 
 ## Execution Pipeline
 
@@ -102,7 +102,7 @@ Multiple scanners often detect the same vulnerability (e.g., Grype and OSV-Scann
 
 ## Adding a New Scanner
 
-Each scanner is a Python module in `src/threat_scanner/scanners/` with:
+Each scanner is a Python module in `src/thresher/scanners/` with:
 
 1. A `run_<tool>(vm_name, target_dir, output_dir) -> ScanResults` function
 2. A `parse_<tool>_output(raw) -> list[Finding]` function
