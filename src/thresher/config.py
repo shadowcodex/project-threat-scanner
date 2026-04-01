@@ -49,6 +49,31 @@ class VMConfig:
 
 
 @dataclass
+class LimitsConfig:
+    """Configurable size limits for host boundary hardening."""
+    max_json_size_mb: int = 10       # Max JSON payload from VM (MB)
+    max_file_size_mb: int = 50       # Max individual file in report copy (MB)
+    max_copy_size_mb: int = 500      # Max total size of report copy (MB)
+    max_stdout_mb: int = 50          # Max stdout from ssh_exec before kill (MB)
+
+    @property
+    def max_json_size_bytes(self) -> int:
+        return self.max_json_size_mb * 1024 * 1024
+
+    @property
+    def max_file_size_bytes(self) -> int:
+        return self.max_file_size_mb * 1024 * 1024
+
+    @property
+    def max_copy_size_bytes(self) -> int:
+        return self.max_copy_size_mb * 1024 * 1024
+
+    @property
+    def max_stdout_bytes(self) -> int:
+        return self.max_stdout_mb * 1024 * 1024
+
+
+@dataclass
 class ScanConfig:
     repo_url: str = ""
     depth: int = 2
@@ -56,6 +81,7 @@ class ScanConfig:
     verbose: bool = False
     output_dir: str = "./thresher-reports"
     vm: VMConfig = field(default_factory=VMConfig)
+    limits: LimitsConfig = field(default_factory=LimitsConfig)
     anthropic_api_key: str = ""
     oauth_token: str = ""
     model: str = "sonnet"
@@ -131,6 +157,15 @@ def load_config(
             config.vm.memory = vm_data["memory"]
         if "disk" in vm_data:
             config.vm.disk = vm_data["disk"]
+        limits_data = data.get("limits", {})
+        if "max_json_size_mb" in limits_data:
+            config.limits.max_json_size_mb = limits_data["max_json_size_mb"]
+        if "max_file_size_mb" in limits_data:
+            config.limits.max_file_size_mb = limits_data["max_file_size_mb"]
+        if "max_copy_size_mb" in limits_data:
+            config.limits.max_copy_size_mb = limits_data["max_copy_size_mb"]
+        if "max_stdout_mb" in limits_data:
+            config.limits.max_stdout_mb = limits_data["max_stdout_mb"]
 
     # CLI args override config file
     config.repo_url = repo_url
@@ -153,4 +188,13 @@ def load_config(
     if not config.anthropic_api_key and not config.skip_ai:
         config.oauth_token = _get_oauth_token_from_keychain()
 
+    # Publish limits so utility modules can read them
+    global active_limits
+    active_limits = config.limits
+
     return config
+
+
+# Module-level limits instance, readable by safe_io.py and ssh.py
+# without importing ScanConfig. Updated by load_config().
+active_limits = LimitsConfig()

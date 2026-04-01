@@ -19,18 +19,11 @@ from thresher.vm.ssh import SSHError
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Size limits
-# ---------------------------------------------------------------------------
 
-# Maximum JSON payload size from VM output (10 MB)
-MAX_JSON_SIZE_BYTES = 10 * 1024 * 1024
-
-# Maximum individual file size in copied reports (50 MB)
-MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024
-
-# Maximum total size of all copied files (500 MB)
-MAX_COPY_SIZE_BYTES = 500 * 1024 * 1024
+def _limits():
+    """Get the active limits config (lazy import to avoid circular deps)."""
+    from thresher.config import active_limits
+    return active_limits
 
 # Allowed file extensions in report output
 ALLOWED_EXTENSIONS = {".json", ".md", ".txt", ".csv", ".log", ".sarif"}
@@ -63,7 +56,7 @@ def safe_json_loads(
     Raises:
         SSHError: If the payload exceeds the size limit.
     """
-    if len(text) > MAX_JSON_SIZE_BYTES:
+    if len(text) > _limits().max_json_size_bytes:
         raise SSHError(
             f"JSON payload from VM too large ({len(text)} bytes) "
             f"from source: {source}"
@@ -106,16 +99,16 @@ def validate_copied_tree(root: Path) -> None:
         if path.is_file():
             # Check individual file size
             size = path.stat().st_size
-            if size > MAX_FILE_SIZE_BYTES:
+            if size > _limits().max_file_size_bytes:
                 raise SSHError(
                     f"File too large from VM: {relative} ({size} bytes)"
                 )
             total_size += size
 
             # Check total size
-            if total_size > MAX_COPY_SIZE_BYTES:
+            if total_size > _limits().max_copy_size_bytes:
                 raise SSHError(
-                    f"Total copy size exceeds {MAX_COPY_SIZE_BYTES} bytes"
+                    f"Total copy size exceeds {_limits().max_copy_size_bytes} bytes"
                 )
 
             # Check extension

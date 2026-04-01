@@ -68,7 +68,12 @@ def ssh_exec(
 
     # Maximum stdout we'll accumulate before killing the process.
     # Prevents a compromised VM from exhausting host memory.
-    max_stdout_bytes = 50 * 1024 * 1024  # 50 MB
+    # Read from config if available, otherwise use default.
+    try:
+        from thresher.config import active_limits
+        max_stdout_bytes = active_limits.max_stdout_bytes
+    except ImportError:
+        max_stdout_bytes = 50 * 1024 * 1024  # 50 MB fallback
 
     try:
         import selectors
