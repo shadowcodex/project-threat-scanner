@@ -32,7 +32,7 @@ def run_guarddog(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        result = ssh_exec(vm_name, cmd)
+        result = ssh_exec(vm_name, cmd, timeout=600)
         elapsed = time.monotonic() - start
 
         # GuardDog exit 0 = success.  Non-zero may indicate findings or errors

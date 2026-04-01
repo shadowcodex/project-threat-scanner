@@ -52,7 +52,7 @@ def run_yara(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
             f"done > {output_path}"
         )
 
-        result = ssh_exec(vm_name, cmd)
+        result = ssh_exec(vm_name, cmd, timeout=600)
         elapsed = time.monotonic() - start
 
         cat_result = ssh_exec(vm_name, f"cat {output_path}")

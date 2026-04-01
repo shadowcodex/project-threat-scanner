@@ -39,7 +39,7 @@ def run_semgrep(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        result = ssh_exec(vm_name, cmd)
+        result = ssh_exec(vm_name, cmd, timeout=600)
         elapsed = time.monotonic() - start
 
         # Semgrep exit 0 = success, 1 = findings with --error (not used here).

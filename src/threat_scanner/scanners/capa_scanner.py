@@ -65,7 +65,7 @@ def run_capa(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
             binary_output = f"{output_path}.{binary_path.replace('/', '_')}"
             cmd = f"capa --format json {binary_path} > {binary_output} 2>/dev/null"
 
-            result = ssh_exec(vm_name, cmd)
+            result = ssh_exec(vm_name, cmd, timeout=600)
             last_exit_code = result.exit_code
 
             if result.exit_code != 0:
