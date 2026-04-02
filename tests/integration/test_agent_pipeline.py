@@ -81,7 +81,7 @@ class TestAnalystsPipeline:
         run_all_analysts("vm", _make_config())
 
         cmds = [c[0][1] for c in mock_exec.call_args_list]
-        key_writes = [c for c in cmds if "/dev/shm/.api_key_" in c and "printf" in c]
+        key_writes = [c for c in cmds if "/dev/shm/.cred_ANTHROPIC_API_KEY_" in c and "printf" in c]
         assert len(key_writes) == 8
 
     @patch("thresher.agents.analysts.ssh_write_file")
@@ -255,10 +255,10 @@ class TestAdversarialPipeline:
         run_adversarial_verification("vm", config)
 
         cmds = [c[0][1] for c in mock_exec.call_args_list]
-        assert any("/dev/shm/.api_key" in cmd for cmd in cmds)
+        assert any("/dev/shm/.cred_ANTHROPIC_API_KEY" in cmd for cmd in cmds)
         claude_cmd = cmds[-1]
-        assert "ANTHROPIC_API_KEY=$(cat /dev/shm/.api_key)" in claude_cmd
-        assert "rm -f /dev/shm/.api_key" in claude_cmd
+        assert "ANTHROPIC_API_KEY=$(cat /dev/shm/.cred_ANTHROPIC_API_KEY)" in claude_cmd
+        assert "rm -f /dev/shm/.cred_ANTHROPIC_API_KEY" in claude_cmd
 
     @patch("thresher.agents.adversarial.ssh_write_file")
     @patch("thresher.agents.adversarial.ssh_exec")

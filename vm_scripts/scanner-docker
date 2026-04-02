@@ -9,5 +9,5 @@ exec /usr/bin/docker run --rm \
   --read-only \
   --cap-drop=ALL \
   --security-opt=no-new-privileges \
-  -v "/home/scanner/work:/work" \
+  -v "/opt/thresher/work:/work" \
   scanner-deps:latest /scripts/run.sh

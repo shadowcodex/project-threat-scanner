@@ -209,11 +209,11 @@ class TestRunSingleAnalyst:
 
         cmds = [c[0][1] for c in mock_exec.call_args_list]
         # First ssh_exec writes key to /dev/shm
-        assert any("/dev/shm/.api_key_1" in cmd for cmd in cmds)
+        assert any("/dev/shm/.cred_ANTHROPIC_API_KEY_1" in cmd for cmd in cmds)
         # Claude command reads from tmpfs and deletes
         claude_cmd = [c for c in cmds if "claude -p" in c][0]
-        assert "ANTHROPIC_API_KEY=$(cat /dev/shm/.api_key_1)" in claude_cmd
-        assert "rm -f /dev/shm/.api_key_1" in claude_cmd
+        assert "ANTHROPIC_API_KEY=$(cat /dev/shm/.cred_ANTHROPIC_API_KEY_1)" in claude_cmd
+        assert "rm -f /dev/shm/.cred_ANTHROPIC_API_KEY_1" in claude_cmd
 
     @patch("thresher.agents.analysts.ssh_write_file")
     @patch("thresher.agents.analysts.ssh_exec")
@@ -257,9 +257,9 @@ class TestRunSingleAnalyst:
         _run_single_analyst("vm", config, ANALYST_DEFINITIONS[1])
 
         cmds = [c[0][1] for c in mock_exec.call_args_list]
-        key_writes = [c for c in cmds if "/dev/shm/.api_key_" in c and "printf" in c]
-        assert "/dev/shm/.api_key_1" in key_writes[0]
-        assert "/dev/shm/.api_key_2" in key_writes[1]
+        key_writes = [c for c in cmds if "/dev/shm/.cred_ANTHROPIC_API_KEY_" in c and "printf" in c]
+        assert "/dev/shm/.cred_ANTHROPIC_API_KEY_1" in key_writes[0]
+        assert "/dev/shm/.cred_ANTHROPIC_API_KEY_2" in key_writes[1]
 
 
 class TestRunAllAnalysts:

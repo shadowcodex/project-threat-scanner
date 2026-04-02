@@ -383,22 +383,19 @@ def run_adversarial_verification(
         f"--max-turns 20"
     )
 
-    # Write API key to tmpfs (never touches disk) and read-and-delete to
-    # minimize the exposure window inside the VM.
+    # Write credentials to tmpfs and read-and-delete.
     env = config.ai_env()
-    api_key = env.get("ANTHROPIC_API_KEY", "") if env else ""
-    if api_key:
-        ssh_exec(
-            vm_name,
-            "printf '%s' " + _shell_quote_key(api_key) + " > /dev/shm/.api_key"
-            " && chmod 600 /dev/shm/.api_key",
-        )
-        claude_cmd = (
-            "ANTHROPIC_API_KEY=$(cat /dev/shm/.api_key); "
-            "export ANTHROPIC_API_KEY; "
-            "rm -f /dev/shm/.api_key; "
-            + claude_cmd
-        )
+    if env:
+        exports = []
+        for key, value in env.items():
+            tmpfile = f"/dev/shm/.cred_{key}"
+            ssh_exec(
+                vm_name,
+                "printf '%s' " + _shell_quote_key(value) + f" > {tmpfile}"
+                f" && chmod 600 {tmpfile}",
+            )
+            exports.append(f"{key}=$(cat {tmpfile}); export {key}; rm -f {tmpfile}")
+        claude_cmd = "; ".join(exports) + "; " + claude_cmd
 
     logger.info("Invoking adversarial agent in VM %s", vm_name)
     try:
