@@ -11,6 +11,7 @@ venv/
 .env
 *.log
 scan-results/
+thresher-reports/
 thresher.toml
 scanner.toml
 logs/
