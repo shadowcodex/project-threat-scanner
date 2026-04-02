@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Thresher — Supply Chain Security Scanner</title>
+<link rel="icon" type="image/png" href="favicon-purple-black.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
 <style>
@@ -61,6 +62,16 @@
   }
 
   .nav-brand:hover { color: var(--violet); }
+  .nav-brand:hover .prompt-mark { color: var(--steel); }
+
+  .prompt-mark {
+    color: var(--steel);
+    font-weight: 700;
+    margin-right: 2px;
+    transition: color 0.2s;
+  }
+
+  .fin-mark { color: var(--violet); }
 
   .nav-links {
     display: flex;
@@ -485,7 +496,7 @@
   .footer-shark {
     font-family: var(--mono);
     color: var(--violet);
-    opacity: 0.3;
+    opacity: 0.6;
     font-size: 12px;
     margin-bottom: 16px;
     white-space: pre;
@@ -531,7 +542,7 @@
 
 <!-- ── Nav ──────────────────────────────────────────────── -->
 <nav>
-  <a href="#" class="nav-brand">thresher</a>
+  <a href="#" class="nav-brand"><span class="prompt-mark">$</span><span class="fin-mark">_/|</span> thresher</a>
   <ul class="nav-links">
     <li><a href="#features">Features</a></li>
     <li><a href="#how-it-works">How It Works</a></li>
@@ -557,7 +568,7 @@
      |_/
       ~</div>
 
-  <h1>thresher</h1>
+  <h1><span class="prompt-mark">$</span><span class="fin-mark">_/|</span> thresher</h1>
   <p class="tagline">Separate the safe from the dangerous.</p>
 
   <div class="install-box" onclick="copyCmd(this)">
@@ -569,6 +580,10 @@
 
   <p class="hero-sub">
     Open source &middot; <a href="https://github.com/thresher-sh/thresher">View on GitHub</a>
+  </p>
+  <br /><br />
+  <p>
+    <div class="footer-shark" id="swim-line"></div>
   </p>
 </section>
 
