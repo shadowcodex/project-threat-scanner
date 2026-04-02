@@ -34,8 +34,8 @@ def download_dependencies(vm_name: str, config: ScanConfig) -> None:
     # Ensure working directories exist and copy target repo to
     # the container's expected mount location (all inside the VM)
     ssh_exec(vm_name, (
-        "sudo mkdir -p /home/scanner/work/target /home/scanner/work/deps && "
-        "sudo cp -r /opt/target/* /home/scanner/work/target/ 2>/dev/null || true"
+        "sudo mkdir -p /opt/thresher/work/target /opt/thresher/work/deps && "
+        "sudo cp -r /opt/target/* /opt/thresher/work/target/ 2>/dev/null || true"
     ))
 
     # Single invocation — the wrapper and container handle everything
@@ -49,6 +49,6 @@ def download_dependencies(vm_name: str, config: ScanConfig) -> None:
         raise RuntimeError(f"Dependency resolution failed (exit {exit_code}): {stderr}")
 
     # Copy resolved deps to /opt/deps so scanners can find them (all inside VM)
-    ssh_exec(vm_name, "sudo cp -r /home/scanner/work/deps/* /opt/deps/ 2>/dev/null || true")
+    ssh_exec(vm_name, "sudo cp -r /opt/thresher/work/deps/* /opt/deps/ 2>/dev/null || true")
 
     logger.info("Dependency resolution complete")

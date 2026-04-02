@@ -27,7 +27,7 @@ from thresher.vm.ssh import ssh_exec, ssh_write_file
 logger = logging.getLogger(__name__)
 
 TARGET_DIR = "/opt/target"
-OUTPUT_PATH = "/home/scanner/work/deps/hidden_deps.json"
+OUTPUT_PATH = "/opt/thresher/work/deps/hidden_deps.json"
 
 PREDEP_PROMPT = """\
 You are a dependency discovery agent. Your job is to scan a source code \
@@ -165,21 +165,20 @@ def run_predep_discovery(
         f"--max-turns 15"
     )
 
-    # Write API key to tmpfs and read-and-delete
+    # Write credentials to tmpfs and read-and-delete.
+    # Supports both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN.
     env = config.ai_env()
-    api_key = env.get("ANTHROPIC_API_KEY", "") if env else ""
-    if api_key:
-        ssh_exec(
-            vm_name,
-            "printf '%s' " + _shell_quote_key(api_key) + " > /dev/shm/.api_key"
-            " && chmod 600 /dev/shm/.api_key",
-        )
-        claude_cmd = (
-            "ANTHROPIC_API_KEY=$(cat /dev/shm/.api_key); "
-            "export ANTHROPIC_API_KEY; "
-            "rm -f /dev/shm/.api_key; "
-            + claude_cmd
-        )
+    if env:
+        exports = []
+        for key, value in env.items():
+            tmpfile = f"/dev/shm/.cred_{key}"
+            ssh_exec(
+                vm_name,
+                "printf '%s' " + _shell_quote_key(value) + f" > {tmpfile}"
+                f" && chmod 600 {tmpfile}",
+            )
+            exports.append(f"{key}=$(cat {tmpfile}); export {key}; rm -f {tmpfile}")
+        claude_cmd = "; ".join(exports) + "; " + claude_cmd
 
     logger.info("Running pre-dependency discovery agent in VM %s", vm_name)
     try:

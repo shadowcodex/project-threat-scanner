@@ -79,13 +79,29 @@ thresher scan https://github.com/owner/repo --skip-ai
 thresher scan https://github.com/owner/repo
 ```
 
-### Pre-build the base VM (speeds up future scans)
+### Get the base VM image
+
+**Option A: Import a pre-built image (~30 seconds)**
+
+```bash
+thresher import latest
+```
+
+**Option B: Build from scratch (~10 minutes)**
 
 ```bash
 thresher build
 ```
 
-This provisions the base VM with all scanner tools and databases. Subsequent scans reuse this base image instead of provisioning from scratch.
+Either way, subsequent scans reuse this base image instead of provisioning from scratch.
+
+### List available images
+
+```bash
+thresher list
+```
+
+Shows all releases with downloadable VM images, their sizes, and download counts.
 
 ## What Happens During a Scan
 
@@ -132,6 +148,32 @@ thresher stop
 ```
 
 Force-stops and deletes all scanner VMs. Use this if a scan crashed and left VMs running.
+
+### `thresher list` — List available images
+
+```bash
+thresher list
+```
+
+Lists pre-built VM images available from GitHub releases.
+
+### `thresher import` — Import a pre-built image
+
+```bash
+thresher import latest                    # Latest release
+thresher import v0.2.0                    # Specific version
+thresher import https://example.com/img   # Direct URL
+thresher import ./thresher-base.qcow2     # Local file
+```
+
+### `thresher export` — Export base image
+
+```bash
+thresher export
+thresher export --output release/v0.2.0.qcow2
+```
+
+Creates a compressed qcow2 image from your built base VM. Attach to a GitHub release for others to import.
 
 ## Tmux UI
 

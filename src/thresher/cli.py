@@ -224,6 +224,268 @@ def stop() -> None:
 
 
 # ---------------------------------------------------------------------------
+# thresher list
+# ---------------------------------------------------------------------------
+
+@cli.command(name="list")
+def list_images() -> None:
+    """List available pre-built VM images from GitHub releases."""
+    import json
+    import urllib.request
+    import urllib.error
+
+    from thresher.branding import VIOLET, ARCTIC, GRAY, GREEN, RESET, BOLD, DIM
+
+    GITHUB_REPO = "thresher-sh/thresher"
+    ASSET_NAME = "thresher-base.qcow2"
+    API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
+
+    print(f"\n  {BOLD}{ARCTIC}Available Thresher VM Images{RESET}\n")
+
+    try:
+        req = urllib.request.Request(
+            API_URL,
+            headers={"User-Agent": "thresher/0.2.0", "Accept": "application/vnd.github+json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            releases = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        print_error(f"GitHub API error: {e.code} {e.reason}")
+        sys.exit(1)
+    except (urllib.error.URLError, TimeoutError) as e:
+        print_error(f"Cannot reach GitHub: {e}")
+        sys.exit(1)
+
+    if not releases:
+        click.echo(f"  {GRAY}No releases found.{RESET}")
+        click.echo(f"  Build locally with: thresher build")
+        return
+
+    found = 0
+    for release in releases:
+        tag = release.get("tag_name", "")
+        name = release.get("name", tag)
+        published = release.get("published_at", "")[:10]
+        prerelease = release.get("prerelease", False)
+        is_latest = release == releases[0]
+
+        # Check if this release has a VM image asset
+        assets = release.get("assets", [])
+        image_asset = next((a for a in assets if a.get("name") == ASSET_NAME), None)
+
+        if image_asset:
+            size_mb = image_asset.get("size", 0) / (1024 * 1024)
+            downloads = image_asset.get("download_count", 0)
+            tag_display = f"{VIOLET}{tag}{RESET}"
+            if is_latest:
+                tag_display += f"  {GREEN}(latest){RESET}"
+            if prerelease:
+                tag_display += f"  {DIM}(pre-release){RESET}"
+
+            print(f"  {tag_display}")
+            print(f"    {GRAY}{name} | {published} | {size_mb:.0f} MB | {downloads} downloads{RESET}")
+            print(f"    {DIM}thresher import {tag}{RESET}")
+            print()
+            found += 1
+        else:
+            # Release exists but no image attached
+            tag_display = f"{DIM}{tag}{RESET}"
+            print(f"  {tag_display}")
+            print(f"    {GRAY}{name} | {published} | no VM image{RESET}")
+            print()
+
+    if found == 0:
+        click.echo(f"  {GRAY}No releases have VM images attached.{RESET}")
+        click.echo(f"  Build locally with: thresher build")
+    else:
+        print(f"  {GRAY}Import with: thresher import latest{RESET}")
+        print(f"  {GRAY}Or specific: thresher import <tag>{RESET}")
+        print()
+
+
+# ---------------------------------------------------------------------------
+# thresher export
+# ---------------------------------------------------------------------------
+
+@cli.command(name="export")
+@click.option("--output", "output_path", default=None,
+              help="Output path for the disk image (default: ./thresher-base.qcow2)")
+def export_image(output_path: str | None) -> None:
+    """Export the base VM disk image for distribution.
+
+    Creates a compressed qcow2 image that others can import with
+    `thresher import` instead of building from scratch.
+    """
+    from thresher.vm.lima import BASE_VM_NAME, base_exists, vm_status
+
+    if not base_exists():
+        print_error("No base VM found. Run `thresher build` first.")
+        sys.exit(1)
+
+    status = vm_status(BASE_VM_NAME)
+    if status == "Running":
+        print_error("Base VM is running. Run `thresher stop` first.")
+        sys.exit(1)
+
+    disk_path = Path.home() / ".lima" / BASE_VM_NAME / "disk"
+    if not disk_path.exists():
+        # Try basedisk
+        disk_path = Path.home() / ".lima" / BASE_VM_NAME / "basedisk"
+    if not disk_path.exists():
+        print_error(f"Cannot find VM disk at {disk_path}")
+        sys.exit(1)
+
+    dest = Path(output_path) if output_path else Path("thresher-base.qcow2")
+
+    with FinSpinner(f"Exporting base image to {dest}"):
+        result = subprocess.run(
+            ["qemu-img", "convert", "-f", "raw", "-O", "qcow2", "-c",
+             str(disk_path), str(dest)],
+            capture_output=True, text=True, timeout=600,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"qemu-img failed: {result.stderr}")
+
+    size_mb = dest.stat().st_size / (1024 * 1024)
+    print_stage_ok(f"Exported to {dest} ({size_mb:.0f} MB)")
+    click.echo(f"\n  Share this file. Others can import with:")
+    click.echo(f"    thresher import {dest}")
+
+
+# ---------------------------------------------------------------------------
+# thresher import
+# ---------------------------------------------------------------------------
+
+@cli.command(name="import")
+@click.argument("image_source")
+@click.option("--cpus", type=int, default=None)
+@click.option("--memory", type=int, default=None)
+@click.option("--disk", type=int, default=None)
+def import_image(image_source: str, cpus: int | None, memory: int | None, disk: int | None) -> None:
+    """Import a pre-built base VM image (skips the build step).
+
+    IMAGE_SOURCE can be:
+      - A local file path: thresher-base.qcow2
+      - A URL: https://github.com/thresher-sh/thresher/releases/download/v0.2.0/thresher-base.qcow2
+      - A GitHub release shorthand: latest (downloads from latest release)
+      - A GitHub release tag: v0.2.0
+    """
+    import urllib.request
+    import urllib.error
+    import tempfile
+
+    from thresher.vm.lima import (
+        BASE_VM_NAME, _TEMPLATE_PATH, _run_limactl,
+        base_exists, destroy_vm,
+    )
+
+    config = load_config(repo_url="", skip_ai=True, cpus=cpus, memory=memory, disk=disk)
+
+    GITHUB_REPO = "thresher-sh/thresher"
+    ASSET_NAME = "thresher-base.qcow2"
+
+    # Resolve the image source
+    if image_source.startswith("http://") or image_source.startswith("https://"):
+        download_url = image_source
+    elif image_source == "latest":
+        download_url = (
+            f"https://github.com/{GITHUB_REPO}/releases/latest/download/{ASSET_NAME}"
+        )
+    elif image_source.startswith("v"):
+        download_url = (
+            f"https://github.com/{GITHUB_REPO}/releases/download/{image_source}/{ASSET_NAME}"
+        )
+    elif Path(image_source).exists():
+        download_url = None  # local file
+    else:
+        print_error(
+            f"Cannot resolve '{image_source}'. Use a file path, URL, 'latest', or a version tag (v0.2.0)."
+        )
+        sys.exit(1)
+
+    try:
+        # Download if needed
+        if download_url:
+            print_splash("v0.2.0", "thresher.sh")
+            local_image = Path(tempfile.mkdtemp()) / ASSET_NAME
+
+            def _download() -> None:
+                req = urllib.request.Request(
+                    download_url,
+                    headers={"User-Agent": "thresher/0.2.0"},
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=600) as resp:
+                        total = int(resp.headers.get("Content-Length", 0))
+                        downloaded = 0
+                        with open(local_image, "wb") as f:
+                            while True:
+                                chunk = resp.read(1024 * 1024)  # 1MB chunks
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                except urllib.error.HTTPError as e:
+                    if e.code == 404:
+                        raise RuntimeError(
+                            f"Image not found at {download_url}. "
+                            f"Check the release exists."
+                        ) from e
+                    raise RuntimeError(f"Download failed: {e}") from e
+
+            with FinSpinner(f"Downloading image from {download_url}"):
+                _download()
+
+            size_mb = local_image.stat().st_size / (1024 * 1024)
+            print_stage_ok(f"Downloaded ({size_mb:.0f} MB)")
+        else:
+            print_splash("v0.2.0", "thresher.sh")
+            local_image = Path(image_source)
+
+        if base_exists():
+            with FinSpinner("Removing existing base VM"):
+                destroy_vm(BASE_VM_NAME)
+
+        with FinSpinner("Creating VM from template"):
+            result = _run_limactl([
+                "limactl", "create",
+                "--name", BASE_VM_NAME,
+                f"--cpus={config.vm.cpus}",
+                f"--memory={config.vm.memory}",
+                f"--disk={config.vm.disk}",
+                "--plain",
+                str(_TEMPLATE_PATH),
+            ], timeout=300)
+            if result.returncode != 0:
+                raise RuntimeError(f"Failed to create VM: {result.stderr}")
+
+        disk_path = Path.home() / ".lima" / BASE_VM_NAME / "disk"
+
+        with FinSpinner("Importing disk image"):
+            result = subprocess.run(
+                ["qemu-img", "convert", "-f", "qcow2", "-O", "raw",
+                 str(local_image), str(disk_path)],
+                capture_output=True, text=True, timeout=600,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"qemu-img failed: {result.stderr}")
+
+        print_stage_ok("Base VM imported successfully")
+        click.echo("\n  Run `thresher scan <url>` to start scanning.")
+
+        # Clean up downloaded temp file
+        if download_url and local_image.exists():
+            local_image.unlink()
+
+    except KeyboardInterrupt:
+        click.echo("\nImport interrupted.")
+        sys.exit(130)
+    except Exception as e:
+        print_error(str(e))
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Legacy entry points (for backward compat with thresher-build, thresher-stop)
 # ---------------------------------------------------------------------------
 

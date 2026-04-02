@@ -11,6 +11,10 @@ TARGET_DIR="${2:?Usage: safe_clone.sh <REPO_URL> <TARGET_DIR>}"
 LOG_PREFIX="[safe_clone]"
 log() { echo "${LOG_PREFIX} $(date '+%H:%M:%S') $*"; }
 
+# Allow git to work in directories owned by other users (root).
+# The target dir is created by sudo but clone runs as the SSH user.
+git config --global --add safe.directory "$TARGET_DIR"
+
 # ── Phase 1: Fetch without checkout ─────────────────────────────────
 # --no-checkout: prevents implicit checkout (no filters/hooks fire)
 # --depth=1: shallow clone (minimize attack surface in history)

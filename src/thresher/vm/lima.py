@@ -258,7 +258,7 @@ def provision_vm(vm_name: str, config: ScanConfig) -> None:
     # scripts use sudo extensively.
     stdout, stderr, rc = ssh_exec(
         vm_name,
-        "chmod +x /tmp/lockdown.sh && sudo /tmp/lockdown.sh",
+        "chmod +x /tmp/lockdown.sh && sudo /tmp/lockdown.sh $(whoami)",
         timeout=60,
         env=env,
     )

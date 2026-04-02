@@ -318,23 +318,20 @@ def _run_single_analyst(
         f"--max-turns {max_turns}"
     )
 
-    # Write API key to tmpfs (never touches disk) and read-and-delete
+    # Write credentials to tmpfs and read-and-delete.
+    # Each analyst uses unique paths to avoid race conditions.
     env = config.ai_env()
-    api_key = env.get("ANTHROPIC_API_KEY", "") if env else ""
-    if api_key:
-        # Each analyst uses a unique tmpfs path to avoid race conditions
-        key_path = f"/dev/shm/.api_key_{number}"
-        ssh_exec(
-            vm_name,
-            "printf '%s' " + _shell_quote_key(api_key) + f" > {key_path}"
-            f" && chmod 600 {key_path}",
-        )
-        claude_cmd = (
-            f"ANTHROPIC_API_KEY=$(cat {key_path}); "
-            "export ANTHROPIC_API_KEY; "
-            f"rm -f {key_path}; "
-            + claude_cmd
-        )
+    if env:
+        exports = []
+        for key, value in env.items():
+            tmpfile = f"/dev/shm/.cred_{key}_{number}"
+            ssh_exec(
+                vm_name,
+                "printf '%s' " + _shell_quote_key(value) + f" > {tmpfile}"
+                f" && chmod 600 {tmpfile}",
+            )
+            exports.append(f"{key}=$(cat {tmpfile}); export {key}; rm -f {tmpfile}")
+        claude_cmd = "; ".join(exports) + "; " + claude_cmd
 
     logger.info("Invoking %s in VM %s", label, vm_name)
     try:

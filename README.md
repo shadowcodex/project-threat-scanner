@@ -25,6 +25,12 @@ Supply chain security scanner. 22 deterministic scanners + 8 AI analyst personas
 
 ```bash
 pip install -e .
+
+# Import a pre-built VM image (fast — ~30 seconds)
+thresher import latest
+
+# Or build your own (~10 minutes)
+thresher build
 ```
 
 ```bash
@@ -139,6 +145,9 @@ uv run thresher scan https://github.com/owner/repo --skip-ai
 | `thresher scan <url>` | Scan a repository |
 | `thresher build` | Build/rebuild the cached base VM image |
 | `thresher stop` | Stop all VMs and tmux session |
+| `thresher list` | List available pre-built VM images from releases |
+| `thresher import <source>` | Import a pre-built VM image (skip the build) |
+| `thresher export` | Export your base VM image for distribution |
 
 ### Flags
 

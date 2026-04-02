@@ -114,7 +114,7 @@ class TestRunPredepDiscovery:
         run_predep_discovery("test-vm", config)
 
         cmds = [c[0][1] for c in mock_exec.call_args_list]
-        assert any("/dev/shm/.api_key" in cmd for cmd in cmds)
+        assert any("/dev/shm/.cred_" in cmd for cmd in cmds)
 
     @patch("thresher.agents.predep.ssh_write_file")
     @patch("thresher.agents.predep.ssh_exec")

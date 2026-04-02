@@ -25,6 +25,10 @@ fi
 log "Updating apt package lists..."
 sudo apt-get update -qq
 
+# Speed up apt installs — parallel downloads
+echo 'Acquire::Queue-Mode "access";' | sudo tee /etc/apt/apt.conf.d/99parallel > /dev/null
+echo 'APT::Acquire::Retries "3";' | sudo tee -a /etc/apt/apt.conf.d/99parallel > /dev/null
+
 # ---------------------------------------------------------------------------
 # Git
 # ---------------------------------------------------------------------------
@@ -438,12 +442,12 @@ sudo mkdir -p /opt/target
 sudo mkdir -p /opt/deps
 sudo mkdir -p /opt/scan-results
 sudo mkdir -p /opt/security-reports
-sudo mkdir -p /home/scanner/work/target
-sudo mkdir -p /home/scanner/work/deps
+sudo mkdir -p /opt/thresher/work/target
+sudo mkdir -p /opt/thresher/work/deps
 
 # Make directories writable by any user (the SSH user that runs scans
 # differs from the sudo context that runs this script)
 sudo chmod -R 777 /opt/target /opt/deps /opt/scan-results /opt/security-reports
-sudo chmod -R 777 /home/scanner/work
+sudo chmod -R 777 /opt/thresher/work
 
 log "Provisioning complete. All tools installed and directories created."
