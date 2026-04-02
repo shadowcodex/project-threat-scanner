@@ -572,9 +572,9 @@
   <h1><span class="prompt-mark">$</span><span class="fin-mark">_/|</span> thresher</h1>
   <p class="tagline">Separate the safe from the dangerous.</p>
 
-  <div class="install-box" onclick="copyCmd(this)">
+  <div class="install-box" onclick="copyCmd(this, 'brew tap thresher-sh/thresher && brew install thresher')">
     <span class="prompt">$</span>
-    <span class="cmd">curl -fsSL <span class="domain">thresher.sh/install</span> | bash</span>
+    <span class="cmd">brew tap thresher-sh/thresher && brew install <span class="domain">thresher</span></span>
     <span class="copy-tooltip">copied!</span>
   </div>
   <div class="install-hint">click to copy</div>
@@ -803,9 +803,9 @@
 
   <h2>What's hiding in your dependencies?</h2>
 
-  <div class="install-box" onclick="copyCmd(this)" style="margin: 0 auto;">
+  <div class="install-box" onclick="copyCmd(this, 'brew tap thresher-sh/thresher && brew install thresher')" style="margin: 0 auto;">
     <span class="prompt">$</span>
-    <span class="cmd">curl -fsSL <span class="domain">thresher.sh/install</span> | bash</span>
+    <span class="cmd">brew tap thresher-sh/thresher && brew install <span class="domain">thresher</span></span>
     <span class="copy-tooltip">copied!</span>
   </div>
 </section>
@@ -814,8 +814,8 @@
 <footer>
   <div class="footer-shark" id="swim-line"></div>
 <script>
-function copyCmd(el) {
-  var cmd = 'curl -fsSL thresher.sh/install | bash';
+function copyCmd(el, cmd) {
+  cmd = cmd || 'brew tap thresher-sh/thresher && brew install thresher';
   navigator.clipboard.writeText(cmd).then(function() {
     var tip = el.querySelector('.copy-tooltip');
     if (!tip) return;
