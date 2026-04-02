@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Thresher Favicon Generator</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0}
+body{width:1024px;height:1024px;display:flex;align-items:center;justify-content:center;background:#0a0a0a}
+.p{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:260px;color:#6b7280;letter-spacing:-8px;margin-right:10px}
+.f{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:260px;color:#a78bfa;letter-spacing:-8px}
+</style>
+<!--
+  Favicon render template — $ _/| prompt style
+  Used by headless Chrome to generate 1024x1024 PNGs.
+
+  Variants (edit colors and re-render):
+    Purple on black:       bg=#0a0a0a  prompt=#6b7280  fin=#a78bfa
+    White on black:        bg=#0a0a0a  prompt=#6b7280  fin=#f0f9ff
+    White on transparent:  bg=transparent  prompt=#9ca3af  fin=#f0f9ff  (use --default-background-color=00000000)
+    Black on transparent:  bg=transparent  prompt=#9ca3af  fin=#0a0a0a  (use --default-background-color=00000000)
+
+  Render command:
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+      --headless=new --disable-gpu --no-sandbox --window-size=1024,1024 \
+      --screenshot=favicon-purple-black.png \
+      --virtual-time-budget=3000 \
+      "file:///path/to/favicon-generator.html"
+
+  For transparent backgrounds add:
+      --default-background-color=00000000
+-->
+</head>
+<body>
+<span class="p">$ </span><span class="f">_/|</span>
+</body>
+</html>
