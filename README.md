@@ -26,8 +26,19 @@ Supply chain security scanner. 22 deterministic scanners + 8 AI analyst personas
 ## Install
 
 ```bash
-pip install -e .
+brew tap thresher-sh/thresher
+brew install thresher
+```
 
+Or with pip:
+
+```bash
+pip install -e .
+```
+
+Then set up the VM:
+
+```bash
 # Import a pre-built VM image (fast — ~30 seconds)
 thresher import latest
 
