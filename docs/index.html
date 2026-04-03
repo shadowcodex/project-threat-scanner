@@ -548,6 +548,7 @@
     <li><a href="#features">Features</a></li>
     <li><a href="#how-it-works">How It Works</a></li>
     <li><a href="#analysts">Analysts</a></li>
+    <li><a href="#results">Results</a></li>
     <li><a href="https://github.com/thresher-sh/thresher">GitHub</a></li>
   </ul>
 </nav>
@@ -791,6 +792,47 @@
   </div>
 </section>
 
+<!-- ── Results ─────────────────────────────────────────── -->
+<section class="section" id="results">
+  <div class="section-title">// Real results</div>
+  <h2>Vulnerabilities found and fixed.</h2>
+
+  <div class="features" id="stats-grid">
+    <div class="feature-card">
+      <div class="feature-number" id="stat-projects">-</div>
+      <div class="feature-label">Projects Scanned</div>
+      <div class="feature-desc">Open source repositories analyzed and remediated with security PRs.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-number" id="stat-critical" style="color: var(--threat-red);">-</div>
+      <div class="feature-label">Critical Findings</div>
+      <div class="feature-desc">Critical severity vulnerabilities discovered and fixed.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-number" id="stat-high" style="color: var(--amber);">-</div>
+      <div class="feature-label">High Findings</div>
+      <div class="feature-desc">High severity vulnerabilities discovered and fixed.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-number" id="stat-supply-chain">-</div>
+      <div class="feature-label">Supply Chain Fixes</div>
+      <div class="feature-desc">Vulnerable dependencies upgraded to secure versions.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-number" id="stat-app-sec">-</div>
+      <div class="feature-label">App Security Fixes</div>
+      <div class="feature-desc">XSS, SQLi, IDOR, path traversal, and other application-level bugs patched.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-number" id="stat-cves">-</div>
+      <div class="feature-label">CVEs Resolved</div>
+      <div class="feature-desc">Known CVEs resolved across all scanned projects.</div>
+    </div>
+  </div>
+
+  <div id="stats-projects-list" style="margin-top: 32px;"></div>
+</section>
+
 <!-- ── CTA ──────────────────────────────────────────────── -->
 <section class="cta-section">
   <div class="cta-ascii">                     _/|
@@ -857,6 +899,50 @@ function copyCmd(el, cmd) {
     <strong>Disclaimer:</strong> Thresher is provided &ldquo;as is&rdquo; without warranty of any kind. It does not guarantee detection of all vulnerabilities, malicious code, or supply chain threats. Results should not be treated as a substitute for professional security audits. No VM isolation is guaranteed safe. Use at your own risk.
   </p>
 </footer>
+<script>
+(function() {
+  fetch('data/remediations.json')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var t = data.totals;
+      var el = function(id) { return document.getElementById(id); };
+      el('stat-projects').textContent = t.projects_scanned;
+      el('stat-critical').textContent = t.total_critical;
+      el('stat-high').textContent = t.total_high;
+      el('stat-supply-chain').textContent = t.total_supply_chain_findings;
+      el('stat-app-sec').textContent = t.total_app_security_fixes;
+      el('stat-cves').textContent = t.total_cves_resolved;
+
+      // Build project list
+      var list = document.getElementById('stats-projects-list');
+      data.remediations.forEach(function(r) {
+        var card = document.createElement('div');
+        card.style.cssText = 'background:var(--terminal-black);border:1px solid var(--charcoal);border-radius:8px;padding:20px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;';
+
+        var left = document.createElement('div');
+        left.innerHTML = '<a href="' + r.repo_url + '" style="color:var(--arctic);text-decoration:none;font-weight:700;font-size:15px;border-bottom:1px solid var(--charcoal);transition:border-color 0.2s;">' + r.repo + '</a>'
+          + '<span style="color:var(--steel);font-size:12px;margin-left:12px;">' + r.scan_date + '</span>';
+
+        var mid = document.createElement('div');
+        mid.style.cssText = 'display:flex;gap:16px;font-size:12px;';
+        mid.innerHTML = '<span style="color:var(--threat-red);font-weight:700;">' + r.findings.critical + ' CRIT</span>'
+          + '<span style="color:var(--amber);font-weight:700;">' + r.findings.high + ' HIGH</span>'
+          + '<span style="color:var(--steel);">' + r.findings.medium + ' MED</span>';
+
+        var right = document.createElement('div');
+        right.style.cssText = 'display:flex;gap:16px;align-items:center;';
+        right.innerHTML = '<a href="' + r.report_url + '" style="color:var(--arctic);text-decoration:none;font-size:12px;border-bottom:1px solid var(--charcoal);">Report</a>'
+          + '<a href="' + r.pr_url + '" style="color:var(--violet);text-decoration:none;font-size:13px;font-weight:600;">PR #' + r.pr_number + '</a>';
+
+        card.appendChild(left);
+        card.appendChild(mid);
+        card.appendChild(right);
+        list.appendChild(card);
+      });
+    })
+    .catch(function() {});
+})();
+</script>
 
 </body>
 </html>

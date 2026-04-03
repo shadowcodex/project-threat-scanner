@@ -44,21 +44,22 @@ class TestAnalystsPipeline:
     @patch("thresher.agents.analysts.ssh_exec")
     def test_runs_all_eight_analysts(self, mock_exec, mock_write):
         mock_exec.return_value = SSHResult(
-            '{"findings":[],"risk_score":0}', "", 0
+            '{"analyst":"test","findings":[],"summary":"clean","risk_score":0}', "", 0
         )
         mock_write.return_value = None
 
         run_all_analysts("vm", _make_config())
 
+        # 1 ssh_exec for mkdir (stop hook setup)
         # Each analyst: 1 ssh_exec for API key write + 1 ssh_exec for claude = 2
-        # Total: 8 * 2 = 16 ssh_exec calls
-        assert mock_exec.call_count == 16
+        # Total: 1 + 8 * 2 = 17 ssh_exec calls
+        assert mock_exec.call_count == 17
 
     @patch("thresher.agents.analysts.ssh_write_file")
     @patch("thresher.agents.analysts.ssh_exec")
     def test_all_use_bash_in_allowed_tools(self, mock_exec, mock_write):
         mock_exec.return_value = SSHResult(
-            '{"findings":[],"risk_score":0}', "", 0
+            '{"analyst":"test","findings":[],"summary":"clean","risk_score":0}', "", 0
         )
         mock_write.return_value = None
 
@@ -74,7 +75,7 @@ class TestAnalystsPipeline:
     @patch("thresher.agents.analysts.ssh_exec")
     def test_all_use_tmpfs_api_key(self, mock_exec, mock_write):
         mock_exec.return_value = SSHResult(
-            '{"findings":[],"risk_score":0}', "", 0
+            '{"analyst":"test","findings":[],"summary":"clean","risk_score":0}', "", 0
         )
         mock_write.return_value = None
 
@@ -88,7 +89,7 @@ class TestAnalystsPipeline:
     @patch("thresher.agents.analysts.ssh_exec")
     def test_writes_findings_to_correct_paths(self, mock_exec, mock_write):
         mock_exec.return_value = SSHResult(
-            '{"findings":[],"risk_score":0}', "", 0
+            '{"analyst":"test","findings":[],"summary":"clean","risk_score":0}', "", 0
         )
         mock_write.return_value = None
 
@@ -107,7 +108,7 @@ class TestAnalystsPipeline:
     @patch("thresher.agents.analysts.ssh_exec")
     def test_returns_none(self, mock_exec, mock_write):
         mock_exec.return_value = SSHResult(
-            '{"findings":[],"risk_score":0}', "", 0
+            '{"analyst":"test","findings":[],"summary":"clean","risk_score":0}', "", 0
         )
         mock_write.return_value = None
 

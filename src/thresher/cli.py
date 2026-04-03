@@ -71,6 +71,7 @@ def cli(ctx: click.Context) -> None:
 @click.option("--disk", type=int, default=None, help="VM disk in GB (default: 50)")
 @click.option("--tmux", is_flag=True, help="Enable tmux split-pane UI")
 @click.option("--high-risk-dep", is_flag=True, help="Download high-risk hidden dependencies (binaries, tarballs)")
+@click.option("--branch", default=None, help="Git branch to clone (default: repo default branch)")
 def scan(
     repo_url: str,
     depth: int | None,
@@ -82,6 +83,7 @@ def scan(
     disk: int | None,
     tmux: bool,
     high_risk_dep: bool,
+    branch: str | None,
 ) -> None:
     """Scan a repository for security threats and supply chain risks."""
     config = load_config(
@@ -94,6 +96,7 @@ def scan(
         memory=memory,
         disk=disk,
         high_risk_dep=high_risk_dep,
+        branch=branch,
     )
 
     import datetime
@@ -647,9 +650,10 @@ def _run_scan(config: ScanConfig) -> None:
 
         with FinSpinner("Cloning repository (hardened)"):
             safe_url = shlex.quote(config.repo_url)
+            branch_arg = f" {shlex.quote(config.branch)}" if config.branch else ""
             stdout, stderr, rc = ssh_exec(
                 vm_name,
-                f"bash /opt/thresher/bin/safe_clone.sh {safe_url} /opt/target",
+                f"bash /opt/thresher/bin/safe_clone.sh {safe_url} /opt/target{branch_arg}",
                 timeout=300,
             )
             if rc != 0:

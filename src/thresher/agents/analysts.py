@@ -132,6 +132,30 @@ def _extract_result_from_stream(raw_output: str) -> str:
     return result_text if result_text else raw_output
 
 
+_REQUIRED_ANALYST_KEYS = {"analyst", "findings", "summary", "risk_score"}
+
+
+def _validate_analyst_schema(parsed: dict[str, Any], analyst_def: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the parsed dict if it matches the analyst schema, else None."""
+    if not isinstance(parsed, dict):
+        return None
+    # Reject pre-dep schema
+    if "hidden_dependencies" in parsed and "findings" not in parsed:
+        logger.warning(
+            "Analyst %s returned pre-dep schema (hidden_dependencies), rejecting",
+            analyst_def["name"],
+        )
+        return None
+    if not _REQUIRED_ANALYST_KEYS.issubset(parsed.keys()):
+        missing = _REQUIRED_ANALYST_KEYS - parsed.keys()
+        logger.warning(
+            "Analyst %s output missing required keys: %s",
+            analyst_def["name"], missing,
+        )
+        return None
+    return parsed
+
+
 def _parse_analyst_json_output(raw_output: str, analyst_def: dict[str, Any]) -> dict[str, Any]:
     """Parse JSON from Claude Code headless output for an analyst."""
     if not raw_output or not raw_output.strip():
@@ -139,6 +163,8 @@ def _parse_analyst_json_output(raw_output: str, analyst_def: dict[str, Any]) -> 
         return _empty_findings(analyst_def, "Agent returned empty output")
 
     text = _extract_result_from_stream(raw_output).strip()
+
+    candidates: list[dict[str, Any]] = []
 
     # Try direct JSON parse
     try:
@@ -149,15 +175,13 @@ def _parse_analyst_json_output(raw_output: str, analyst_def: dict[str, Any]) -> 
                 try:
                     inner_parsed = json.loads(inner)
                     if isinstance(inner_parsed, dict):
-                        return inner_parsed
+                        candidates.append(inner_parsed)
                 except json.JSONDecodeError:
                     pass
             elif isinstance(inner, dict):
-                return inner
-        if isinstance(parsed, dict) and "findings" in parsed:
-            return parsed
+                candidates.append(inner)
         if isinstance(parsed, dict):
-            return parsed
+            candidates.append(parsed)
     except json.JSONDecodeError:
         pass
 
@@ -167,7 +191,7 @@ def _parse_analyst_json_output(raw_output: str, analyst_def: dict[str, Any]) -> 
         try:
             parsed = json.loads(json_block.group(1))
             if isinstance(parsed, dict):
-                return parsed
+                candidates.append(parsed)
         except json.JSONDecodeError:
             pass
 
@@ -185,11 +209,18 @@ def _parse_analyst_json_output(raw_output: str, analyst_def: dict[str, Any]) -> 
                     try:
                         parsed = json.loads(candidate)
                         if isinstance(parsed, dict):
-                            return parsed
+                            candidates.append(parsed)
                     except json.JSONDecodeError:
-                        break
+                        pass
+                    break
 
-    logger.warning("Could not parse JSON from analyst %s output", analyst_def["name"])
+    # Return the first candidate that passes schema validation
+    for candidate in candidates:
+        validated = _validate_analyst_schema(candidate, analyst_def)
+        if validated is not None:
+            return validated
+
+    logger.warning("Could not parse valid analyst JSON from %s output", analyst_def["name"])
     return _empty_findings(analyst_def, f"Failed to parse output. Raw: {text[:500]}")
 
 
@@ -384,6 +415,29 @@ def run_all_analysts(vm_name: str, config: ScanConfig) -> None:
         config: Scan configuration.
     """
     logger.info("Starting %d analyst agents in parallel", len(ANALYST_DEFINITIONS))
+
+    # Install the analyst stop hook BEFORE launching parallel agents.
+    # This overwrites the predep stop hook so analysts are validated
+    # against the correct schema (findings, not hidden_dependencies).
+    hook_settings = json.dumps({
+        "hooks": {
+            "Stop": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": "/opt/thresher/bin/validate_analyst_output.sh",
+                    "timeout": 30,
+                }]
+            }]
+        }
+    })
+    try:
+        ssh_exec(vm_name, f"mkdir -p {TARGET_DIR}/.claude")
+        ssh_write_file(
+            vm_name, hook_settings,
+            f"{TARGET_DIR}/.claude/settings.local.json",
+        )
+    except Exception:
+        logger.warning("Failed to write analyst stop hook settings", exc_info=True)
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         future_to_name = {}

@@ -1,0 +1,42 @@
+{
+  "remediations": [
+    {
+      "repo": "BuilderIO/agent-native",
+      "repo_url": "https://github.com/BuilderIO/agent-native",
+      "pr_number": 127,
+      "pr_url": "https://github.com/BuilderIO/agent-native/pull/127",
+      "report_url": "data/prs/agent-native-127.md",
+      "scan_date": "2026-04-02",
+      "findings": {
+        "total_deterministic": 518,
+        "total_ai": 44,
+        "critical": 2,
+        "high": 28,
+        "medium": 5,
+        "low": 0,
+        "supply_chain": 13,
+        "malicious_code": 0,
+        "cisa_kev": 0
+      },
+      "remediations": {
+        "dependency_upgrades": 13,
+        "app_security_fixes": 12,
+        "secrets_remediated": 1,
+        "ci_cd_hardening": 6
+      }
+    }
+  ],
+  "totals": {
+    "projects_scanned": 1,
+    "total_findings": 562,
+    "total_critical": 2,
+    "total_high": 28,
+    "total_medium": 5,
+    "total_supply_chain_findings": 13,
+    "total_app_security_fixes": 12,
+    "total_secrets_remediated": 1,
+    "total_ci_cd_fixes": 6,
+    "total_dependency_upgrades": 13,
+    "total_cves_resolved": 22
+  }
+}
