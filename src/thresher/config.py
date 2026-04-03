@@ -88,6 +88,7 @@ class ScanConfig:
     log_dir: str = ""
     tmux: bool = False
     high_risk_dep: bool = False
+    branch: str = ""
 
     @property
     def has_ai_credentials(self) -> bool:
@@ -131,6 +132,7 @@ def load_config(
     disk: int | None = None,
     config_path: Path | None = None,
     high_risk_dep: bool = False,
+    branch: str | None = None,
 ) -> ScanConfig:
     """Build ScanConfig from config file + CLI args + env vars. CLI args take precedence."""
     config = ScanConfig()
@@ -174,6 +176,8 @@ def load_config(
     config.skip_ai = skip_ai
     config.verbose = verbose
     config.high_risk_dep = high_risk_dep
+    if branch is not None:
+        config.branch = branch
     if output_dir is not None:
         config.output_dir = output_dir
     if cpus is not None:

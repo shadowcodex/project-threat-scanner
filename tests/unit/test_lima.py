@@ -122,6 +122,10 @@ class TestProvisionVM:
         # Source download hardening (persistent path, survives reboots)
         assert "/opt/thresher/bin/safe_clone.sh" in copied_destinations
 
+        # Stop hook validation scripts
+        assert "/opt/thresher/bin/validate_predep_output.sh" in copied_destinations
+        assert "/opt/thresher/bin/validate_analyst_output.sh" in copied_destinations
+
         # Scanner-deps Docker build context
         assert "/tmp/docker-scanner-deps/Dockerfile.scanner-deps" in copied_destinations
 

@@ -13,6 +13,7 @@ from thresher.agents.analysts import (
     _format_analyst_markdown,
     _parse_analyst_json_output,
     _run_single_analyst,
+    _validate_analyst_schema,
     run_all_analysts,
 )
 from thresher.config import ScanConfig
@@ -104,6 +105,7 @@ class TestParseAnalystJsonOutput:
         data = json.dumps({
             "analyst": "paranoid",
             "findings": [{"title": "test", "severity": "high"}],
+            "summary": "Found issues",
             "risk_score": 5,
         })
         result = _parse_analyst_json_output(data, self._analyst())
@@ -114,6 +116,7 @@ class TestParseAnalystJsonOutput:
         findings = {
             "analyst": "paranoid",
             "findings": [{"title": "x"}],
+            "summary": "test",
             "risk_score": 3,
         }
         stream = (
@@ -124,9 +127,26 @@ class TestParseAnalystJsonOutput:
         assert len(result["findings"]) == 1
 
     def test_json_in_code_block(self):
-        text = 'Here is my analysis:\n```json\n{"findings": [], "risk_score": 0}\n```\n'
+        text = 'Here is my analysis:\n```json\n{"analyst": "paranoid", "findings": [], "summary": "clean", "risk_score": 0}\n```\n'
         result = _parse_analyst_json_output(text, self._analyst())
         assert result["findings"] == []
+
+    def test_rejects_predep_schema(self):
+        """Output with hidden_dependencies but no findings should be rejected."""
+        data = json.dumps({
+            "hidden_dependencies": [{"type": "npm", "source": "foo"}],
+            "files_scanned": 100,
+            "summary": "Found deps",
+        })
+        result = _parse_analyst_json_output(data, self._analyst())
+        assert "error" in result
+        assert result["findings"] == []
+
+    def test_rejects_missing_required_keys(self):
+        """Output missing required analyst keys should be rejected."""
+        data = json.dumps({"some_other_key": "value"})
+        result = _parse_analyst_json_output(data, self._analyst())
+        assert "error" in result
 
 
 class TestEmptyFindings:
@@ -171,10 +191,26 @@ class TestFormatAnalystMarkdown:
 
 
 class TestRunSingleAnalyst:
+    def _valid_output(self):
+        return json.dumps({
+            "analyst": "paranoid",
+            "findings": [],
+            "summary": "All clear",
+            "risk_score": 0,
+        })
+
+    def _valid_output_with_findings(self):
+        return json.dumps({
+            "analyst": "paranoid",
+            "findings": [{"title": "test", "severity": "high"}],
+            "summary": "Found issues",
+            "risk_score": 5,
+        })
+
     @patch("thresher.agents.analysts.ssh_write_file")
     @patch("thresher.agents.analysts.ssh_exec")
     def test_writes_prompt_to_correct_path(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult('{"findings":[],"risk_score":0}', "", 0)
+        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
         mock_write.return_value = None
 
         analyst = ANALYST_DEFINITIONS[0]
@@ -187,7 +223,7 @@ class TestRunSingleAnalyst:
     @patch("thresher.agents.analysts.ssh_write_file")
     @patch("thresher.agents.analysts.ssh_exec")
     def test_uses_bash_in_allowed_tools(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult('{"findings":[],"risk_score":0}', "", 0)
+        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
         mock_write.return_value = None
 
         analyst = ANALYST_DEFINITIONS[0]
@@ -201,7 +237,7 @@ class TestRunSingleAnalyst:
     @patch("thresher.agents.analysts.ssh_write_file")
     @patch("thresher.agents.analysts.ssh_exec")
     def test_api_key_uses_tmpfs_pattern(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult('{"findings":[],"risk_score":0}', "", 0)
+        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
         mock_write.return_value = None
 
         analyst = ANALYST_DEFINITIONS[0]
@@ -218,12 +254,7 @@ class TestRunSingleAnalyst:
     @patch("thresher.agents.analysts.ssh_write_file")
     @patch("thresher.agents.analysts.ssh_exec")
     def test_writes_findings_to_correct_vm_path(self, mock_exec, mock_write):
-        findings = json.dumps({
-            "analyst": "paranoid",
-            "findings": [{"title": "test"}],
-            "risk_score": 5,
-        })
-        mock_exec.return_value = SSHResult(findings, "", 0)
+        mock_exec.return_value = SSHResult(self._valid_output_with_findings(), "", 0)
         mock_write.return_value = None
 
         analyst = ANALYST_DEFINITIONS[0]
@@ -236,7 +267,7 @@ class TestRunSingleAnalyst:
     @patch("thresher.agents.analysts.ssh_write_file")
     @patch("thresher.agents.analysts.ssh_exec")
     def test_returns_none(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult('{"findings":[],"risk_score":0}', "", 0)
+        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
         mock_write.return_value = None
 
         analyst = ANALYST_DEFINITIONS[0]
@@ -247,7 +278,7 @@ class TestRunSingleAnalyst:
     @patch("thresher.agents.analysts.ssh_exec")
     def test_unique_tmpfs_key_paths(self, mock_exec, mock_write):
         """Each analyst uses a unique tmpfs path to avoid race conditions."""
-        mock_exec.return_value = SSHResult('{"findings":[],"risk_score":0}', "", 0)
+        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
         mock_write.return_value = None
 
         config = _make_config()
@@ -262,18 +293,91 @@ class TestRunSingleAnalyst:
         assert "/dev/shm/.cred_ANTHROPIC_API_KEY_2" in key_writes[1]
 
 
+class TestValidateAnalystSchema:
+    def _analyst(self):
+        return ANALYST_DEFINITIONS[0]
+
+    def test_valid_schema(self):
+        data = {
+            "analyst": "paranoid",
+            "findings": [],
+            "summary": "clean",
+            "risk_score": 0,
+        }
+        assert _validate_analyst_schema(data, self._analyst()) == data
+
+    def test_rejects_predep_schema(self):
+        data = {
+            "hidden_dependencies": [{"type": "npm"}],
+            "files_scanned": 10,
+            "summary": "found deps",
+        }
+        assert _validate_analyst_schema(data, self._analyst()) is None
+
+    def test_rejects_missing_findings(self):
+        data = {"analyst": "paranoid", "summary": "ok", "risk_score": 0}
+        assert _validate_analyst_schema(data, self._analyst()) is None
+
+    def test_rejects_missing_risk_score(self):
+        data = {"analyst": "paranoid", "findings": [], "summary": "ok"}
+        assert _validate_analyst_schema(data, self._analyst()) is None
+
+    def test_rejects_non_dict(self):
+        assert _validate_analyst_schema("string", self._analyst()) is None
+        assert _validate_analyst_schema([], self._analyst()) is None
+
+    def test_accepts_with_extra_keys(self):
+        data = {
+            "analyst": "paranoid",
+            "findings": [],
+            "summary": "clean",
+            "risk_score": 0,
+            "files_analyzed": 50,
+            "extra": "ok",
+        }
+        assert _validate_analyst_schema(data, self._analyst()) == data
+
+
 class TestRunAllAnalysts:
+    @patch("thresher.agents.analysts.ssh_write_file")
+    @patch("thresher.agents.analysts.ssh_exec")
     @patch("thresher.agents.analysts._run_single_analyst")
-    def test_launches_eight_analysts(self, mock_run):
+    def test_launches_eight_analysts(self, mock_run, mock_exec, mock_write):
         mock_run.return_value = None
+        mock_exec.return_value = SSHResult("", "", 0)
+        mock_write.return_value = None
 
         run_all_analysts("vm", _make_config())
 
         assert mock_run.call_count == 8
 
+    @patch("thresher.agents.analysts.ssh_write_file")
+    @patch("thresher.agents.analysts.ssh_exec")
     @patch("thresher.agents.analysts._run_single_analyst")
-    def test_passes_all_analyst_defs(self, mock_run):
+    def test_installs_analyst_stop_hook(self, mock_run, mock_exec, mock_write):
+        """Stop hook should be written before analysts launch."""
         mock_run.return_value = None
+        mock_exec.return_value = SSHResult("", "", 0)
+        mock_write.return_value = None
+
+        run_all_analysts("vm", _make_config())
+
+        # Check stop hook settings were written
+        write_paths = [c[0][2] for c in mock_write.call_args_list]
+        assert "/opt/target/.claude/settings.local.json" in write_paths
+
+        # Verify it references the analyst validation script
+        hook_write = [c for c in mock_write.call_args_list
+                      if c[0][2] == "/opt/target/.claude/settings.local.json"][0]
+        assert "validate_analyst_output.sh" in hook_write[0][1]
+
+    @patch("thresher.agents.analysts.ssh_write_file")
+    @patch("thresher.agents.analysts.ssh_exec")
+    @patch("thresher.agents.analysts._run_single_analyst")
+    def test_passes_all_analyst_defs(self, mock_run, mock_exec, mock_write):
+        mock_run.return_value = None
+        mock_exec.return_value = SSHResult("", "", 0)
+        mock_write.return_value = None
 
         run_all_analysts("vm", _make_config())
 
@@ -282,15 +386,23 @@ class TestRunAllAnalysts:
         )
         assert called_numbers == list(range(1, 9))
 
+    @patch("thresher.agents.analysts.ssh_write_file")
+    @patch("thresher.agents.analysts.ssh_exec")
     @patch("thresher.agents.analysts._run_single_analyst")
-    def test_returns_none(self, mock_run):
+    def test_returns_none(self, mock_run, mock_exec, mock_write):
         mock_run.return_value = None
+        mock_exec.return_value = SSHResult("", "", 0)
+        mock_write.return_value = None
         result = run_all_analysts("vm", _make_config())
         assert result is None
 
+    @patch("thresher.agents.analysts.ssh_write_file")
+    @patch("thresher.agents.analysts.ssh_exec")
     @patch("thresher.agents.analysts._run_single_analyst")
-    def test_continues_on_analyst_failure(self, mock_run):
+    def test_continues_on_analyst_failure(self, mock_run, mock_exec, mock_write):
         """If one analyst raises, others should still complete."""
+        mock_exec.return_value = SSHResult("", "", 0)
+        mock_write.return_value = None
         call_count = 0
 
         def side_effect(vm, config, analyst_def):

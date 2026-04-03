@@ -5,8 +5,9 @@
 # LFS smudge filters, template hooks, etc.).
 set -euo pipefail
 
-REPO_URL="${1:?Usage: safe_clone.sh <REPO_URL> <TARGET_DIR>}"
-TARGET_DIR="${2:?Usage: safe_clone.sh <REPO_URL> <TARGET_DIR>}"
+REPO_URL="${1:?Usage: safe_clone.sh <REPO_URL> <TARGET_DIR> [BRANCH]}"
+TARGET_DIR="${2:?Usage: safe_clone.sh <REPO_URL> <TARGET_DIR> [BRANCH]}"
+BRANCH="${3:-}"
 
 LOG_PREFIX="[safe_clone]"
 log() { echo "${LOG_PREFIX} $(date '+%H:%M:%S') $*"; }
@@ -20,11 +21,18 @@ git config --global --add safe.directory "$TARGET_DIR"
 # --depth=1: shallow clone (minimize attack surface in history)
 # --single-branch: only fetch the default branch
 # -c configs: override all known code execution vectors
+BRANCH_ARGS=()
+if [ -n "$BRANCH" ]; then
+    BRANCH_ARGS=(--branch "$BRANCH")
+    log "Using branch: ${BRANCH}"
+fi
+
 log "Fetching repository (no checkout)..."
 git clone \
     --no-checkout \
     --depth=1 \
     --single-branch \
+    "${BRANCH_ARGS[@]}" \
     -c core.hooksPath=/dev/null \
     -c core.fsmonitor=false \
     -c core.fsmonitorHookVersion=0 \
