@@ -22,6 +22,26 @@ cpus = 4
 memory = 8   # GB
 disk = 30    # GB
 
+[analysts]
+# Override the max turns for all analyst agents. Each analyst has a default
+# defined in its YAML definition (typically 30). Set this to apply a global
+# override — useful for larger repos that need more investigation depth.
+# max_turns = 50
+
+# Per-analyst overrides by name. These take precedence over the global max_turns.
+# Analyst names: paranoid, behaviorist, investigator, pentester-vulns,
+#   pentester-appsurface, pentester-memory, infra-auditor, shadowcatcher
+# [analysts.max_turns_by_name]
+# paranoid = 60
+# shadowcatcher = 80
+
+[adversarial]
+# Override max turns for the adversarial verification agent (default 20).
+# The adversarial agent reviews high-risk analyst findings and attempts
+# to construct benign explanations. With web research enabled, it may
+# need more turns for thorough validation.
+# max_turns = 30
+
 [limits]
 # Host boundary hardening limits. These control the maximum sizes of
 # data allowed to cross the VM→host boundary during report retrieval.

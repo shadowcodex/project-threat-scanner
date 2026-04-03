@@ -89,6 +89,9 @@ class ScanConfig:
     tmux: bool = False
     high_risk_dep: bool = False
     branch: str = ""
+    analyst_max_turns: int | None = None  # Global override for all analyst max_turns
+    analyst_max_turns_by_name: dict[str, int] = field(default_factory=dict)  # Per-analyst overrides
+    adversarial_max_turns: int | None = None  # Override adversarial agent max_turns (default 20)
 
     @property
     def has_ai_credentials(self) -> bool:
@@ -168,6 +171,17 @@ def load_config(
             config.limits.max_copy_size_mb = limits_data["max_copy_size_mb"]
         if "max_stdout_mb" in limits_data:
             config.limits.max_stdout_mb = limits_data["max_stdout_mb"]
+        analysts_data = data.get("analysts", {})
+        if "max_turns" in analysts_data:
+            config.analyst_max_turns = analysts_data["max_turns"]
+        by_name = analysts_data.get("max_turns_by_name", {})
+        if isinstance(by_name, dict):
+            for name, turns in by_name.items():
+                if isinstance(turns, int):
+                    config.analyst_max_turns_by_name[name] = turns
+        adversarial_data = data.get("adversarial", {})
+        if "max_turns" in adversarial_data:
+            config.adversarial_max_turns = adversarial_data["max_turns"]
 
     # CLI args override config file
     config.repo_url = repo_url

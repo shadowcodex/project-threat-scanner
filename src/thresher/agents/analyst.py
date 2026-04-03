@@ -30,22 +30,53 @@ def _extract_result_from_stream(raw_output: str) -> str:
     """Extract the final result text from stream-json output.
 
     stream-json emits one JSON object per line. The last ``result`` message
-    contains the agent's final response text.
+    contains the agent's final response text. Handles error results
+    (e.g. max_turns) by falling back to last assistant text.
     """
     result_text = ""
+    is_error = False
+    error_reason = ""
+    last_assistant_text = ""
+
     for line in raw_output.strip().splitlines():
         line = line.strip()
         if not line:
             continue
         try:
             obj = json.loads(line)
-            if isinstance(obj, dict) and obj.get("type") == "result":
+            if not isinstance(obj, dict):
+                continue
+
+            if obj.get("type") == "result":
                 result_text = obj.get("result", "")
-            elif isinstance(obj, dict) and "result" in obj and "type" not in obj:
+                is_error = obj.get("is_error", False)
+                if is_error:
+                    error_reason = obj.get("subtype", "unknown_error")
+            elif obj.get("type") == "assistant":
+                content = obj.get("message", {}).get("content", [])
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        last_assistant_text = block.get("text", "")
+            elif "result" in obj and "type" not in obj:
                 result_text = obj["result"]
         except json.JSONDecodeError:
             continue
-    return result_text if result_text else raw_output
+
+    if result_text:
+        return result_text
+
+    if is_error and last_assistant_text:
+        logger.warning(
+            "Analyst agent ended with %s; using last assistant text as fallback",
+            error_reason,
+        )
+        return last_assistant_text
+
+    if is_error:
+        logger.warning("Analyst agent ended with %s and produced no text output", error_reason)
+        return ""
+
+    return raw_output
 
 
 def _parse_agent_json_output(raw_output: str) -> dict[str, Any]:

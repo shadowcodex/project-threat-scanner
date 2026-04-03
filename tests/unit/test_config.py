@@ -141,6 +141,68 @@ class TestLoadConfig:
         assert cfg.limits.max_copy_size_mb == 500
         assert cfg.limits.max_stdout_mb == 50
 
+    def test_analyst_max_turns_from_config(self, tmp_path: Path):
+        config_file = tmp_path / "thresher.toml"
+        config_file.write_text(textwrap.dedent("""\
+            [analysts]
+            max_turns = 50
+        """))
+        cfg = load_config(
+            repo_url="https://github.com/x/y",
+            config_path=config_file,
+        )
+        assert cfg.analyst_max_turns == 50
+
+    def test_analyst_max_turns_default_none(self, tmp_path: Path):
+        cfg = load_config(
+            repo_url="https://github.com/x/y",
+            config_path=tmp_path / "nonexistent.toml",
+        )
+        assert cfg.analyst_max_turns is None
+
+    def test_analyst_max_turns_by_name(self, tmp_path: Path):
+        config_file = tmp_path / "thresher.toml"
+        config_file.write_text(textwrap.dedent("""\
+            [analysts]
+            max_turns = 50
+
+            [analysts.max_turns_by_name]
+            paranoid = 60
+            shadowcatcher = 80
+        """))
+        cfg = load_config(
+            repo_url="https://github.com/x/y",
+            config_path=config_file,
+        )
+        assert cfg.analyst_max_turns == 50
+        assert cfg.analyst_max_turns_by_name == {"paranoid": 60, "shadowcatcher": 80}
+
+    def test_analyst_max_turns_by_name_default_empty(self, tmp_path: Path):
+        cfg = load_config(
+            repo_url="https://github.com/x/y",
+            config_path=tmp_path / "nonexistent.toml",
+        )
+        assert cfg.analyst_max_turns_by_name == {}
+
+    def test_adversarial_max_turns_from_config(self, tmp_path: Path):
+        config_file = tmp_path / "thresher.toml"
+        config_file.write_text(textwrap.dedent("""\
+            [adversarial]
+            max_turns = 30
+        """))
+        cfg = load_config(
+            repo_url="https://github.com/x/y",
+            config_path=config_file,
+        )
+        assert cfg.adversarial_max_turns == 30
+
+    def test_adversarial_max_turns_default_none(self, tmp_path: Path):
+        cfg = load_config(
+            repo_url="https://github.com/x/y",
+            config_path=tmp_path / "nonexistent.toml",
+        )
+        assert cfg.adversarial_max_turns is None
+
 
 class TestAiCredentials:
     def test_has_ai_credentials_api_key(self):
