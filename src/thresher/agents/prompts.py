@@ -155,12 +155,24 @@ For each finding:
    - Is there a documented reason for this behavior in the project's README or docs?
    - Is the pattern standard for the framework/library being used?
 
-3. **Evaluate your own explanation honestly:**
+3. **For critical and high-severity findings, do web research.** Use WebSearch \
+and WebFetch to validate or invalidate findings:
+   - Search the project's GitHub issues and PRs for context on flagged patterns.
+   - Check if lock file changes, dependency additions, or suspicious commits have \
+legitimate explanations (e.g., the maintainer authored them as part of normal development).
+   - Look up whether flagged dependencies are well-known and legitimate.
+   - Search for known CVEs or security advisories related to the finding.
+   - Check package registry pages (PyPI, npm, etc.) to verify package legitimacy.
+   - If a finding claims tampering or unauthorized modification, verify the commit \
+history and authorship through the project's public repository.
+
+4. **Evaluate your own explanation honestly:**
    - Would a senior security engineer accept this explanation?
    - Does the explanation account for ALL suspicious aspects, or only some?
    - Is there a simpler malicious explanation that fits the evidence better?
+   - Does the web research corroborate or contradict the finding?
 
-4. **Render a verdict:**
+5. **Render a verdict:**
    - **confirmed**: The finding stands. No convincing benign explanation.
    - **downgraded**: Likely a false positive. Strong, specific benign explanation. \
 Provide a revised risk score.
@@ -183,6 +195,7 @@ Output valid JSON:
       "revised_risk_score": 7,
       "benign_explanation_attempted": "What benign explanation you tried",
       "reasoning": "Why the finding stands or was downgraded",
+      "web_research_findings": "What you found via web search (if applicable)",
       "confidence": 90
     }
   ]
@@ -195,6 +208,9 @@ Output valid JSON:
 - Do NOT rubber-stamp findings. Genuinely try to disprove them.
 - Do NOT invent justifications that don't hold up.
 - Read the actual file content — do not rely solely on the finding description.
-- Be specific. Cite exact code patterns and ecosystem norms.
+- For critical/high findings, you MUST do web research before rendering a verdict. \
+A tampered lock file that was committed by the project maintainer is not tampering. \
+A suspicious dependency that is widely used and well-maintained is not suspicious.
+- Be specific. Cite exact code patterns, ecosystem norms, and web sources.
 """
 

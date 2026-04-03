@@ -277,3 +277,53 @@ class TestAdversarialPipeline:
 
         result = run_adversarial_verification("vm", _make_config())
         assert result is None
+
+    @patch("thresher.agents.adversarial.ssh_write_file")
+    @patch("thresher.agents.adversarial.ssh_exec")
+    def test_adversarial_max_turns_from_config(self, mock_exec, mock_write):
+        analyst_findings = json.dumps({
+            "findings": [
+                {"file_path": "/opt/target/setup.py", "risk_score": 7,
+                 "findings": [{"description": "bad", "line_numbers": [1]}]},
+            ]
+        })
+        mock_exec.side_effect = [
+            SSHResult("", "", 1),                      # ls finds nothing
+            SSHResult(analyst_findings, "", 0),         # cat legacy
+            SSHResult("", "", 0),                      # write API key to tmpfs
+            SSHResult(_load_agent_fixture("adversarial.json"), "", 0),
+        ]
+        mock_write.return_value = None
+
+        config = _make_config()
+        config.adversarial_max_turns = 35
+        run_adversarial_verification("vm", config)
+
+        cmds = [c[0][1] for c in mock_exec.call_args_list]
+        claude_cmd = cmds[-1]
+        assert "--max-turns 35" in claude_cmd
+
+    @patch("thresher.agents.adversarial.ssh_write_file")
+    @patch("thresher.agents.adversarial.ssh_exec")
+    def test_adversarial_default_20_turns(self, mock_exec, mock_write):
+        analyst_findings = json.dumps({
+            "findings": [
+                {"file_path": "/opt/target/setup.py", "risk_score": 7,
+                 "findings": [{"description": "bad", "line_numbers": [1]}]},
+            ]
+        })
+        mock_exec.side_effect = [
+            SSHResult("", "", 1),                      # ls finds nothing
+            SSHResult(analyst_findings, "", 0),         # cat legacy
+            SSHResult("", "", 0),                      # write API key to tmpfs
+            SSHResult(_load_agent_fixture("adversarial.json"), "", 0),
+        ]
+        mock_write.return_value = None
+
+        config = _make_config()
+        assert config.adversarial_max_turns is None
+        run_adversarial_verification("vm", config)
+
+        cmds = [c[0][1] for c in mock_exec.call_args_list]
+        claude_cmd = cmds[-1]
+        assert "--max-turns 20" in claude_cmd

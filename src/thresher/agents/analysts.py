@@ -115,21 +115,58 @@ def _build_analyst_prompt(analyst_def: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 def _extract_result_from_stream(raw_output: str) -> str:
-    """Extract the final result text from stream-json output."""
+    """Extract the final result text from stream-json output.
+
+    Handles both successful results and error results (e.g. max_turns).
+    For error results, attempts to extract the last assistant text content
+    as a fallback before giving up.
+    """
     result_text = ""
+    is_error = False
+    error_reason = ""
+    last_assistant_text = ""
+
     for line in raw_output.strip().splitlines():
         line = line.strip()
         if not line:
             continue
         try:
             obj = json.loads(line)
-            if isinstance(obj, dict) and obj.get("type") == "result":
+            if not isinstance(obj, dict):
+                continue
+
+            if obj.get("type") == "result":
                 result_text = obj.get("result", "")
-            elif isinstance(obj, dict) and "result" in obj and "type" not in obj:
+                is_error = obj.get("is_error", False)
+                if is_error:
+                    error_reason = obj.get("subtype", "unknown_error")
+            elif obj.get("type") == "assistant":
+                # Track last assistant text output for fallback extraction
+                content = obj.get("message", {}).get("content", [])
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        last_assistant_text = block.get("text", "")
+            elif "result" in obj and "type" not in obj:
                 result_text = obj["result"]
         except json.JSONDecodeError:
             continue
-    return result_text if result_text else raw_output
+
+    if result_text:
+        return result_text
+
+    # For error results (e.g. max_turns), try last assistant text as fallback
+    if is_error and last_assistant_text:
+        logger.warning(
+            "Agent ended with %s; using last assistant text as fallback",
+            error_reason,
+        )
+        return last_assistant_text
+
+    if is_error:
+        logger.warning("Agent ended with %s and produced no text output", error_reason)
+        return ""
+
+    return raw_output
 
 
 _REQUIRED_ANALYST_KEYS = {"analyst", "findings", "summary", "risk_score"}
@@ -326,7 +363,12 @@ def _run_single_analyst(
     """
     number = analyst_def["number"]
     name = analyst_def["name"]
-    max_turns = analyst_def["max_turns"]
+    # Priority: per-analyst toml > global toml > YAML default
+    max_turns = (
+        config.analyst_max_turns_by_name.get(name)
+        or config.analyst_max_turns
+        or analyst_def["max_turns"]
+    )
     label = f"analyst-{number}-{name}"
 
     prompt = _build_analyst_prompt(analyst_def)

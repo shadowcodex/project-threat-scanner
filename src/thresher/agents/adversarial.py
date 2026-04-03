@@ -29,27 +29,79 @@ TARGET_DIR = "/opt/target"
 # Risk threshold: findings at or above this score go through adversarial review
 RISK_THRESHOLD = 4
 
+# Map severity strings (from multi-analyst schema) to numeric risk scores
+_SEVERITY_TO_RISK: dict[str, int] = {
+    "critical": 9,
+    "high": 7,
+    "medium": 4,
+    "low": 2,
+}
+
+
+def _finding_risk_score(finding: dict[str, Any]) -> int:
+    """Derive a numeric risk score from a finding.
+
+    Supports both the legacy per-file schema (has ``risk_score`` int) and
+    the multi-analyst flat schema (has ``severity`` string + ``confidence``).
+    """
+    # Legacy schema: explicit risk_score on the finding
+    explicit = finding.get("risk_score")
+    if isinstance(explicit, (int, float)):
+        return int(explicit)
+
+    # Multi-analyst schema: map severity string to numeric score
+    severity = finding.get("severity", "").lower()
+    return _SEVERITY_TO_RISK.get(severity, 0)
+
 
 def _extract_high_risk(ai_findings: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract AI findings that meet the risk threshold for adversarial review."""
+    """Extract AI findings that meet the risk threshold for adversarial review.
+
+    Supports both the legacy per-file schema (nested findings with risk_score)
+    and the multi-analyst flat schema (severity + confidence per finding).
+    """
     high_risk: list[dict[str, Any]] = []
 
     findings_list = ai_findings.get("findings", [])
     if not isinstance(findings_list, list):
         return high_risk
 
-    for file_finding in findings_list:
-        if not isinstance(file_finding, dict):
+    for finding in findings_list:
+        if not isinstance(finding, dict):
             continue
 
-        risk_score = file_finding.get("risk_score", 0)
-        if not isinstance(risk_score, (int, float)):
+        risk_score = _finding_risk_score(finding)
+
+        if risk_score < RISK_THRESHOLD:
             continue
 
-        if risk_score >= RISK_THRESHOLD:
-            sub_findings = file_finding.get("findings", [])
+        # Multi-analyst flat schema: finding itself has title, description, etc.
+        if "title" in finding or "severity" in finding:
+            line_numbers = finding.get("line_numbers", [])
+            if isinstance(line_numbers, list):
+                line_numbers = sorted(
+                    ln for ln in line_numbers if isinstance(ln, int)
+                )
+            else:
+                line_numbers = []
+
+            high_risk.append(
+                {
+                    "file_path": finding.get("file_path", "N/A"),
+                    "line_numbers": line_numbers,
+                    "risk_score": risk_score,
+                    "title": finding.get("title", "AI finding")[:120],
+                    "description": finding.get("description", ""),
+                    "reasoning": finding.get("reasoning", ""),
+                    "source_analyst": finding.get("source_analyst", "unknown"),
+                    "source_analyst_number": finding.get("source_analyst_number", 0),
+                }
+            )
+        else:
+            # Legacy per-file schema: nested sub-findings
+            sub_findings = finding.get("findings", [])
             descriptions = []
-            line_numbers: list[int] = []
+            line_nums: list[int] = []
             for sf in sub_findings if isinstance(sub_findings, list) else []:
                 if isinstance(sf, dict):
                     desc = sf.get("description", "")
@@ -57,20 +109,20 @@ def _extract_high_risk(ai_findings: dict[str, Any]) -> list[dict[str, Any]]:
                         descriptions.append(desc)
                     lines = sf.get("line_numbers", [])
                     if isinstance(lines, list):
-                        line_numbers.extend(
+                        line_nums.extend(
                             ln for ln in lines if isinstance(ln, int)
                         )
 
             high_risk.append(
                 {
-                    "file_path": file_finding.get("file_path", "N/A"),
-                    "line_numbers": sorted(set(line_numbers)),
-                    "risk_score": int(risk_score),
+                    "file_path": finding.get("file_path", "N/A"),
+                    "line_numbers": sorted(set(line_nums)),
+                    "risk_score": risk_score,
                     "title": (
                         descriptions[0][:120] if descriptions else "AI finding"
                     ),
                     "description": "\n".join(descriptions),
-                    "reasoning": file_finding.get("reasoning", ""),
+                    "reasoning": finding.get("reasoning", ""),
                 }
             )
 
@@ -124,21 +176,56 @@ def _build_adversarial_prompt(findings: list[dict[str, Any]]) -> str:
 
 
 def _extract_result_from_stream(raw_output: str) -> str:
-    """Extract the final result text from stream-json output."""
+    """Extract the final result text from stream-json output.
+
+    Handles both successful results and error results (e.g. max_turns).
+    For error results, attempts to extract the last assistant text content
+    as a fallback before giving up.
+    """
     result_text = ""
+    is_error = False
+    error_reason = ""
+    last_assistant_text = ""
+
     for line in raw_output.strip().splitlines():
         line = line.strip()
         if not line:
             continue
         try:
             obj = json.loads(line)
-            if isinstance(obj, dict) and obj.get("type") == "result":
+            if not isinstance(obj, dict):
+                continue
+
+            if obj.get("type") == "result":
                 result_text = obj.get("result", "")
-            elif isinstance(obj, dict) and "result" in obj and "type" not in obj:
+                is_error = obj.get("is_error", False)
+                if is_error:
+                    error_reason = obj.get("subtype", "unknown_error")
+            elif obj.get("type") == "assistant":
+                content = obj.get("message", {}).get("content", [])
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        last_assistant_text = block.get("text", "")
+            elif "result" in obj and "type" not in obj:
                 result_text = obj["result"]
         except json.JSONDecodeError:
             continue
-    return result_text if result_text else raw_output
+
+    if result_text:
+        return result_text
+
+    if is_error and last_assistant_text:
+        logger.warning(
+            "Adversarial agent ended with %s; using last assistant text as fallback",
+            error_reason,
+        )
+        return last_assistant_text
+
+    if is_error:
+        logger.warning("Adversarial agent ended with %s and produced no text output", error_reason)
+        return ""
+
+    return raw_output
 
 
 def _parse_adversarial_output(raw_output: str) -> dict[str, Any]:
@@ -373,14 +460,15 @@ def run_adversarial_verification(
         return
 
     model = config.model
+    max_turns = config.adversarial_max_turns or 20
     claude_cmd = (
         f"cd {TARGET_DIR} && "
         f"claude -p \"$(cat /tmp/adversarial_prompt.txt)\" "
         f"--model {model} "
-        f'--allowedTools "Read,Glob,Grep" '
+        f'--allowedTools "Read,Glob,Grep,WebSearch,WebFetch" '
         f"--output-format stream-json "
         f"--verbose "
-        f"--max-turns 20"
+        f"--max-turns {max_turns}"
     )
 
     # Write credentials to tmpfs and read-and-delete.

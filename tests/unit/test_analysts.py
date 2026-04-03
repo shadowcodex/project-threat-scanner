@@ -91,6 +91,38 @@ class TestExtractResultFromStream:
     def test_empty(self):
         assert _extract_result_from_stream("") == ""
 
+    def test_error_max_turns_with_assistant_fallback(self):
+        """When agent hits max_turns, use last assistant text as fallback."""
+        findings_json = json.dumps({
+            "analyst": "paranoid",
+            "findings": [{"title": "partial", "severity": "high"}],
+            "summary": "partial results",
+            "risk_score": 5,
+        })
+        stream = (
+            '{"type":"system","subtype":"init","cwd":"/opt/target","session_id":"abc"}\n'
+            f'{{"type":"assistant","message":{{"content":[{{"type":"text","text":{json.dumps(findings_json)}}}]}}}}\n'
+            '{"type":"result","subtype":"error_max_turns","is_error":true}\n'
+        )
+        result = _extract_result_from_stream(stream)
+        assert result == findings_json
+
+    def test_error_max_turns_no_text_returns_empty(self):
+        """When agent hits max_turns with no text output, return empty string."""
+        stream = (
+            '{"type":"system","subtype":"init","cwd":"/opt/target","session_id":"abc"}\n'
+            '{"type":"result","subtype":"error_max_turns","is_error":true}\n'
+        )
+        result = _extract_result_from_stream(stream)
+        assert result == ""
+
+    def test_successful_result_preferred_over_error_fallback(self):
+        stream = (
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}\n'
+            '{"type":"result","result":"final"}\n'
+        )
+        assert _extract_result_from_stream(stream) == "final"
+
 
 class TestParseAnalystJsonOutput:
     def _analyst(self):
@@ -219,6 +251,72 @@ class TestRunSingleAnalyst:
         # Check prompt was written to /tmp/analyst_1_prompt.txt
         prompt_write = mock_write.call_args_list[0]
         assert prompt_write[0][2] == "/tmp/analyst_1_prompt.txt"
+
+    @patch("thresher.agents.analysts.ssh_write_file")
+    @patch("thresher.agents.analysts.ssh_exec")
+    def test_global_max_turns_overrides_yaml(self, mock_exec, mock_write):
+        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
+        mock_write.return_value = None
+
+        config = _make_config()
+        config.analyst_max_turns = 50
+
+        analyst = ANALYST_DEFINITIONS[0]
+        _run_single_analyst("vm", config, analyst)
+
+        cmds = [c[0][1] for c in mock_exec.call_args_list]
+        claude_cmd = [c for c in cmds if "claude -p" in c][0]
+        assert "--max-turns 50" in claude_cmd
+
+    @patch("thresher.agents.analysts.ssh_write_file")
+    @patch("thresher.agents.analysts.ssh_exec")
+    def test_per_analyst_overrides_global(self, mock_exec, mock_write):
+        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
+        mock_write.return_value = None
+
+        config = _make_config()
+        config.analyst_max_turns = 50
+        config.analyst_max_turns_by_name = {"paranoid": 60}
+
+        analyst = ANALYST_DEFINITIONS[0]  # paranoid
+        _run_single_analyst("vm", config, analyst)
+
+        cmds = [c[0][1] for c in mock_exec.call_args_list]
+        claude_cmd = [c for c in cmds if "claude -p" in c][0]
+        assert "--max-turns 60" in claude_cmd
+
+    @patch("thresher.agents.analysts.ssh_write_file")
+    @patch("thresher.agents.analysts.ssh_exec")
+    def test_unmatched_per_analyst_falls_to_global(self, mock_exec, mock_write):
+        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
+        mock_write.return_value = None
+
+        config = _make_config()
+        config.analyst_max_turns = 50
+        config.analyst_max_turns_by_name = {"shadowcatcher": 80}
+
+        analyst = ANALYST_DEFINITIONS[0]  # paranoid — not in by_name
+        _run_single_analyst("vm", config, analyst)
+
+        cmds = [c[0][1] for c in mock_exec.call_args_list]
+        claude_cmd = [c for c in cmds if "claude -p" in c][0]
+        assert "--max-turns 50" in claude_cmd
+
+    @patch("thresher.agents.analysts.ssh_write_file")
+    @patch("thresher.agents.analysts.ssh_exec")
+    def test_none_max_turns_uses_yaml_default(self, mock_exec, mock_write):
+        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
+        mock_write.return_value = None
+
+        config = _make_config()
+        assert config.analyst_max_turns is None
+
+        analyst = ANALYST_DEFINITIONS[0]  # paranoid, max_turns=30
+        _run_single_analyst("vm", config, analyst)
+
+        cmds = [c[0][1] for c in mock_exec.call_args_list]
+        claude_cmd = [c for c in cmds if "claude -p" in c][0]
+        assert "--max-turns 30" in claude_cmd
 
     @patch("thresher.agents.analysts.ssh_write_file")
     @patch("thresher.agents.analysts.ssh_exec")

@@ -8,6 +8,7 @@ from thresher.agents.adversarial import (
     RISK_THRESHOLD,
     _extract_high_risk,
     _extract_result_from_stream,
+    _finding_risk_score,
     _merge_adversarial_results,
     _parse_adversarial_output,
 )
@@ -50,6 +51,90 @@ class TestExtractHighRisk:
         ]}
         high = _extract_high_risk(ai)
         assert high[0]["line_numbers"] == [10, 20, 30]
+
+
+class TestFindingRiskScore:
+    def test_explicit_risk_score(self):
+        assert _finding_risk_score({"risk_score": 7}) == 7
+
+    def test_severity_critical(self):
+        assert _finding_risk_score({"severity": "critical"}) == 9
+
+    def test_severity_high(self):
+        assert _finding_risk_score({"severity": "high"}) == 7
+
+    def test_severity_medium(self):
+        assert _finding_risk_score({"severity": "medium"}) == 4
+
+    def test_severity_low(self):
+        assert _finding_risk_score({"severity": "low"}) == 2
+
+    def test_unknown_severity(self):
+        assert _finding_risk_score({"severity": "unknown"}) == 0
+
+    def test_no_score_or_severity(self):
+        assert _finding_risk_score({}) == 0
+
+    def test_explicit_risk_score_takes_precedence(self):
+        assert _finding_risk_score({"risk_score": 3, "severity": "critical"}) == 3
+
+
+class TestExtractHighRiskMultiAnalyst:
+    """Tests for _extract_high_risk with multi-analyst flat schema (severity-based)."""
+
+    def test_critical_and_high_pass_threshold(self):
+        ai = {"findings": [
+            {"file_path": "/a.py", "severity": "critical", "title": "Bad", "description": "Very bad"},
+            {"file_path": "/b.py", "severity": "high", "title": "Risky", "description": "Risky"},
+            {"file_path": "/c.py", "severity": "low", "title": "Minor", "description": "Minor"},
+        ]}
+        high = _extract_high_risk(ai)
+        assert len(high) == 2
+        paths = {h["file_path"] for h in high}
+        assert paths == {"/a.py", "/b.py"}
+
+    def test_medium_at_threshold_boundary(self):
+        ai = {"findings": [
+            {"file_path": "/a.py", "severity": "medium", "title": "Med", "description": "Med"},
+        ]}
+        high = _extract_high_risk(ai)
+        # medium maps to 4, threshold is 4, so it passes
+        assert len(high) == 1
+
+    def test_low_below_threshold(self):
+        ai = {"findings": [
+            {"file_path": "/a.py", "severity": "low", "title": "Low", "description": "Low"},
+        ]}
+        high = _extract_high_risk(ai)
+        assert len(high) == 0
+
+    def test_preserves_source_analyst(self):
+        ai = {"findings": [
+            {
+                "file_path": "/a.py",
+                "severity": "critical",
+                "title": "Bad",
+                "description": "Very bad",
+                "source_analyst": "paranoid",
+                "source_analyst_number": 1,
+            },
+        ]}
+        high = _extract_high_risk(ai)
+        assert high[0]["source_analyst"] == "paranoid"
+        assert high[0]["source_analyst_number"] == 1
+
+    def test_preserves_line_numbers(self):
+        ai = {"findings": [
+            {
+                "file_path": "/a.py",
+                "severity": "high",
+                "title": "Bad",
+                "description": "Very bad",
+                "line_numbers": [10, 5, 20],
+            },
+        ]}
+        high = _extract_high_risk(ai)
+        assert high[0]["line_numbers"] == [5, 10, 20]
 
 
 class TestParseAdversarialOutput:
@@ -119,3 +204,25 @@ class TestExtractResultFromStream:
 
     def test_fallback(self):
         assert _extract_result_from_stream("plain text") == "plain text"
+
+    def test_error_result_with_assistant_text_fallback(self):
+        stream = (
+            '{"type":"system","subtype":"init","cwd":"/opt/target"}\n'
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"partial output"}]}}\n'
+            '{"type":"result","subtype":"error_max_turns","is_error":true}\n'
+        )
+        assert _extract_result_from_stream(stream) == "partial output"
+
+    def test_error_result_no_assistant_text(self):
+        stream = (
+            '{"type":"system","subtype":"init","cwd":"/opt/target"}\n'
+            '{"type":"result","subtype":"error_max_turns","is_error":true}\n'
+        )
+        assert _extract_result_from_stream(stream) == ""
+
+    def test_successful_result_preferred_over_assistant_text(self):
+        stream = (
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}\n'
+            '{"type":"result","result":"final answer"}\n'
+        )
+        assert _extract_result_from_stream(stream) == "final answer"
