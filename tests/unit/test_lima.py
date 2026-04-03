@@ -10,11 +10,14 @@ from thresher.config import ScanConfig, VMConfig
 from thresher.vm.lima import (
     BASE_VM_NAME,
     LimaError,
+    _check_vz_available,
+    _read_ha_stderr_log,
     base_exists,
     build_base,
     clean_working_dirs,
     ensure_base_running,
     provision_vm,
+    start_vm,
     stop_vm,
 )
 
@@ -65,6 +68,7 @@ class TestEnsureBaseRunning:
 
 
 class TestBuildBase:
+    @patch("thresher.vm.lima._ensure_vz_available")
     @patch("thresher.vm.lima.stop_vm")
     @patch("thresher.vm.lima.provision_vm")
     @patch("thresher.vm.lima.start_vm")
@@ -72,7 +76,8 @@ class TestBuildBase:
     @patch("thresher.vm.lima._TEMPLATE_PATH")
     @patch("thresher.vm.lima.base_exists", return_value=False)
     def test_builds_fresh_base(
-        self, mock_exists, mock_tpl, mock_run, mock_start, mock_prov, mock_stop, config
+        self, mock_exists, mock_tpl, mock_run, mock_start, mock_prov, mock_stop,
+        mock_vz, config
     ):
         mock_tpl.exists.return_value = True
         mock_tpl.__str__ = lambda s: "/fake/thresher.yaml"
@@ -80,12 +85,14 @@ class TestBuildBase:
 
         build_base(config)
 
-        # Should create, start, provision, stop
+        # Should check vz, create, start, provision, stop
+        mock_vz.assert_called_once()
         mock_run.assert_called_once()
         mock_start.assert_called_once_with(BASE_VM_NAME)
         mock_prov.assert_called_once_with(BASE_VM_NAME, config)
         mock_stop.assert_called_once_with(BASE_VM_NAME)
 
+    @patch("thresher.vm.lima._ensure_vz_available")
     @patch("thresher.vm.lima.stop_vm")
     @patch("thresher.vm.lima.provision_vm")
     @patch("thresher.vm.lima.start_vm")
@@ -95,7 +102,7 @@ class TestBuildBase:
     @patch("thresher.vm.lima.base_exists", return_value=True)
     def test_destroys_existing_before_rebuild(
         self, mock_exists, mock_destroy, mock_tpl, mock_run,
-        mock_start, mock_prov, mock_stop, config
+        mock_start, mock_prov, mock_stop, mock_vz, config
     ):
         mock_tpl.exists.return_value = True
         mock_tpl.__str__ = lambda s: "/fake/thresher.yaml"
@@ -211,3 +218,67 @@ class TestStopVm:
         mock_run.return_value = MagicMock(returncode=1, stderr="error")
         with pytest.raises(LimaError, match="Failed to stop"):
             stop_vm("test-vm")
+
+
+class TestReadHaStderrLog:
+    def test_reads_last_lines(self, tmp_path):
+        log_file = tmp_path / "test-vm" / "ha.stderr.log"
+        log_file.parent.mkdir(parents=True)
+        log_file.write_text("line1\nline2\nline3\n")
+        with patch("thresher.vm.lima._lima_home", return_value=tmp_path):
+            result = _read_ha_stderr_log("test-vm")
+        assert "line1" in result
+        assert "line3" in result
+
+    def test_returns_empty_when_missing(self, tmp_path):
+        with patch("thresher.vm.lima._lima_home", return_value=tmp_path):
+            result = _read_ha_stderr_log("nonexistent-vm")
+        assert result == ""
+
+
+class TestCheckVzAvailable:
+    @patch("thresher.vm.lima.subprocess.run")
+    def test_returns_true_when_vz_listed(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"vmTypes": ["qemu", "vz"]}',
+        )
+        assert _check_vz_available() is True
+
+    @patch("thresher.vm.lima.subprocess.run")
+    def test_returns_false_when_vz_not_listed(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"vmTypes": ["qemu"]}',
+        )
+        assert _check_vz_available() is False
+
+    @patch("thresher.vm.lima.subprocess.run", side_effect=FileNotFoundError)
+    def test_returns_false_when_limactl_missing(self, mock_run):
+        assert _check_vz_available() is False
+
+
+class TestStartVmDiagnostics:
+    @patch("thresher.vm.lima._read_ha_stderr_log", return_value="vz error: entitlement missing")
+    @patch("thresher.vm.lima.subprocess.Popen")
+    def test_includes_ha_log_on_failure(self, mock_popen, mock_log):
+        proc = MagicMock()
+        proc.stdout = iter(["level=fatal msg=\"exiting\"\n"])
+        proc.wait.return_value = None
+        proc.returncode = 1
+        mock_popen.return_value = proc
+
+        with pytest.raises(LimaError, match="ha.stderr.log"):
+            start_vm("test-vm")
+
+    @patch("thresher.vm.lima._read_ha_stderr_log", return_value="")
+    @patch("thresher.vm.lima.subprocess.Popen")
+    def test_includes_limactl_output_on_failure(self, mock_popen, mock_log):
+        proc = MagicMock()
+        proc.stdout = iter(["fatal: something broke\n"])
+        proc.wait.return_value = None
+        proc.returncode = 1
+        mock_popen.return_value = proc
+
+        with pytest.raises(LimaError, match="something broke"):
+            start_vm("test-vm")

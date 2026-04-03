@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -67,6 +68,43 @@ class LimaError(Exception):
     """Raised when a Lima operation fails."""
 
 
+def _lima_home() -> Path:
+    """Return the Lima home directory (~/.lima by default)."""
+    return Path(os.environ.get("LIMA_HOME", Path.home() / ".lima"))
+
+
+def _read_ha_stderr_log(vm_name: str) -> str:
+    """Read the hostagent stderr log for a VM, returning the last 30 lines.
+
+    This log contains the actual error from Virtualization.framework (vz)
+    when a VM fails to start. Returns an empty string if the log is missing.
+    """
+    log_path = _lima_home() / vm_name / "ha.stderr.log"
+    try:
+        lines = log_path.read_text().splitlines()
+        return "\n".join(lines[-30:])
+    except (OSError, ValueError):
+        return ""
+
+
+def _check_vz_available() -> bool:
+    """Check whether the vz (Virtualization.framework) backend is available.
+
+    Returns True if vz is listed in limactl info vmTypes.
+    """
+    try:
+        result = subprocess.run(
+            ["limactl", "info"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            info = json.loads(result.stdout)
+            return "vz" in info.get("vmTypes", [])
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
+        pass
+    return False
+
+
 def _wait_for_ssh(vm_name: str) -> None:
     """Poll until SSH is accepting connections inside the VM."""
     deadline = time.monotonic() + _SSH_TIMEOUT
@@ -89,12 +127,23 @@ def _wait_for_ssh(vm_name: str) -> None:
     )
 
 
+def _ensure_vz_available() -> None:
+    """Raise LimaError with a helpful message if vz is not available."""
+    if not _check_vz_available():
+        raise LimaError(
+            "The vz (Virtualization.framework) backend is not available.\n"
+            "Requirements: Apple Silicon Mac running macOS 13 (Ventura) or later.\n"
+            "Run 'limactl info' to see supported VM backends."
+        )
+
+
 def create_vm(config: ScanConfig) -> str:
     """Create and start a new ephemeral Lima VM.
 
     Runs limactl create and start synchronously (they stream their own
     progress to stderr), then verifies SSH readiness before returning.
     """
+    _ensure_vz_available()
     vm_name = f"thresher-{int(time.time())}"
 
     if not _TEMPLATE_PATH.exists():
@@ -138,19 +187,34 @@ def start_vm(vm_name: str) -> None:
     except FileNotFoundError as exc:
         raise LimaError("limactl not found. Install Lima: https://lima-vm.io") from exc
 
-    # Stream output to logger so it shows up in logs/tmux
+    # Stream output to logger so it shows up in logs/tmux.
+    # Also capture the last N lines so we can include them in error messages.
+    captured_lines: list[str] = []
     for line in proc.stdout:
         stripped = line.rstrip("\n")
         if stripped:
             logger.info("  %s", stripped)
+            captured_lines.append(stripped)
 
     proc.wait()
     if proc.returncode != 0:
-        raise LimaError(f"Failed to start VM '{vm_name}' (exit {proc.returncode})")
+        # Gather diagnostics from multiple sources
+        diag_parts = [f"Failed to start VM '{vm_name}' (exit {proc.returncode})"]
+
+        # Include last few lines of limactl output
+        tail = captured_lines[-10:]
+        if tail:
+            diag_parts.append("limactl output:\n  " + "\n  ".join(tail))
+
+        # Read the hostagent stderr log — this has the real vz crash reason
+        ha_log = _read_ha_stderr_log(vm_name)
+        if ha_log:
+            diag_parts.append(f"ha.stderr.log:\n  {ha_log}")
+
+        raise LimaError("\n".join(diag_parts))
 
     logger.info("VM %s started, waiting for SSH...", vm_name)
     _wait_for_ssh(vm_name)
-    logger.info("VM %s is ready", vm_name)
     logger.info("VM %s is ready", vm_name)
 
 
@@ -315,6 +379,8 @@ def build_base(config: ScanConfig) -> None:
     After provisioning the VM is stopped (not destroyed) so its disk is
     preserved for reuse.
     """
+    _ensure_vz_available()
+
     if base_exists():
         logger.info("Removing existing base VM before rebuild")
         destroy_vm(BASE_VM_NAME)
