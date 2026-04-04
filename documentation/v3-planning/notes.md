@@ -52,12 +52,12 @@ v0.4.0 will do one docker execution in the cloud. The VM is our "cloud" at this 
 
 ## Results an Reports
 
-1. Improve Reports and Results formating.
-    - Add styled report.html output
-    - Self-contained single HTML file matching website aesthetic
-    - Include scanner findings, AI analyst findings, adversarial results, synthesis
-    - Can be opened locally or hosted
-    - Based on the showcase report.html we're building for the website already
+x    1. Improve Reports and Results formating.
+x       - Add styled report.html output
+x       - Self-contained single HTML file matching website aesthetic
+x       - Include scanner findings, AI analyst findings, adversarial results, synthesis
+x       - Can be opened locally or hosted
+x       - Based on the showcase report.html we're building for the website already
 2. Test against 20x known popular and friendly repos, submit PRs based on findings to build body of evidence.
 
 ### v0.2.0 Validation
