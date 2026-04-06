@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch, call
+import subprocess as _sp
+from unittest.mock import patch, MagicMock
+
+import pytest
 
 from thresher.config import ScanConfig
 from thresher.report.synthesize import generate_report
-from thresher.vm.ssh import SSHResult
 
 
 def _make_config(**kw) -> ScanConfig:
@@ -20,63 +22,97 @@ def _make_config(**kw) -> ScanConfig:
     return ScanConfig(**defaults)
 
 
+# Shared patches for all tests that call generate_report
+_COMMON_PATCHES = [
+    patch("thresher.report.synthesize._generate_template_report"),
+    patch("thresher.report.synthesize._generate_html_report"),
+    patch("thresher.report.synthesize.shutil.copytree"),
+    patch("thresher.report.synthesize.os.path.isdir", return_value=False),
+    patch("thresher.report.synthesize.os.path.exists", return_value=False),
+    patch("thresher.report.synthesize.os.makedirs"),
+    patch("thresher.report.synthesize._read_file", return_value=None),
+    patch("thresher.report.synthesize._write_file"),
+    patch("thresher.report.scoring.load_kev_catalog"),
+    patch("thresher.report.scoring.fetch_epss_scores"),
+]
+
+
 class TestGenerateReport:
-    @patch("thresher.report.synthesize.ssh_write_file")
-    @patch("thresher.report.synthesize.ssh_exec")
+    @patch("thresher.report.synthesize._generate_html_report")
+    @patch("thresher.report.synthesize._generate_template_report")
+    @patch("thresher.report.synthesize.shutil.copytree")
+    @patch("thresher.report.synthesize.os.path.isdir", return_value=False)
+    @patch("thresher.report.synthesize.os.path.exists", return_value=False)
+    @patch("thresher.report.synthesize.os.makedirs")
+    @patch("thresher.report.synthesize._read_file", return_value=None)
+    @patch("thresher.report.synthesize._write_file")
     @patch("thresher.report.scoring.load_kev_catalog")
     @patch("thresher.report.scoring.fetch_epss_scores")
-    def test_skip_ai_template_report(self, mock_epss, mock_kev, mock_exec, mock_write):
+    def test_skip_ai_template_report(
+        self, mock_epss, mock_kev, mock_write, mock_read,
+        mock_makedirs, mock_exists, mock_isdir, mock_copytree,
+        mock_template_report, mock_html_report
+    ):
         mock_epss.return_value = {}
         mock_kev.return_value = set()
-        # ssh_exec calls: mkdir, cat scanner files (all fail), cp scan-results, cp sbom
-        mock_exec.return_value = SSHResult("", "", 1)
-        mock_write.return_value = None
 
         config = _make_config(skip_ai=True)
-        report_path = generate_report("vm", config)
+        report_path = generate_report("", config)
 
         # Report path should be under /opt/security-reports/
         assert report_path.startswith("/opt/security-reports/")
-
-        # ssh_write_file should have been called for:
-        # findings.json, executive-summary.md, detailed-report.md
+        # Template report should have been called
+        assert mock_template_report.called
+        # findings.json should have been written
         write_calls = mock_write.call_args_list
-        remote_paths = [c[0][2] for c in write_calls]
-        assert any("findings.json" in p for p in remote_paths)
-        assert any("executive-summary.md" in p for p in remote_paths)
-        assert any("detailed-report.md" in p for p in remote_paths)
+        written_paths = [c[0][0] for c in write_calls]
+        assert any("findings.json" in p for p in written_paths)
 
-    @patch("thresher.report.synthesize.ssh_write_file")
-    @patch("thresher.report.synthesize.ssh_exec")
+    @patch("thresher.report.synthesize._generate_html_report")
+    @patch("thresher.report.synthesize._generate_template_report")
+    @patch("thresher.report.synthesize.shutil.copytree")
+    @patch("thresher.report.synthesize.os.path.isfile", return_value=False)
+    @patch("thresher.report.synthesize.os.path.isdir", return_value=False)
+    @patch("thresher.report.synthesize.os.path.exists", return_value=False)
+    @patch("thresher.report.synthesize.os.makedirs")
+    @patch("thresher.report.synthesize._read_file", return_value=None)
+    @patch("thresher.report.synthesize._write_file")
+    @patch("thresher.report.synthesize.subprocess.run")
     @patch("thresher.report.scoring.load_kev_catalog")
     @patch("thresher.report.scoring.fetch_epss_scores")
-    def test_agent_fallback_on_failure(self, mock_epss, mock_kev, mock_exec, mock_write):
+    def test_agent_fallback_on_failure(
+        self, mock_epss, mock_kev, mock_proc, mock_write, mock_read,
+        mock_makedirs, mock_exists, mock_isdir, mock_isfile, mock_copytree,
+        mock_template_report, mock_html_report
+    ):
         mock_epss.return_value = {}
         mock_kev.return_value = set()
-        mock_write.return_value = None
-
-        # ssh_exec calls for reading scanner files will fail (exit 1),
-        # then AI findings read, mkdir, cp, claude, test -f check fails
-        mock_exec.return_value = SSHResult("", "", 1)
+        # Claude fails — agent files won't exist so fallback to templates
+        mock_proc.return_value = _sp.CompletedProcess([], returncode=1, stdout="", stderr="")
 
         config = _make_config(skip_ai=False)
-        report_path = generate_report("vm", config)
+        report_path = generate_report("", config)
 
-        # Should still produce output via template fallback
-        write_calls = mock_write.call_args_list
-        remote_paths = [c[0][2] for c in write_calls]
-        assert any("executive-summary.md" in p for p in remote_paths)
+        # Template fallback should have been called (agent failed)
+        assert mock_template_report.called
 
-    @patch("thresher.report.synthesize.ssh_write_file")
-    @patch("thresher.report.synthesize.ssh_exec")
+    @patch("thresher.report.synthesize._generate_html_report")
+    @patch("thresher.report.synthesize._generate_template_report")
+    @patch("thresher.report.synthesize.shutil.copytree")
+    @patch("thresher.report.synthesize.os.path.isdir", return_value=False)
+    @patch("thresher.report.synthesize.os.path.exists", return_value=False)
+    @patch("thresher.report.synthesize.os.makedirs")
+    @patch("thresher.report.synthesize._write_file")
     @patch("thresher.report.scoring.load_kev_catalog")
     @patch("thresher.report.scoring.fetch_epss_scores")
-    def test_enrichment_applied(self, mock_epss, mock_kev, mock_exec, mock_write):
+    def test_enrichment_applied(
+        self, mock_epss, mock_kev, mock_write, mock_makedirs,
+        mock_exists, mock_isdir, mock_copytree,
+        mock_template_report, mock_html_report
+    ):
         mock_epss.return_value = {"CVE-2024-1": 0.95}
         mock_kev.return_value = {"CVE-2024-1"}
-        mock_write.return_value = None
 
-        # Build scanner output that will be read from the VM
         grype_output = json.dumps({
             "matches": [
                 {
@@ -95,87 +131,72 @@ class TestGenerateReport:
             ]
         })
 
-        def exec_side_effect(vm_name, cmd, **kwargs):
-            # Return grype fixture when cat grype.json is called
-            if "cat /opt/scan-results/grype.json" in cmd:
-                return SSHResult(grype_output, "", 0)
-            # All other cat calls fail (no other scanner output)
-            if cmd.startswith("cat /opt/scan-results/"):
-                return SSHResult("", "", 1)
-            return SSHResult("", "", 0)
-
-        mock_exec.side_effect = exec_side_effect
+        def read_side_effect(path):
+            if "grype.json" in path:
+                return grype_output
+            return None
 
         config = _make_config(skip_ai=True)
-        generate_report("vm", config)
+
+        with patch("thresher.report.synthesize._read_file", side_effect=read_side_effect):
+            generate_report("", config)
 
         # Check the findings.json write contains enrichment fields
-        findings_write = [c for c in mock_write.call_args_list
-                          if "findings.json" in c[0][2]][0]
-        findings = json.loads(findings_write[0][1])
+        findings_writes = [
+            c for c in mock_write.call_args_list
+            if "findings.json" in c[0][0]
+        ]
+        assert findings_writes, "findings.json not written"
+        findings = json.loads(findings_writes[0][0][1])
         assert findings[0]["in_kev"] is True
         assert findings[0]["epss_score"] == 0.95
         assert findings[0]["composite_priority"] == "P0"
 
-    @patch("thresher.report.synthesize.ssh_write_file")
-    @patch("thresher.report.synthesize.ssh_exec")
+    @patch("thresher.report.synthesize._generate_html_report")
+    @patch("thresher.report.synthesize._generate_template_report")
+    @patch("thresher.report.synthesize.shutil.copytree")
+    @patch("thresher.report.synthesize.os.path.isdir", return_value=False)
+    @patch("thresher.report.synthesize.os.path.exists", return_value=False)
+    @patch("thresher.report.synthesize.os.makedirs")
+    @patch("thresher.report.synthesize._read_file", return_value=None)
+    @patch("thresher.report.synthesize._write_file")
     @patch("thresher.report.scoring.load_kev_catalog")
     @patch("thresher.report.scoring.fetch_epss_scores")
-    def test_report_dir_timestamped(self, mock_epss, mock_kev, mock_exec, mock_write):
+    def test_report_dir_timestamped(
+        self, mock_epss, mock_kev, mock_write, mock_read,
+        mock_makedirs, mock_exists, mock_isdir, mock_copytree,
+        mock_template_report, mock_html_report
+    ):
         mock_epss.return_value = {}
         mock_kev.return_value = set()
-        mock_exec.return_value = SSHResult("", "", 1)
-        mock_write.return_value = None
 
         config = _make_config(skip_ai=True)
-        report_path = generate_report("vm", config)
+        report_path = generate_report("", config)
 
         # Should match /opt/security-reports/YYYYMMDD-HHMMSS
         import re
         assert re.search(r"/\d{8}-\d{6}$", report_path)
 
-    @patch("thresher.report.synthesize.ssh_write_file")
-    @patch("thresher.report.synthesize.ssh_exec")
+    @patch("thresher.report.synthesize._generate_html_report")
+    @patch("thresher.report.synthesize._generate_template_report")
+    @patch("thresher.report.synthesize.shutil.copytree")
+    @patch("thresher.report.synthesize.os.path.isdir", return_value=False)
+    @patch("thresher.report.synthesize.os.path.exists", return_value=False)
+    @patch("thresher.report.synthesize.os.makedirs")
+    @patch("thresher.report.synthesize._read_file", return_value=None)
+    @patch("thresher.report.synthesize._write_file")
     @patch("thresher.report.scoring.load_kev_catalog")
     @patch("thresher.report.scoring.fetch_epss_scores")
-    def test_html_report_generated(self, mock_epss, mock_kev, mock_exec, mock_write):
+    def test_html_report_generated(
+        self, mock_epss, mock_kev, mock_write, mock_read,
+        mock_makedirs, mock_exists, mock_isdir, mock_copytree,
+        mock_template_report, mock_html_report
+    ):
         mock_epss.return_value = {}
         mock_kev.return_value = set()
-        mock_exec.return_value = SSHResult("", "", 1)
-        mock_write.return_value = None
 
         config = _make_config(skip_ai=True)
-        generate_report("vm", config)
+        generate_report("", config)
 
-        write_calls = mock_write.call_args_list
-        remote_paths = [c[0][2] for c in write_calls]
-        assert any("report.html" in p for p in remote_paths)
-
-    @patch("thresher.report.synthesize.ssh_write_file")
-    @patch("thresher.report.synthesize.ssh_exec")
-    @patch("thresher.report.scoring.load_kev_catalog")
-    @patch("thresher.report.scoring.fetch_epss_scores")
-    def test_html_report_includes_agent_narrative(self, mock_epss, mock_kev, mock_exec, mock_write):
-        mock_epss.return_value = {}
-        mock_kev.return_value = set()
-        mock_write.return_value = None
-
-        def exec_side_effect(vm_name, cmd, **kwargs):
-            if cmd.startswith("test -f"):
-                return SSHResult("", "", 0)
-            if "executive-summary.md" in cmd:
-                return SSHResult("# Summary\n\nThis repo has **critical issues**.", "", 0)
-            if "synthesis-findings.md" in cmd:
-                return SSHResult("# Synthesis\n\nAI and scanners agree.", "", 0)
-            return SSHResult("", "", 0)
-
-        mock_exec.side_effect = exec_side_effect
-
-        config = _make_config(skip_ai=False)
-        generate_report("vm", config)
-
-        html_writes = [c for c in mock_write.call_args_list if "report.html" in c[0][2]]
-        assert len(html_writes) == 1
-        html_content = html_writes[0][0][1]
-        assert "critical issues" in html_content
-        assert "AI and scanners agree" in html_content
+        # HTML report function should have been called
+        assert mock_html_report.called

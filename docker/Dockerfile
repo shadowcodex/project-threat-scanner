@@ -1,0 +1,158 @@
+# Thresher scanner image
+# All security scanning tools + language runtimes + Claude Code
+# Entrypoint: python3 -m thresher.harness
+
+FROM ubuntu:24.04
+
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/usr/local/go/bin:/root/.cargo/bin:${PATH}"
+
+# ── System packages ─────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Build tools
+    build-essential \
+    curl \
+    wget \
+    git \
+    unzip \
+    ca-certificates \
+    gnupg \
+    # Python
+    python3 \
+    python3-pip \
+    python3-venv \
+    python3-dev \
+    # Java (for some scanners)
+    default-jre-headless \
+    # ClamAV
+    clamav \
+    clamav-daemon \
+    # YARA
+    yara \
+    # Misc runtime deps
+    libssl-dev \
+    libffi-dev \
+    file \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Node.js 20 ───────────────────────────────────────────────────────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Go 1.22 ──────────────────────────────────────────────────────────────────
+RUN case "${TARGETARCH}" in \
+        amd64) GOARCH=amd64 ;; \
+        arm64) GOARCH=arm64 ;; \
+        *) GOARCH=amd64 ;; \
+    esac \
+    && curl -fsSL "https://go.dev/dl/go1.22.4.linux-${GOARCH}.tar.gz" \
+       | tar -C /usr/local -xz
+
+# ── Rust stable ──────────────────────────────────────────────────────────────
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable --profile minimal \
+    && /root/.cargo/bin/rustup component add clippy
+
+# ── Python security scanners ─────────────────────────────────────────────────
+RUN pip3 install --no-cache-dir --break-system-packages \
+    semgrep \
+    bandit \
+    checkov \
+    guarddog \
+    scancode-toolkit
+
+# ── Go-based scanners ────────────────────────────────────────────────────────
+# govulncheck
+RUN go install golang.org/x/vuln/cmd/govulncheck@latest
+
+# ── Rust-based scanners ──────────────────────────────────────────────────────
+# cargo-audit
+RUN /root/.cargo/bin/cargo install cargo-audit
+
+# ── Syft (SBOM generator) ────────────────────────────────────────────────────
+RUN curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+    | sh -s -- -b /usr/local/bin
+
+# ── Grype (vulnerability scanner) ───────────────────────────────────────────
+RUN curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+    | sh -s -- -b /usr/local/bin
+
+# ── Trivy ────────────────────────────────────────────────────────────────────
+RUN case "${TARGETARCH}" in \
+        amd64) TRIVY_ARCH=64bit ;; \
+        arm64) TRIVY_ARCH=ARM64 ;; \
+        *) TRIVY_ARCH=64bit ;; \
+    esac \
+    && TRIVY_VERSION=$(curl -s https://api.github.com/repos/aquasecurity/trivy/releases/latest \
+        | grep '"tag_name"' | cut -d'"' -f4 | sed 's/v//') \
+    && curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${TRIVY_ARCH}.tar.gz" \
+       | tar -C /usr/local/bin -xz trivy
+
+# ── Gitleaks ─────────────────────────────────────────────────────────────────
+RUN GITLEAKS_VERSION=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
+        | grep '"tag_name"' | cut -d'"' -f4 | sed 's/v//') \
+    && case "${TARGETARCH}" in \
+        amd64) GITLEAKS_ARCH=x64 ;; \
+        arm64) GITLEAKS_ARCH=arm64 ;; \
+        *) GITLEAKS_ARCH=x64 ;; \
+    esac \
+    && curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${GITLEAKS_ARCH}.tar.gz" \
+       | tar -C /usr/local/bin -xz gitleaks
+
+# ── OSV-Scanner ──────────────────────────────────────────────────────────────
+RUN go install github.com/google/osv-scanner/cmd/osv-scanner@latest \
+    && cp /root/go/bin/osv-scanner /usr/local/bin/osv-scanner
+
+# ── Hadolint ─────────────────────────────────────────────────────────────────
+RUN case "${TARGETARCH}" in \
+        amd64) HADOLINT_ARCH=x86_64 ;; \
+        arm64) HADOLINT_ARCH=arm64 ;; \
+        *) HADOLINT_ARCH=x86_64 ;; \
+    esac \
+    && HADOLINT_VERSION=$(curl -s https://api.github.com/repos/hadolint/hadolint/releases/latest \
+        | grep '"tag_name"' | cut -d'"' -f4) \
+    && curl -fsSL "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-${HADOLINT_ARCH}" \
+       -o /usr/local/bin/hadolint \
+    && chmod +x /usr/local/bin/hadolint
+
+# ── Claude Code ──────────────────────────────────────────────────────────────
+RUN npm install -g @anthropic-ai/claude-code
+
+# ── Pre-populate vulnerability databases ─────────────────────────────────────
+# These run at build time so the container starts with fresh DBs.
+# Failures are non-fatal (no network in some build environments).
+RUN grype db update || true
+RUN trivy image --download-db-only --no-progress debian:latest 2>/dev/null || true
+RUN freshclam 2>/dev/null || true
+
+# ── Non-root user ─────────────────────────────────────────────────────────────
+RUN useradd -m -s /bin/bash thresher
+
+# ── Directory structure ───────────────────────────────────────────────────────
+RUN mkdir -p \
+        /output \
+        /opt/scan-results \
+        /opt/target \
+        /opt/deps \
+    && chown -R thresher:thresher \
+        /output \
+        /opt/scan-results \
+        /opt/target \
+        /opt/deps
+
+# ── Custom rules ──────────────────────────────────────────────────────────────
+COPY rules/ /opt/rules/
+
+# ── Thresher application (last layer — changes most often) ───────────────────
+COPY pyproject.toml /app/pyproject.toml
+COPY src/ /app/src/
+RUN pip3 install --no-cache-dir --break-system-packages /app
+
+USER thresher
+
+ENTRYPOINT ["python3", "-m", "thresher.harness"]
