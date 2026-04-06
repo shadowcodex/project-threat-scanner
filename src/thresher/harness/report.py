@@ -110,6 +110,7 @@ def generate_report(
         _generate_agent_report,
         _build_synthesis_input,
     )
+    from thresher.config import ScanConfig, VMConfig
 
     output_dir = config.get("output_dir", "/output")
     os.makedirs(output_dir, exist_ok=True)
@@ -119,15 +120,30 @@ def generate_report(
         "scanner_results", {}
     )
 
+    # Build a ScanConfig for the synthesize functions
+    scan_config = ScanConfig(
+        repo_url=config.get("repo_url", ""),
+        skip_ai=config.get("skip_ai", False),
+        output_dir=output_dir,
+        vm=VMConfig(),
+        anthropic_api_key=config.get("anthropic_api_key", ""),
+        model=config.get("model", "sonnet"),
+    )
+
+    # vm_name is empty string in harness context (runs natively, not in VM)
+    vm_name = ""
+
     if config.get("skip_ai"):
         _generate_template_report(
-            output_dir, findings, scanner_results
+            vm_name, scan_config, findings, scanner_results, output_dir
         )
     else:
         synthesis_input = _build_synthesis_input(
             scanner_results, findings, findings
         )
-        _generate_agent_report(output_dir, synthesis_input, config)
+        _generate_agent_report(
+            vm_name, scan_config, scanner_results, findings, findings, output_dir
+        )
 
     validate_report_output(output_dir)
     return output_dir

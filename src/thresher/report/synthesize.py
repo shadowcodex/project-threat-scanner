@@ -5,6 +5,9 @@ from __future__ import annotations
 import importlib.metadata
 import json
 import logging
+import os
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
@@ -12,8 +15,36 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from thresher.config import ScanConfig
 from thresher.report.scoring import enrich_findings
-from thresher.vm.safe_io import safe_json_loads
-from thresher.vm.ssh import ssh_exec, ssh_write_file
+
+
+def _write_file(path: str, content: str) -> None:
+    """Write content to a local file (replaces ssh_write_file for harness use)."""
+    dir_path = os.path.dirname(path)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def _read_file(path: str) -> str | None:
+    """Read a local file, returning None if it doesn't exist."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except (OSError, IOError):
+        return None
+
+
+def _safe_json_loads(text: str, source: str = "") -> Any | None:
+    """Parse JSON with size limit."""
+    if len(text) > 10 * 1024 * 1024:
+        logger.warning("JSON from %s exceeds 10 MB, skipping", source)
+        return None
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        logger.debug("Failed to parse JSON from %s", source)
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +84,10 @@ def _read_all_scanner_findings_from_vm(vm_name: str) -> dict[str, list[dict[str,
     for tool_name, filename in scanner_files.items():
         path = f"{SCAN_RESULTS_DIR}/{filename}"
         try:
-            cat_result = ssh_exec(vm_name, f"cat {path} 2>/dev/null")
-            if cat_result.exit_code != 0:
+            text = _read_file(path)
+            if text is None:
                 continue
-            raw = safe_json_loads(cat_result.stdout, source=filename)
+            raw = _safe_json_loads(text, source=filename)
             if raw is None:
                 continue
             # Import parse functions lazily to normalize findings
@@ -64,7 +95,7 @@ def _read_all_scanner_findings_from_vm(vm_name: str) -> dict[str, list[dict[str,
             if findings:
                 results[tool_name] = findings
         except Exception:
-            logger.debug("Could not read %s from VM", path)
+            logger.debug("Could not read %s", path)
 
     return results
 
@@ -132,10 +163,10 @@ def _read_ai_findings_from_vm(vm_name: str) -> dict[str, Any] | None:
         f"{SCAN_RESULTS_DIR}/analyst-findings.json",
     ]:
         try:
-            result = ssh_exec(vm_name, f"cat {path} 2>/dev/null")
-            if result.exit_code != 0:
+            text = _read_file(path)
+            if text is None:
                 continue
-            parsed = safe_json_loads(result.stdout, source=path)
+            parsed = _safe_json_loads(text, source=path)
             if parsed is not None:
                 return parsed
         except Exception:
@@ -167,10 +198,10 @@ def generate_report(
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     report_dir = f"{REPORT_BASE_DIR}/{timestamp}"
 
-    # Create report directory structure inside the VM
-    ssh_exec(vm_name, f"mkdir -p {report_dir}/scan-results")
+    # Create report directory structure
+    os.makedirs(f"{report_dir}/scan-results", exist_ok=True)
 
-    # Read all findings from the VM
+    # Read all findings from scan results directory
     scanner_results = _read_all_scanner_findings_from_vm(vm_name)
     ai_findings = None if config.skip_ai else _read_ai_findings_from_vm(vm_name)
 
@@ -185,27 +216,19 @@ def generate_report(
     )
 
     # Copy raw scan results and SBOM into report directory
-    ssh_exec(
-        vm_name,
-        f"cp -r {SCAN_RESULTS_DIR}/* {report_dir}/scan-results/ 2>/dev/null || true",
-    )
-    ssh_exec(
-        vm_name,
-        f"cp {SBOM_PATH} {report_dir}/sbom.json 2>/dev/null || true",
-    )
+    if os.path.isdir(SCAN_RESULTS_DIR):
+        shutil.copytree(SCAN_RESULTS_DIR, f"{report_dir}/scan-results", dirs_exist_ok=True)
+    sbom_path = SBOM_PATH
+    if os.path.exists(sbom_path):
+        shutil.copy2(sbom_path, f"{report_dir}/sbom.json")
 
-    # Write enriched findings JSON (via safe copy to avoid heredoc injection)
+    # Write enriched findings JSON
     findings_json = json.dumps(enriched, indent=2, default=str)
-    ssh_write_file(vm_name, findings_json, f"{report_dir}/findings.json")
+    _write_file(f"{report_dir}/findings.json", findings_json)
 
     if config.skip_ai:
-        # Fallback: use Jinja2 templates for report generation
-        # NOTE: Template rendering happens on the host but the data flow is
-        # host -> VM (writing rendered output back).  This is acceptable for
-        # the --skip-ai fallback path since templates are host-authored.
         _generate_template_report(vm_name, config, enriched, scanner_results, report_dir)
     else:
-        # Agent-driven synthesis via Claude Code headless
         _generate_agent_report(
             vm_name, config, scanner_results, ai_findings, enriched, report_dir
         )
@@ -213,12 +236,10 @@ def generate_report(
     # --- HTML report (always generated after markdown reports) ---
     agent_succeeded = False
     if not config.skip_ai:
-        check_cmd = (
-            f"test -f {report_dir}/executive-summary.md "
-            f"&& test -f {report_dir}/detailed-report.md"
+        agent_succeeded = (
+            os.path.isfile(f"{report_dir}/executive-summary.md")
+            and os.path.isfile(f"{report_dir}/detailed-report.md")
         )
-        _, _, check_exit = ssh_exec(vm_name, check_cmd)
-        agent_succeeded = check_exit == 0
 
     _generate_html_report(
         vm_name, config, enriched, scanner_results, report_dir,
@@ -434,39 +455,47 @@ def _generate_agent_report(
     """Invoke Claude Code headless inside the VM to synthesize the final report."""
     synthesis_input = _build_synthesis_input(scanner_results, ai_findings, enriched)
 
-    # Write synthesis input via safe copy (avoids heredoc injection)
+    # Write synthesis input
     input_path = f"{report_dir}/synthesis_input.md"
-    ssh_write_file(vm_name, synthesis_input, input_path)
+    _write_file(input_path, synthesis_input)
 
-    # Build the synthesis prompt and write it to a file in the VM
-    # (avoids shell quoting issues with inline multi-line prompts)
+    # Build the synthesis prompt and write it
     synthesis_prompt = _build_synthesis_prompt(report_dir, input_path)
-    ssh_write_file(vm_name, synthesis_prompt, "/tmp/synthesis_prompt.txt")
+    prompt_path = "/tmp/synthesis_prompt.txt"
+    _write_file(prompt_path, synthesis_prompt)
 
-    # Invoke Claude Code headless inside the VM
-    claude_cmd = (
-        f"cd {report_dir} && "
-        'claude -p "$(cat /tmp/synthesis_prompt.txt)" '
-        "--allowedTools 'Read,Write,Glob,Grep,Bash' "
-        "--output-format stream-json "
-        "--verbose "
-        "--max-turns 30"
-    )
+    # Invoke Claude Code headless
+    claude_cmd = [
+        "claude", "-p", synthesis_prompt,
+        "--allowedTools", "Read,Write,Glob,Grep,Bash",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--max-turns", "30",
+    ]
 
-    env = config.ai_env()
+    env = config.ai_env() or {}
+    proc_env = {**os.environ, **env}
 
-    _stdout, _stderr, exit_code = ssh_exec(
-        vm_name, claude_cmd, timeout=1800, env=env or None
-    )
+    try:
+        result = subprocess.run(
+            claude_cmd,
+            cwd=report_dir,
+            env=proc_env,
+            timeout=1800,
+            capture_output=True,
+            text=True,
+        )
+        exit_code = result.returncode
+    except Exception as exc:
+        logger.warning("Synthesis agent failed: %s", exc)
+        exit_code = 1
     logger.info("Synthesis agent completed: exit_code=%d", exit_code)
 
     # Verify expected output files exist; fall back to templates if agent failed
-    check_cmd = (
-        f"test -f {report_dir}/executive-summary.md "
-        f"&& test -f {report_dir}/detailed-report.md"
+    agent_succeeded = (
+        os.path.isfile(f"{report_dir}/executive-summary.md")
+        and os.path.isfile(f"{report_dir}/detailed-report.md")
     )
-    _, _, check_exit_code = ssh_exec(vm_name, check_cmd)
-    agent_succeeded = check_exit_code == 0
 
     if not agent_succeeded:
         logger.warning(
@@ -584,10 +613,10 @@ def _generate_template_report(
     # Generate synthesis-findings.md (template-based summary)
     synthesis_md = _build_template_synthesis_findings(context, enriched)
 
-    # Write rendered reports into the VM (via safe copy)
-    ssh_write_file(vm_name, exec_summary, f"{report_dir}/executive-summary.md")
-    ssh_write_file(vm_name, detailed_report, f"{report_dir}/detailed-report.md")
-    ssh_write_file(vm_name, synthesis_md, f"{report_dir}/synthesis-findings.md")
+    # Write rendered reports
+    _write_file(f"{report_dir}/executive-summary.md", exec_summary)
+    _write_file(f"{report_dir}/detailed-report.md", detailed_report)
+    _write_file(f"{report_dir}/synthesis-findings.md", synthesis_md)
 
 
 def _build_template_context(
@@ -860,14 +889,14 @@ def _generate_html_report(
             ("synthesis-findings.md", "agent_synthesis"),
         ]:
             try:
-                result = ssh_exec(vm_name, f"cat {report_dir}/{filename} 2>/dev/null")
-                if result.exit_code == 0 and result.stdout.strip():
-                    context[key] = md_lib.markdown(result.stdout)
+                text = _read_file(f"{report_dir}/{filename}")
+                if text and text.strip():
+                    context[key] = md_lib.markdown(text)
             except Exception:
                 logger.debug("Could not read %s for HTML report", filename)
 
     html_report = _render_html_report(context)
-    ssh_write_file(vm_name, html_report, f"{report_dir}/report.html")
+    _write_file(f"{report_dir}/report.html", html_report)
 
 
 def _split_findings_by_source(

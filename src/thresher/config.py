@@ -268,13 +268,9 @@ def load_config(
     global active_limits
     active_limits = config.limits
 
-    # Initialise SSH concurrency limit from config
-    from thresher.vm.ssh import _init_ssh_semaphore
-    _init_ssh_semaphore(config.limits.max_concurrent_ssh)
-
     return config
 
 
-# Module-level limits instance, readable by safe_io.py and ssh.py
+# Module-level limits instance, readable by utility modules
 # without importing ScanConfig. Updated by load_config().
 active_limits = LimitsConfig()
