@@ -13,6 +13,7 @@ dependencies = [
     "jinja2>=3.1",
     "markdown>=3.5",
     "pyyaml>=6.0",
+    "sf-hamilton>=1.82",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +26,7 @@ dev = [
 thresher = "thresher.cli:main"
 thresher-build = "thresher.cli:build_entry"
 thresher-stop = "thresher.cli:stop_entry"
+thresher-harness = "thresher.harness:main"
 thresher-update-totals = "thresher.scripts.update_totals:main"
 
 [tool.pytest.ini_options]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 
@@ -262,3 +263,38 @@ class TestAiCredentials:
         cfg = load_config(repo_url="https://github.com/x/y", skip_ai=True)
         assert cfg.oauth_token == ""
         mock_kc.assert_not_called()
+
+
+class TestLaunchMode:
+    def test_scan_config_launch_mode_default(self):
+        """launch_mode defaults to 'lima'."""
+        config = ScanConfig()
+        assert config.launch_mode == "lima"
+
+    def test_scan_config_launch_mode_from_dict(self):
+        """launch_mode can be set from config dict."""
+        config = ScanConfig(launch_mode="docker")
+        assert config.launch_mode == "docker"
+
+    def test_scan_config_launch_mode_validates(self):
+        """launch_mode rejects invalid values."""
+        config = ScanConfig(launch_mode="invalid")
+        errors = config.validate()
+        assert any("launch_mode" in e for e in errors)
+
+    def test_scan_config_serializes_to_json(self):
+        """ScanConfig can round-trip through JSON for harness handoff."""
+        config = ScanConfig(repo_url="https://github.com/test/repo", launch_mode="docker")
+        blob = config.to_json()
+        restored = ScanConfig.from_json(blob)
+        assert restored.repo_url == config.repo_url
+        assert restored.launch_mode == config.launch_mode
+
+    def test_scan_config_from_json(self):
+        """ScanConfig.from_json handles all fields."""
+        data = json.dumps({"repo_url": "https://example.com/repo", "launch_mode": "direct",
+                           "skip_ai": True, "model": "opus"})
+        config = ScanConfig.from_json(data)
+        assert config.launch_mode == "direct"
+        assert config.skip_ai is True
+        assert config.model == "opus"
