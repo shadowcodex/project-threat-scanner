@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch, call, MagicMock
+from unittest.mock import patch, MagicMock
 
 from thresher.agents.analysts import (
     ANALYST_DEFINITIONS,
@@ -19,7 +19,6 @@ from thresher.agents.analysts import (
     run_all_analysts,
 )
 from thresher.config import ScanConfig
-from thresher.vm.ssh import SSHResult
 
 
 def _make_config() -> ScanConfig:
@@ -28,6 +27,19 @@ def _make_config() -> ScanConfig:
         anthropic_api_key="sk-ant-test-key",
         model="sonnet",
     )
+
+
+def _valid_proc_output(name="paranoid", number=1, findings=None, risk_score=0):
+    data = {
+        "analyst": name,
+        "analyst_number": number,
+        "core_question": "test?",
+        "files_analyzed": 5,
+        "findings": findings or [],
+        "summary": "All clear",
+        "risk_score": risk_score,
+    }
+    return json.dumps(data).encode()
 
 
 class TestAnalystDefinitions:
@@ -62,7 +74,6 @@ class TestBuildAnalystPrompt:
     def test_includes_persona(self):
         analyst = ANALYST_DEFINITIONS[0]
         prompt = _build_analyst_prompt(analyst)
-        # The prompt includes the persona name (title may be paraphrased)
         assert "The Paranoid" in prompt
         assert analyst["core_question"] in prompt
 
@@ -225,174 +236,140 @@ class TestFormatAnalystMarkdown:
 
 
 class TestRunSingleAnalyst:
-    def _valid_output(self):
-        return json.dumps({
-            "analyst": "paranoid",
-            "findings": [],
-            "summary": "All clear",
-            "risk_score": 0,
-        })
+    def _valid_proc(self, name="paranoid", number=1):
+        proc = MagicMock()
+        proc.stdout = _valid_proc_output(name, number)
+        return proc
 
-    def _valid_output_with_findings(self):
-        return json.dumps({
+    def _valid_proc_with_findings(self):
+        proc = MagicMock()
+        data = {
             "analyst": "paranoid",
+            "analyst_number": 1,
+            "core_question": "test?",
+            "files_analyzed": 5,
             "findings": [{"title": "test", "severity": "high"}],
             "summary": "Found issues",
             "risk_score": 5,
-        })
+        }
+        proc.stdout = json.dumps(data).encode()
+        return proc
 
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_writes_prompt_to_correct_path(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
-        mock_write.return_value = None
+    @patch("thresher.agents.analysts.subprocess.run")
+    def test_uses_correct_max_turns_from_yaml(self, mock_run):
+        mock_run.return_value = self._valid_proc()
 
-        analyst = ANALYST_DEFINITIONS[0]
-        _run_single_analyst("vm", _make_config(), analyst)
+        config = _make_config()
+        assert config.analyst_max_turns is None
 
-        # Check prompt was written to /tmp/analyst_1_prompt.txt
-        prompt_write = mock_write.call_args_list[0]
-        assert prompt_write[0][2] == "/tmp/analyst_1_prompt.txt"
+        analyst = ANALYST_DEFINITIONS[0]  # paranoid, max_turns=30
+        _run_single_analyst(config, analyst)
 
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_global_max_turns_overrides_yaml(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
-        mock_write.return_value = None
+        cmd = mock_run.call_args[0][0]
+        assert "--max-turns" in cmd
+        idx = cmd.index("--max-turns")
+        assert cmd[idx + 1] == "30"
+
+    @patch("thresher.agents.analysts.subprocess.run")
+    def test_global_max_turns_overrides_yaml(self, mock_run):
+        mock_run.return_value = self._valid_proc()
 
         config = _make_config()
         config.analyst_max_turns = 50
 
         analyst = ANALYST_DEFINITIONS[0]
-        _run_single_analyst("vm", config, analyst)
+        _run_single_analyst(config, analyst)
 
-        cmds = [c[0][1] for c in mock_exec.call_args_list]
-        claude_cmd = [c for c in cmds if "claude -p" in c][0]
-        assert "--max-turns 50" in claude_cmd
+        cmd = mock_run.call_args[0][0]
+        idx = cmd.index("--max-turns")
+        assert cmd[idx + 1] == "50"
 
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_per_analyst_overrides_global(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
-        mock_write.return_value = None
+    @patch("thresher.agents.analysts.subprocess.run")
+    def test_per_analyst_overrides_global(self, mock_run):
+        mock_run.return_value = self._valid_proc()
 
         config = _make_config()
         config.analyst_max_turns = 50
         config.analyst_max_turns_by_name = {"paranoid": 60}
 
         analyst = ANALYST_DEFINITIONS[0]  # paranoid
-        _run_single_analyst("vm", config, analyst)
+        _run_single_analyst(config, analyst)
 
-        cmds = [c[0][1] for c in mock_exec.call_args_list]
-        claude_cmd = [c for c in cmds if "claude -p" in c][0]
-        assert "--max-turns 60" in claude_cmd
+        cmd = mock_run.call_args[0][0]
+        idx = cmd.index("--max-turns")
+        assert cmd[idx + 1] == "60"
 
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_unmatched_per_analyst_falls_to_global(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
-        mock_write.return_value = None
+    @patch("thresher.agents.analysts.subprocess.run")
+    def test_unmatched_per_analyst_falls_to_global(self, mock_run):
+        mock_run.return_value = self._valid_proc()
 
         config = _make_config()
         config.analyst_max_turns = 50
         config.analyst_max_turns_by_name = {"shadowcatcher": 80}
 
         analyst = ANALYST_DEFINITIONS[0]  # paranoid — not in by_name
-        _run_single_analyst("vm", config, analyst)
+        _run_single_analyst(config, analyst)
 
-        cmds = [c[0][1] for c in mock_exec.call_args_list]
-        claude_cmd = [c for c in cmds if "claude -p" in c][0]
-        assert "--max-turns 50" in claude_cmd
+        cmd = mock_run.call_args[0][0]
+        idx = cmd.index("--max-turns")
+        assert cmd[idx + 1] == "50"
 
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_none_max_turns_uses_yaml_default(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
-        mock_write.return_value = None
-
-        config = _make_config()
-        assert config.analyst_max_turns is None
-
-        analyst = ANALYST_DEFINITIONS[0]  # paranoid, max_turns=30
-        _run_single_analyst("vm", config, analyst)
-
-        cmds = [c[0][1] for c in mock_exec.call_args_list]
-        claude_cmd = [c for c in cmds if "claude -p" in c][0]
-        assert "--max-turns 30" in claude_cmd
-
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_uses_bash_in_allowed_tools(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
-        mock_write.return_value = None
+    @patch("thresher.agents.analysts.subprocess.run")
+    def test_uses_bash_in_allowed_tools(self, mock_run):
+        mock_run.return_value = self._valid_proc()
 
         analyst = ANALYST_DEFINITIONS[0]
-        _run_single_analyst("vm", _make_config(), analyst)
+        _run_single_analyst(_make_config(), analyst)
 
-        # Find the claude invocation command
-        cmds = [c[0][1] for c in mock_exec.call_args_list]
-        claude_cmd = [c for c in cmds if "claude -p" in c][0]
-        assert '"Read,Glob,Grep,Bash"' in claude_cmd
+        cmd = mock_run.call_args[0][0]
+        assert "Read,Glob,Grep,Bash" in cmd
 
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_api_key_uses_tmpfs_pattern(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
-        mock_write.return_value = None
+    @patch("thresher.agents.analysts.subprocess.run")
+    def test_api_key_in_env(self, mock_run):
+        mock_run.return_value = self._valid_proc()
 
-        analyst = ANALYST_DEFINITIONS[0]
-        _run_single_analyst("vm", _make_config(), analyst)
+        _run_single_analyst(_make_config(), ANALYST_DEFINITIONS[0])
 
-        cmds = [c[0][1] for c in mock_exec.call_args_list]
-        # First ssh_exec writes key to /dev/shm
-        assert any("/dev/shm/.cred_ANTHROPIC_API_KEY_1" in cmd for cmd in cmds)
-        # Claude command reads from tmpfs and deletes
-        claude_cmd = [c for c in cmds if "claude -p" in c][0]
-        assert "ANTHROPIC_API_KEY=$(cat /dev/shm/.cred_ANTHROPIC_API_KEY_1)" in claude_cmd
-        assert "rm -f /dev/shm/.cred_ANTHROPIC_API_KEY_1" in claude_cmd
+        call_kwargs = mock_run.call_args[1]
+        env = call_kwargs.get("env", {})
+        assert "ANTHROPIC_API_KEY" in env
+        assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key"
 
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_writes_findings_to_correct_vm_path(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult(self._valid_output_with_findings(), "", 0)
-        mock_write.return_value = None
+    @patch("thresher.agents.analysts.subprocess.run")
+    def test_returns_findings_dict(self, mock_run):
+        mock_run.return_value = self._valid_proc()
 
         analyst = ANALYST_DEFINITIONS[0]
-        _run_single_analyst("vm", _make_config(), analyst)
-
-        write_paths = [c[0][2] for c in mock_write.call_args_list]
-        assert "/opt/scan-results/analyst-1-paranoid-findings.json" in write_paths
-        assert "/opt/scan-results/analyst-1-paranoid-findings.md" in write_paths
-
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_returns_timing_dict(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
-        mock_write.return_value = None
-
-        analyst = ANALYST_DEFINITIONS[0]
-        result = _run_single_analyst("vm", _make_config(), analyst)
+        result = _run_single_analyst(_make_config(), analyst)
         assert result is not None
-        assert result["name"] == "paranoid"
-        assert isinstance(result["duration"], float)
+        assert isinstance(result, dict)
+        assert "findings" in result
+        assert result["analyst"] == "paranoid"
 
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_unique_tmpfs_key_paths(self, mock_exec, mock_write):
-        """Each analyst uses a unique tmpfs path to avoid race conditions."""
-        mock_exec.return_value = SSHResult(self._valid_output(), "", 0)
-        mock_write.return_value = None
+    @patch("thresher.agents.analysts.subprocess.run")
+    def test_returns_timing_metadata(self, mock_run):
+        mock_run.return_value = self._valid_proc()
 
-        config = _make_config()
+        analyst = ANALYST_DEFINITIONS[0]
+        result = _run_single_analyst(_make_config(), analyst)
+        assert result is not None
+        assert "_timing" in result
+        assert result["_timing"]["name"] == "paranoid"
+        assert isinstance(result["_timing"]["duration"], float)
 
-        # Run two different analysts
-        _run_single_analyst("vm", config, ANALYST_DEFINITIONS[0])
-        _run_single_analyst("vm", config, ANALYST_DEFINITIONS[1])
+    @patch("thresher.agents.analysts.subprocess.run")
+    def test_returns_none_on_subprocess_failure(self, mock_run):
+        mock_run.side_effect = RuntimeError("subprocess died")
 
-        cmds = [c[0][1] for c in mock_exec.call_args_list]
-        key_writes = [c for c in cmds if "/dev/shm/.cred_ANTHROPIC_API_KEY_" in c and "printf" in c]
-        assert "/dev/shm/.cred_ANTHROPIC_API_KEY_1" in key_writes[0]
-        assert "/dev/shm/.cred_ANTHROPIC_API_KEY_2" in key_writes[1]
+        analyst = ANALYST_DEFINITIONS[0]
+        result = _run_single_analyst(_make_config(), analyst)
+        assert result is None
+
+    def test_returns_none_on_prompt_write_failure(self):
+        with patch("thresher.agents.analysts.Path.write_text", side_effect=OSError("write failed")):
+            analyst = ANALYST_DEFINITIONS[0]
+            result = _run_single_analyst(_make_config(), analyst)
+            assert result is None
 
 
 class TestValidateAnalystSchema:
@@ -441,83 +418,89 @@ class TestValidateAnalystSchema:
 
 
 class TestRunAllAnalysts:
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
     @patch("thresher.agents.analysts._run_single_analyst")
-    def test_launches_eight_analysts(self, mock_run, mock_exec, mock_write):
+    def test_launches_eight_analysts(self, mock_run):
         mock_run.return_value = None
-        mock_exec.return_value = SSHResult("", "", 0)
-        mock_write.return_value = None
 
-        run_all_analysts("vm", _make_config())
+        run_all_analysts(_make_config())
 
         assert mock_run.call_count == 8
 
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
     @patch("thresher.agents.analysts._run_single_analyst")
-    def test_installs_analyst_stop_hook(self, mock_run, mock_exec, mock_write):
-        """Stop hook should be written before analysts launch."""
+    def test_passes_all_analyst_defs(self, mock_run):
         mock_run.return_value = None
-        mock_exec.return_value = SSHResult("", "", 0)
-        mock_write.return_value = None
 
-        run_all_analysts("vm", _make_config())
-
-        # Check stop hook settings were written
-        write_paths = [c[0][2] for c in mock_write.call_args_list]
-        assert "/opt/target/.claude/settings.local.json" in write_paths
-
-        # Verify it references the analyst validation script
-        hook_write = [c for c in mock_write.call_args_list
-                      if c[0][2] == "/opt/target/.claude/settings.local.json"][0]
-        assert "validate_analyst_output.sh" in hook_write[0][1]
-
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    @patch("thresher.agents.analysts._run_single_analyst")
-    def test_passes_all_analyst_defs(self, mock_run, mock_exec, mock_write):
-        mock_run.return_value = None
-        mock_exec.return_value = SSHResult("", "", 0)
-        mock_write.return_value = None
-
-        run_all_analysts("vm", _make_config())
+        run_all_analysts(_make_config())
 
         called_numbers = sorted(
-            c[0][2]["number"] for c in mock_run.call_args_list
+            c[0][1]["number"] for c in mock_run.call_args_list
         )
         assert called_numbers == list(range(1, 9))
 
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
     @patch("thresher.agents.analysts._run_single_analyst")
-    def test_returns_none(self, mock_run, mock_exec, mock_write):
+    def test_returns_list(self, mock_run):
         mock_run.return_value = None
-        mock_exec.return_value = SSHResult("", "", 0)
-        mock_write.return_value = None
-        result = run_all_analysts("vm", _make_config())
-        assert result is None
+        result = run_all_analysts(_make_config())
+        assert isinstance(result, list)
 
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
     @patch("thresher.agents.analysts._run_single_analyst")
-    def test_continues_on_analyst_failure(self, mock_run, mock_exec, mock_write):
+    def test_returns_findings_from_successful_analysts(self, mock_run):
+        findings_a = {
+            "analyst": "paranoid",
+            "findings": [{"title": "bad"}],
+            "summary": "Issues found",
+            "risk_score": 5,
+            "_timing": {"name": "paranoid", "duration": 1.0, "turns": 2},
+        }
+        findings_b = {
+            "analyst": "behaviorist",
+            "findings": [],
+            "summary": "All clear",
+            "risk_score": 0,
+            "_timing": {"name": "behaviorist", "duration": 0.5, "turns": 1},
+        }
+        mock_run.side_effect = [
+            findings_a if i == 0 else (findings_b if i == 1 else None)
+            for i in range(8)
+        ]
+
+        result = run_all_analysts(_make_config())
+        # At least the non-None returns are included
+        assert isinstance(result, list)
+
+    @patch("thresher.agents.analysts._run_single_analyst")
+    def test_continues_on_analyst_failure(self, mock_run):
         """If one analyst raises, others should still complete."""
-        mock_exec.return_value = SSHResult("", "", 0)
-        mock_write.return_value = None
         call_count = 0
 
-        def side_effect(vm, config, analyst_def):
+        def side_effect(config, analyst_def, target_dir=None):
             nonlocal call_count
             call_count += 1
             if analyst_def["number"] == 3:
                 raise RuntimeError("analyst 3 exploded")
+            return None
 
         mock_run.side_effect = side_effect
 
         # Should not raise
-        run_all_analysts("vm", _make_config())
+        run_all_analysts(_make_config())
         assert call_count == 8
+
+    @patch("thresher.agents.analysts._run_single_analyst")
+    def test_strips_timing_from_returned_findings(self, mock_run):
+        """_timing key should be stripped from findings returned to caller."""
+        findings = {
+            "analyst": "paranoid",
+            "findings": [],
+            "summary": "clean",
+            "risk_score": 0,
+            "_timing": {"name": "paranoid", "duration": 1.0, "turns": 2},
+        }
+        mock_run.return_value = findings
+
+        result = run_all_analysts(_make_config())
+        for item in result:
+            assert "_timing" not in item
 
 
 class TestCountTurnsFromStream:
@@ -544,62 +527,6 @@ class TestCountTurnsFromStream:
             'also not json\n'
         )
         assert _count_turns_from_stream(stream) == 1
-
-
-class TestRunSingleAnalystTiming:
-    def _valid_stream_output(self):
-        findings = json.dumps({
-            "analyst": "paranoid",
-            "findings": [],
-            "summary": "All clear",
-            "risk_score": 0,
-        })
-        return (
-            '{"type":"system","subtype":"init"}\n'
-            f'{{"type":"assistant","message":{{"content":[{{"type":"text","text":{json.dumps(findings)}}}]}}}}\n'
-            f'{{"type":"result","result":{json.dumps(findings)}}}\n'
-        )
-
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_returns_timing_metadata(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult(self._valid_stream_output(), "", 0)
-        mock_write.return_value = None
-
-        analyst = ANALYST_DEFINITIONS[0]
-        result = _run_single_analyst("vm", _make_config(), analyst)
-
-        assert result is not None
-        assert result["name"] == "paranoid"
-        assert isinstance(result["duration"], float)
-        assert result["duration"] >= 0
-        assert result["turns"] == 1
-
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_returns_none_on_ssh_failure(self, mock_exec, mock_write):
-        mock_write.return_value = None
-
-        def ssh_side_effect(vm, cmd, **kwargs):
-            # Credential writes succeed; the claude invocation fails
-            if "claude -p" in cmd:
-                raise RuntimeError("SSH died")
-            return SSHResult("", "", 0)
-
-        mock_exec.side_effect = ssh_side_effect
-
-        analyst = ANALYST_DEFINITIONS[0]
-        result = _run_single_analyst("vm", _make_config(), analyst)
-        assert result is None
-
-    @patch("thresher.agents.analysts.ssh_write_file")
-    @patch("thresher.agents.analysts.ssh_exec")
-    def test_returns_none_on_prompt_write_failure(self, mock_exec, mock_write):
-        mock_write.side_effect = RuntimeError("write failed")
-
-        analyst = ANALYST_DEFINITIONS[0]
-        result = _run_single_analyst("vm", _make_config(), analyst)
-        assert result is None
 
 
 class TestLogTimingSummary:

@@ -10,21 +10,18 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import subprocess
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from thresher.agents.prompts import ADVERSARIAL_SYSTEM_PROMPT
 from thresher.config import ScanConfig
-from thresher.vm.safe_io import safe_json_loads
-from thresher.vm.ssh import ssh_exec, ssh_write_file
 
 logger = logging.getLogger(__name__)
 
-
-def _shell_quote_key(value: str) -> str:
-    """Quote a string for safe inclusion in a shell command."""
-    return "'" + value.replace("'", "'\\''") + "'"
 
 TARGET_DIR = "/opt/target"
 
@@ -447,99 +444,55 @@ def _merge_adversarial_results(
     return updated_findings
 
 
-def _read_analyst_findings_from_vm(vm_name: str) -> dict[str, Any]:
-    """Read all analyst findings JSON files from within the VM.
+def _merge_analyst_findings(analyst_findings_list: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge a list of per-analyst findings dicts into a combined structure.
 
-    Discovers analyst-*-findings.json files in /opt/scan-results/,
-    reads each one, and merges them into a combined findings structure.
     Each finding is annotated with which analyst produced it.
-
-    Returns the merged findings dict, or an empty findings structure
-    if no files can be read or parsed.
     """
     combined_findings: list[dict[str, Any]] = []
 
-    try:
-        # List all analyst findings files
-        result = ssh_exec(
-            vm_name,
-            "ls /opt/scan-results/analyst-*-findings.json 2>/dev/null",
-        )
-        if result.exit_code != 0 or not result.stdout.strip():
-            # Fall back to legacy single-analyst file
-            logger.info("No multi-analyst files found, trying legacy analyst-findings.json")
-            try:
-                result = ssh_exec(vm_name, "cat /opt/scan-results/analyst-findings.json")
-                if result.exit_code != 0:
-                    logger.warning("Could not read analyst findings from VM")
-                    return {"findings": []}
-                parsed = safe_json_loads(result.stdout, source="analyst-findings.json")
-                if parsed is None:
-                    return {"findings": []}
-                return parsed
-            except Exception:
-                logger.warning("Failed to read legacy analyst findings", exc_info=True)
-                return {"findings": []}
+    for analyst_result in analyst_findings_list:
+        if not isinstance(analyst_result, dict):
+            continue
+        analyst_name = analyst_result.get("analyst", "unknown")
+        analyst_number = analyst_result.get("analyst_number", 0)
 
-        files = result.stdout.strip().splitlines()
-        logger.info("Found %d analyst findings files to merge", len(files))
-
-        for filepath in files:
-            filepath = filepath.strip()
-            if not filepath:
-                continue
-            try:
-                file_result = ssh_exec(vm_name, f"cat {filepath}")
-                if file_result.exit_code != 0:
-                    logger.warning("Could not read %s", filepath)
-                    continue
-                parsed = safe_json_loads(
-                    file_result.stdout,
-                    source=filepath.rsplit("/", 1)[-1],
-                )
-                if parsed is None:
-                    continue
-
-                analyst_name = parsed.get("analyst", "unknown")
-                analyst_number = parsed.get("analyst_number", 0)
-
-                # Annotate each finding with the producing analyst
-                for finding in parsed.get("findings", []):
-                    if isinstance(finding, dict):
-                        finding["source_analyst"] = analyst_name
-                        finding["source_analyst_number"] = analyst_number
-                        combined_findings.append(finding)
-
-            except Exception:
-                logger.warning("Failed to read %s", filepath, exc_info=True)
-
-    except Exception:
-        logger.warning("Failed to list analyst findings from VM", exc_info=True)
-        return {"findings": []}
+        for finding in analyst_result.get("findings", []):
+            if isinstance(finding, dict):
+                finding = dict(finding)  # shallow copy
+                finding["source_analyst"] = analyst_name
+                finding["source_analyst_number"] = analyst_number
+                combined_findings.append(finding)
 
     return {"findings": combined_findings}
 
 
 def run_adversarial_verification(
-    vm_name: str,
     config: ScanConfig,
-) -> None:
+    analyst_findings: list[dict[str, Any]] | None = None,
+    target_dir: str = TARGET_DIR,
+) -> dict[str, Any] | None:
     """Run the adversarial verification agent.
 
-    Reads analyst findings from /opt/scan-results/analyst-findings.json
-    inside the VM, filters to high-risk (score >= 4), invokes Claude Code
-    headless to attempt benign explanations, and writes merged results
-    back to the VM.
-
-    No structured findings data is returned to the host.
-
-    Has NO access to scanner results -- only verifies the AI researcher's findings.
+    Accepts analyst findings directly (from run_all_analysts), filters to
+    high-risk (score >= 4), invokes Claude Code headless to attempt benign
+    explanations, and returns merged results.
 
     Args:
-        vm_name: Name of the Lima VM.
         config: Scan configuration.
+        analyst_findings: List of per-analyst findings dicts from run_all_analysts.
+                          If None or empty, returns None (no verification needed).
+        target_dir: Directory to run the agent in.
+
+    Returns:
+        Merged findings dict with adversarial verification, or None if skipped.
     """
-    ai_findings = _read_analyst_findings_from_vm(vm_name)
+    if analyst_findings is None:
+        analyst_findings = []
+
+    # Merge per-analyst findings into a combined structure
+    ai_findings = _merge_analyst_findings(analyst_findings)
+
     high_risk = _extract_high_risk(ai_findings)
 
     # Deduplicate before adversarial review to avoid re-verifying the same
@@ -557,20 +510,7 @@ def run_adversarial_verification(
 
     if not high_risk:
         logger.info("No high-risk findings to verify — skipping adversarial agent")
-        # Still write the report explaining why verification was skipped
-        try:
-            num_findings = len(ai_findings.get("findings", []))
-            md = (
-                "# AI Security Researcher — Adversarial Verification\n\n"
-                f"**Status:** Skipped — no findings scored >= {RISK_THRESHOLD}/10\n\n"
-                f"The analyst identified {num_findings} finding(s), but all scored "
-                f"below the adversarial review threshold of {RISK_THRESHOLD}. "
-                "No adversarial verification was needed.\n"
-            )
-            ssh_write_file(vm_name, md, "/opt/scan-results/adversarial-findings.md")
-        except Exception:
-            logger.warning("Failed to save adversarial skip report", exc_info=True)
-        return
+        return None
 
     logger.info(
         "Starting adversarial verification of %d finding(s)", len(high_risk)
@@ -578,72 +518,42 @@ def run_adversarial_verification(
 
     prompt = _build_adversarial_prompt(high_risk)
 
+    prompt_path = Path("/tmp/adversarial_prompt.txt")
     try:
-        ssh_write_file(vm_name, prompt, "/tmp/adversarial_prompt.txt")
+        prompt_path.write_text(prompt)
     except Exception:
-        logger.warning(
-            "Failed to write adversarial prompt file to VM", exc_info=True
-        )
-        return
-
-    # Set up the stop hook to validate output schema before the agent
-    # is allowed to finish. Uses the adversarial-specific schema validator.
-    hook_settings = json.dumps({
-        "hooks": {
-            "Stop": [{
-                "hooks": [{
-                    "type": "command",
-                    "command": "/opt/thresher/bin/validate_adversarial_output.sh",
-                    "timeout": 30,
-                }]
-            }]
-        }
-    })
-    try:
-        ssh_exec(vm_name, f"mkdir -p {TARGET_DIR}/.claude")
-        ssh_write_file(
-            vm_name, hook_settings,
-            f"{TARGET_DIR}/.claude/settings.local.json",
-        )
-    except Exception:
-        logger.warning("Failed to write adversarial stop hook settings", exc_info=True)
-        # Continue without the hook — output parsing will still handle both schemas
+        logger.warning("Failed to write adversarial prompt file", exc_info=True)
+        return None
 
     model = config.model
     max_turns = config.adversarial_max_turns or 20
-    claude_cmd = (
-        f"cd {TARGET_DIR} && "
-        f"claude -p \"$(cat /tmp/adversarial_prompt.txt)\" "
-        f"--model {model} "
-        f'--allowedTools "Read,Glob,Grep,WebSearch,WebFetch" '
-        f"--output-format stream-json "
-        f"--verbose "
-        f"--max-turns {max_turns}"
-    )
+    cmd = [
+        "claude",
+        "-p", str(prompt_path),
+        "--model", model,
+        "--allowedTools", "Read,Glob,Grep,WebSearch,WebFetch",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--max-turns", str(max_turns),
+    ]
 
-    # Write credentials to tmpfs and read-and-delete.
-    env = config.ai_env()
-    if env:
-        exports = []
-        for key, value in env.items():
-            tmpfile = f"/dev/shm/.cred_{key}"
-            ssh_exec(
-                vm_name,
-                "printf '%s' " + _shell_quote_key(value) + f" > {tmpfile}"
-                f" && chmod 600 {tmpfile}",
-            )
-            exports.append(f"{key}=$(cat {tmpfile}); export {key}; rm -f {tmpfile}")
-        claude_cmd = "; ".join(exports) + "; " + claude_cmd
+    env = os.environ.copy()
+    ai_env = config.ai_env()
+    env.update(ai_env)
 
-    logger.info("Invoking adversarial agent in VM %s", vm_name)
+    logger.info("Invoking adversarial agent")
     try:
-        stdout, _stderr, _rc = ssh_exec(
-            vm_name, claude_cmd, timeout=2400,
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            timeout=2400,
+            cwd=target_dir,
         )
-        raw_output = stdout
+        raw_output = proc.stdout.decode(errors="replace")
     except Exception as exc:
         logger.error("Adversarial agent invocation failed: %s", exc)
-        return
+        return None
 
     verification = _parse_adversarial_output(raw_output)
     logger.info(
@@ -653,20 +563,7 @@ def run_adversarial_verification(
     )
 
     merged = _merge_adversarial_results(ai_findings, verification)
-
-    # Write merged findings JSON back into the VM for the synthesis agent.
-    try:
-        merged_json = json.dumps(merged, indent=2, default=str)
-        ssh_write_file(vm_name, merged_json, "/opt/scan-results/adversarial-findings.json")
-    except Exception:
-        logger.warning("Failed to save adversarial findings JSON", exc_info=True)
-
-    # Write adversarial findings as a readable markdown report
-    try:
-        md = _format_adversarial_markdown(verification, merged)
-        ssh_write_file(vm_name, md, "/opt/scan-results/adversarial-findings.md")
-    except Exception:
-        logger.warning("Failed to save adversarial findings markdown", exc_info=True)
+    return merged
 
 
 def _format_adversarial_markdown(
