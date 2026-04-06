@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock, patch
 
 from thresher.agents.adversarial import (
     RISK_THRESHOLD,
@@ -11,10 +12,21 @@ from thresher.agents.adversarial import (
     _extract_result_from_stream,
     _finding_risk_score,
     _merge_adversarial_results,
+    _merge_analyst_findings,
     _normalize_adversarial_schema,
     _normalize_title,
     _parse_adversarial_output,
+    run_adversarial_verification,
 )
+from thresher.config import ScanConfig
+
+
+def _make_config() -> ScanConfig:
+    return ScanConfig(
+        repo_url="https://github.com/x/y",
+        anthropic_api_key="sk-ant-test-key",
+        model="sonnet",
+    )
 
 
 class TestExtractHighRisk:
@@ -319,7 +331,6 @@ class TestDeduplicateFindings:
         ]
         originals = [dict(f) for f in findings]
         _deduplicate_findings(findings)
-        # Original findings should not have duplicate_count added
         for orig, current in zip(originals, findings):
             assert orig == current
 
@@ -337,7 +348,6 @@ class TestNormalizeAdversarialSchema:
     """Tests for _normalize_adversarial_schema handling analyst-forced output."""
 
     def test_native_schema_unchanged(self):
-        """Data already in adversarial schema passes through unmodified."""
         data = {
             "verification_summary": "done",
             "total_reviewed": 2,
@@ -349,10 +359,9 @@ class TestNormalizeAdversarialSchema:
             ],
         }
         result = _normalize_adversarial_schema(data)
-        assert result is data  # same object, not copied
+        assert result is data
 
     def test_analyst_forced_schema_remapped(self):
-        """Analyst-forced schema (findings with verdicts) gets remapped."""
         data = {
             "analyst": "adversarial",
             "summary": "Reviewed 3 findings",
@@ -371,14 +380,12 @@ class TestNormalizeAdversarialSchema:
         assert result["downgraded_count"] == 1
 
     def test_findings_without_verdicts_not_remapped(self):
-        """Findings without verdict fields are NOT remapped (analyst schema)."""
         data = {
             "findings": [
                 {"file_path": "/a.py", "risk_score": 7, "description": "bad"},
             ],
         }
         result = _normalize_adversarial_schema(data)
-        # Should not have "results" key — not remapped
         assert "results" not in result
         assert "findings" in result
 
@@ -389,10 +396,7 @@ class TestNormalizeAdversarialSchema:
 
 
 class TestParseAdversarialOutputSchemaDetection:
-    """Tests that _parse_adversarial_output handles both schemas."""
-
     def test_analyst_forced_schema_produces_results(self):
-        """When analyst stop hook forced wrong schema, parser normalizes it."""
         data = json.dumps({
             "analyst": "adversarial",
             "summary": "Reviewed findings",
@@ -421,15 +425,11 @@ class TestParseAdversarialOutputSchemaDetection:
 
 
 class TestMergeAdversarialResultsBothSchemas:
-    """Tests that _merge_adversarial_results works with both schemas after normalization."""
-
     def test_merge_with_normalized_analyst_schema(self):
-        """Analyst-forced schema, after normalization, merges correctly."""
         ai_findings = {"findings": [
             {"file_path": "/a.py", "risk_score": 7},
             {"file_path": "/b.py", "risk_score": 5},
         ]}
-        # Simulate what _parse_adversarial_output returns after normalization
         verification = _normalize_adversarial_schema({
             "summary": "Reviewed 2 findings",
             "findings": [
@@ -440,23 +440,206 @@ class TestMergeAdversarialResultsBothSchemas:
         })
         result = _merge_adversarial_results(ai_findings, verification)
 
-        # Both findings should have adversarial annotations
         finding_a = [f for f in result["findings"] if f["file_path"] == "/a.py"][0]
         finding_b = [f for f in result["findings"] if f["file_path"] == "/b.py"][0]
         assert finding_a["adversarial_status"] == "confirmed"
         assert finding_b["adversarial_status"] == "downgraded"
         assert finding_b["risk_score"] == 2
-
-        # Verification summary should be populated
         assert result["adversarial_verification"]["total_reviewed"] == 2
         assert result["adversarial_verification"]["confirmed_count"] == 1
         assert result["adversarial_verification"]["downgraded_count"] == 1
 
     def test_merge_logs_warning_on_unexpected_schema(self, caplog):
-        """When total_reviewed is 0 but dict is non-empty, log a warning."""
         import logging
         ai_findings = {"findings": [{"file_path": "/a.py", "risk_score": 7}]}
         verification = {"some_unexpected_key": "value", "results": []}
         with caplog.at_level(logging.WARNING):
             _merge_adversarial_results(ai_findings, verification)
         assert "unexpected schema" in caplog.text.lower()
+
+
+class TestMergeAnalystFindings:
+    def test_merges_multiple_analysts(self):
+        analyst_findings_list = [
+            {
+                "analyst": "paranoid",
+                "analyst_number": 1,
+                "findings": [
+                    {"file_path": "/a.py", "severity": "high", "title": "Bad"},
+                ],
+                "summary": "Found issues",
+                "risk_score": 7,
+            },
+            {
+                "analyst": "behaviorist",
+                "analyst_number": 2,
+                "findings": [
+                    {"file_path": "/b.py", "severity": "medium", "title": "Medium issue"},
+                ],
+                "summary": "Some concerns",
+                "risk_score": 4,
+            },
+        ]
+        result = _merge_analyst_findings(analyst_findings_list)
+        assert len(result["findings"]) == 2
+        paths = {f["file_path"] for f in result["findings"]}
+        assert paths == {"/a.py", "/b.py"}
+
+    def test_annotates_source_analyst(self):
+        analyst_findings_list = [
+            {
+                "analyst": "paranoid",
+                "analyst_number": 1,
+                "findings": [{"file_path": "/a.py", "title": "Bad"}],
+                "summary": "Issues",
+                "risk_score": 7,
+            },
+        ]
+        result = _merge_analyst_findings(analyst_findings_list)
+        assert result["findings"][0]["source_analyst"] == "paranoid"
+        assert result["findings"][0]["source_analyst_number"] == 1
+
+    def test_empty_list_returns_empty_findings(self):
+        result = _merge_analyst_findings([])
+        assert result == {"findings": []}
+
+
+class TestRunAdversarialVerification:
+    def _valid_adversarial_output(self):
+        return json.dumps({
+            "verification_summary": "done",
+            "total_reviewed": 1,
+            "confirmed_count": 1,
+            "downgraded_count": 0,
+            "results": [{"file_path": "/a.py", "verdict": "confirmed", "reasoning": "bad"}],
+        }).encode()
+
+    def _analyst_findings_with_high_risk(self):
+        return [
+            {
+                "analyst": "paranoid",
+                "analyst_number": 1,
+                "findings": [
+                    {
+                        "file_path": "/a.py",
+                        "severity": "high",
+                        "title": "Bad",
+                        "description": "Very bad",
+                    }
+                ],
+                "summary": "Found issues",
+                "risk_score": 7,
+            }
+        ]
+
+    def _analyst_findings_low_risk(self):
+        return [
+            {
+                "analyst": "paranoid",
+                "analyst_number": 1,
+                "findings": [
+                    {
+                        "file_path": "/a.py",
+                        "severity": "low",
+                        "title": "Minor",
+                        "description": "Minor issue",
+                    }
+                ],
+                "summary": "Minor issues",
+                "risk_score": 1,
+            }
+        ]
+
+    @patch("thresher.agents.adversarial.subprocess.run")
+    def test_returns_merged_findings(self, mock_run):
+        mock_proc = MagicMock()
+        mock_proc.stdout = self._valid_adversarial_output()
+        mock_run.return_value = mock_proc
+
+        result = run_adversarial_verification(
+            _make_config(),
+            analyst_findings=self._analyst_findings_with_high_risk(),
+        )
+        assert result is not None
+        assert isinstance(result, dict)
+        assert "findings" in result
+
+    @patch("thresher.agents.adversarial.subprocess.run")
+    def test_skips_when_no_high_risk(self, mock_run):
+        result = run_adversarial_verification(
+            _make_config(),
+            analyst_findings=self._analyst_findings_low_risk(),
+        )
+        assert result is None
+        mock_run.assert_not_called()
+
+    @patch("thresher.agents.adversarial.subprocess.run")
+    def test_skips_when_no_findings(self, mock_run):
+        result = run_adversarial_verification(_make_config(), analyst_findings=[])
+        assert result is None
+        mock_run.assert_not_called()
+
+    @patch("thresher.agents.adversarial.subprocess.run")
+    def test_skips_when_findings_is_none(self, mock_run):
+        result = run_adversarial_verification(_make_config(), analyst_findings=None)
+        assert result is None
+        mock_run.assert_not_called()
+
+    @patch("thresher.agents.adversarial.subprocess.run")
+    def test_uses_correct_max_turns(self, mock_run):
+        mock_proc = MagicMock()
+        mock_proc.stdout = self._valid_adversarial_output()
+        mock_run.return_value = mock_proc
+
+        config = _make_config()
+        config.adversarial_max_turns = 35
+        run_adversarial_verification(
+            config,
+            analyst_findings=self._analyst_findings_with_high_risk(),
+        )
+
+        cmd = mock_run.call_args[0][0]
+        idx = cmd.index("--max-turns")
+        assert cmd[idx + 1] == "35"
+
+    @patch("thresher.agents.adversarial.subprocess.run")
+    def test_default_20_turns(self, mock_run):
+        mock_proc = MagicMock()
+        mock_proc.stdout = self._valid_adversarial_output()
+        mock_run.return_value = mock_proc
+
+        config = _make_config()
+        assert config.adversarial_max_turns is None
+        run_adversarial_verification(
+            config,
+            analyst_findings=self._analyst_findings_with_high_risk(),
+        )
+
+        cmd = mock_run.call_args[0][0]
+        idx = cmd.index("--max-turns")
+        assert cmd[idx + 1] == "20"
+
+    @patch("thresher.agents.adversarial.subprocess.run")
+    def test_api_key_in_env(self, mock_run):
+        mock_proc = MagicMock()
+        mock_proc.stdout = self._valid_adversarial_output()
+        mock_run.return_value = mock_proc
+
+        run_adversarial_verification(
+            _make_config(),
+            analyst_findings=self._analyst_findings_with_high_risk(),
+        )
+
+        call_kwargs = mock_run.call_args[1]
+        env = call_kwargs.get("env", {})
+        assert "ANTHROPIC_API_KEY" in env
+
+    @patch("thresher.agents.adversarial.subprocess.run")
+    def test_handles_subprocess_failure(self, mock_run):
+        mock_run.side_effect = RuntimeError("subprocess died")
+
+        result = run_adversarial_verification(
+            _make_config(),
+            analyst_findings=self._analyst_findings_with_high_risk(),
+        )
+        assert result is None

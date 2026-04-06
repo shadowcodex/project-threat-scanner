@@ -1,18 +1,20 @@
 """Multi-analyst AI architecture — 8 parallel analyst personas.
 
 Analyst definitions (prompts, tools, config) live in analyst_definitions.yaml.
-This module loads them and runs all analysts in parallel inside the VM.
+This module loads them and runs all analysts in parallel.
 
-Each analyst writes findings to /opt/scan-results/analyst-{N}-{name}-findings.json.
-All data stays in the VM. Functions return None.
+Each analyst returns its findings as a dict. All findings are returned as
+a list from run_all_analysts.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import statistics
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -21,7 +23,6 @@ from typing import Any
 import yaml
 
 from thresher.config import ScanConfig
-from thresher.vm.ssh import ssh_exec, ssh_write_file
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +31,6 @@ DEPS_DIR = "/opt/deps"
 SCAN_RESULTS_DIR = "/opt/scan-results"
 
 _DEFINITIONS_DIR = Path(__file__).parent / "definitions"
-
-
-def _shell_quote_key(value: str) -> str:
-    """Quote a string for safe inclusion in a shell command."""
-    return "'" + value.replace("'", "'\\''") + "'"
 
 
 # ---------------------------------------------------------------------------
@@ -370,16 +366,13 @@ def _format_analyst_markdown(findings: dict[str, Any], analyst_def: dict[str, An
 # ---------------------------------------------------------------------------
 
 def _run_single_analyst(
-    vm_name: str,
     config: ScanConfig,
     analyst_def: dict[str, Any],
+    target_dir: str = TARGET_DIR,
 ) -> dict[str, Any] | None:
-    """Run a single analyst agent inside the VM.
+    """Run a single analyst agent locally via subprocess.
 
-    Writes findings to /opt/scan-results/analyst-{N}-{name}-findings.json
-    and a markdown summary alongside it. Returns timing metadata dict
-    (used only by run_all_analysts for logging), or None on early failure.
-    No scan data is returned to the host.
+    Returns findings dict with timing metadata, or None on early failure.
     """
     number = analyst_def["number"]
     name = analyst_def["name"]
@@ -393,46 +386,39 @@ def _run_single_analyst(
 
     prompt = _build_analyst_prompt(analyst_def)
 
-    prompt_path = f"/tmp/analyst_{number}_prompt.txt"
+    prompt_path = Path(f"/tmp/analyst_{number}_prompt.txt")
     try:
-        ssh_write_file(vm_name, prompt, prompt_path)
+        prompt_path.write_text(prompt)
     except Exception:
         logger.warning("Failed to write prompt for %s", label, exc_info=True)
         return None
 
     model = config.model
-    claude_cmd = (
-        f"cd {TARGET_DIR} && "
-        f"claude -p \"$(cat {prompt_path})\" "
-        f"--model {model} "
-        f'--allowedTools "Read,Glob,Grep,Bash" '
-        f"--output-format stream-json "
-        f"--verbose "
-        f"--max-turns {max_turns}"
-    )
+    cmd = [
+        "claude",
+        "-p", str(prompt_path),
+        "--model", model,
+        "--allowedTools", "Read,Glob,Grep,Bash",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--max-turns", str(max_turns),
+    ]
 
-    # Write credentials to tmpfs and read-and-delete.
-    # Each analyst uses unique paths to avoid race conditions.
-    env = config.ai_env()
-    if env:
-        exports = []
-        for key, value in env.items():
-            tmpfile = f"/dev/shm/.cred_{key}_{number}"
-            ssh_exec(
-                vm_name,
-                "printf '%s' " + _shell_quote_key(value) + f" > {tmpfile}"
-                f" && chmod 600 {tmpfile}",
-            )
-            exports.append(f"{key}=$(cat {tmpfile}); export {key}; rm -f {tmpfile}")
-        claude_cmd = "; ".join(exports) + "; " + claude_cmd
+    env = os.environ.copy()
+    ai_env = config.ai_env()
+    env.update(ai_env)
 
-    logger.info("Invoking %s in VM %s", label, vm_name)
+    logger.info("Invoking %s", label)
     start_time = time.monotonic()
     try:
-        stdout, _stderr, _rc = ssh_exec(
-            vm_name, claude_cmd, timeout=3600,
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            timeout=3600,
+            cwd=target_dir,
         )
-        raw_output = stdout
+        raw_output = proc.stdout.decode(errors="replace")
     except Exception as exc:
         logger.error("%s invocation failed: %s", label, exc)
         return None
@@ -450,23 +436,10 @@ def _run_single_analyst(
         findings.get("risk_score", "?"),
     )
 
-    # Write findings JSON into the VM
-    findings_path = f"{SCAN_RESULTS_DIR}/{label}-findings.json"
-    try:
-        findings_json = json.dumps(findings, indent=2, default=str)
-        ssh_write_file(vm_name, findings_json, findings_path)
-    except Exception:
-        logger.warning("Failed to save %s findings JSON", label, exc_info=True)
+    # Attach timing metadata to the findings dict for the caller
+    findings["_timing"] = {"name": name, "duration": duration, "turns": turns}
 
-    # Write markdown summary
-    md_path = f"{SCAN_RESULTS_DIR}/{label}-findings.md"
-    try:
-        md = _format_analyst_markdown(findings, analyst_def)
-        ssh_write_file(vm_name, md, md_path)
-    except Exception:
-        logger.warning("Failed to save %s findings markdown", label, exc_info=True)
-
-    return {"name": name, "duration": duration, "turns": turns}
+    return findings
 
 
 # ---------------------------------------------------------------------------
@@ -508,59 +481,40 @@ def _log_timing_summary(timings: list[dict[str, Any]]) -> None:
 # Main entry point — run all 8 analysts in parallel
 # ---------------------------------------------------------------------------
 
-def run_all_analysts(vm_name: str, config: ScanConfig) -> None:
-    """Run all 8 analyst agents in parallel inside the VM.
+def run_all_analysts(config: ScanConfig, target_dir: str = TARGET_DIR) -> list[dict[str, Any]]:
+    """Run all 8 analyst agents in parallel.
 
-    Each analyst writes its findings to the VM at
-    /opt/scan-results/analyst-{N}-{name}-findings.json. No structured
-    data is returned to the host.
+    Returns a list of findings dicts, one per analyst that completed
+    successfully.
 
     Args:
-        vm_name: Name of the Lima VM.
         config: Scan configuration.
+        target_dir: Directory to run analysts in.
     """
     logger.info("Starting %d analyst agents in parallel", len(ANALYST_DEFINITIONS))
 
-    # Install the analyst stop hook BEFORE launching parallel agents.
-    # This overwrites the predep stop hook so analysts are validated
-    # against the correct schema (findings, not hidden_dependencies).
-    hook_settings = json.dumps({
-        "hooks": {
-            "Stop": [{
-                "hooks": [{
-                    "type": "command",
-                    "command": "/opt/thresher/bin/validate_analyst_output.sh",
-                    "timeout": 30,
-                }]
-            }]
-        }
-    })
-    try:
-        ssh_exec(vm_name, f"mkdir -p {TARGET_DIR}/.claude")
-        ssh_write_file(
-            vm_name, hook_settings,
-            f"{TARGET_DIR}/.claude/settings.local.json",
-        )
-    except Exception:
-        logger.warning("Failed to write analyst stop hook settings", exc_info=True)
-
     timings: list[dict[str, Any]] = []
+    all_findings: list[dict[str, Any]] = []
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         future_to_name = {}
         for analyst_def in ANALYST_DEFINITIONS:
-            future = executor.submit(_run_single_analyst, vm_name, config, analyst_def)
+            future = executor.submit(_run_single_analyst, config, analyst_def, target_dir)
             future_to_name[future] = f"analyst-{analyst_def['number']}-{analyst_def['name']}"
 
         for future in as_completed(future_to_name):
             label = future_to_name[future]
             try:
-                timing = future.result()
-                if timing is not None:
-                    timings.append(timing)
+                findings = future.result()
+                if findings is not None:
+                    timing = findings.pop("_timing", None)
+                    if timing:
+                        timings.append(timing)
+                    all_findings.append(findings)
                 logger.info("%s finished successfully", label)
             except Exception:
                 logger.exception("%s raised an unexpected exception", label)
 
     _log_timing_summary(timings)
     logger.info("All %d analyst agents completed", len(ANALYST_DEFINITIONS))
+    return all_findings

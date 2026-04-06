@@ -11,19 +11,19 @@ indicators (package.json, requirements.txt, etc.) don't capture:
 - go install / pip install commands in scripts
 - Vendored repos referenced by URL
 
-Outputs a structured JSON file that the scanner-deps container reads
-alongside the standard ecosystem detection.
+Outputs a structured dict with discovered hidden dependencies.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import subprocess
+from pathlib import Path
 from typing import Any
 
 from thresher.config import ScanConfig
-from thresher.vm.safe_io import safe_json_loads
-from thresher.vm.ssh import ssh_exec, ssh_write_file
 
 logger = logging.getLogger(__name__)
 
@@ -103,144 +103,74 @@ installs, well-known CDN URLs
 """
 
 
-def _shell_quote_key(value: str) -> str:
-    """Quote a string for safe inclusion in a shell command."""
-    return "'" + value.replace("'", "'\\''") + "'"
-
-
 def run_predep_discovery(
-    vm_name: str,
     config: ScanConfig,
+    target_dir: str = TARGET_DIR,
 ) -> dict[str, Any]:
-    """Run the pre-dependency discovery agent inside the VM.
+    """Run the pre-dependency discovery agent locally via subprocess.
 
-    Scans the cloned source for hidden dependency sources and writes
-    the results to a JSON file that the scanner-deps container reads.
+    Scans the cloned source for hidden dependency sources and returns
+    the results as a dict.
 
     Args:
-        vm_name: Name of the Lima VM.
         config: Scan configuration.
+        target_dir: Directory to scan (passed as cwd to claude).
 
     Returns:
         Dict with discovered hidden dependencies.
     """
+    prompt_path = Path("/tmp/predep_prompt.txt")
     try:
-        ssh_write_file(vm_name, PREDEP_PROMPT, "/tmp/predep_prompt.txt")
+        prompt_path.write_text(PREDEP_PROMPT)
     except Exception:
-        logger.warning("Failed to write predep prompt to VM", exc_info=True)
+        logger.warning("Failed to write predep prompt", exc_info=True)
         return _empty_result("Failed to write prompt file")
 
-    # Set up the stop hook to validate output schema before the agent
-    # is allowed to finish. The hook checks that the response contains
-    # valid JSON matching the hidden_dependencies schema.
-    hook_settings = json.dumps({
-        "hooks": {
-            "Stop": [{
-                "hooks": [{
-                    "type": "command",
-                    "command": "/opt/thresher/bin/validate_predep_output.sh",
-                    "timeout": 30,
-                }]
-            }]
-        }
-    })
-    try:
-        ssh_exec(vm_name, f"mkdir -p {TARGET_DIR}/.claude")
-        ssh_write_file(
-            vm_name, hook_settings,
-            f"{TARGET_DIR}/.claude/settings.local.json",
-        )
-    except Exception:
-        logger.warning("Failed to write stop hook settings", exc_info=True)
-        # Continue without the hook — output validation will still
-        # happen in _parse_predep_output, just without retry
-
     model = config.model
-    claude_cmd = (
-        f"cd {TARGET_DIR} && "
-        f"claude -p \"$(cat /tmp/predep_prompt.txt)\" "
-        f"--model {model} "
-        f'--allowedTools "Read,Glob,Grep" '
-        f"--output-format stream-json "
-        f"--verbose "
-        f"--max-turns 15"
-    )
+    cmd = [
+        "claude",
+        "-p", str(prompt_path),
+        "--model", model,
+        "--allowedTools", "Read,Glob,Grep",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--max-turns", "15",
+    ]
 
-    # Write credentials to tmpfs and read-and-delete.
-    # Supports both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN.
-    env = config.ai_env()
-    if env:
-        exports = []
-        for key, value in env.items():
-            tmpfile = f"/dev/shm/.cred_{key}"
-            ssh_exec(
-                vm_name,
-                "printf '%s' " + _shell_quote_key(value) + f" > {tmpfile}"
-                f" && chmod 600 {tmpfile}",
-            )
-            exports.append(f"{key}=$(cat {tmpfile}); export {key}; rm -f {tmpfile}")
-        claude_cmd = "; ".join(exports) + "; " + claude_cmd
+    env = os.environ.copy()
+    ai_env = config.ai_env()
+    env.update(ai_env)
 
-    logger.info("Running pre-dependency discovery agent in VM %s", vm_name)
+    logger.info("Running pre-dependency discovery agent")
     try:
-        stdout, _stderr, _rc = ssh_exec(
-            vm_name, claude_cmd, timeout=600,
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            timeout=600,
+            cwd=target_dir,
         )
+        stdout = proc.stdout.decode(errors="replace")
     except Exception as exc:
         logger.error("Pre-dep discovery agent failed: %s", exc)
         return _empty_result(f"Agent invocation failed: {exc}")
 
     result = _parse_predep_output(stdout)
 
-    # Fallback: if parsing returned empty, check if the agent wrote
-    # the output file directly to the expected path in the VM.
-    if not result.get("hidden_dependencies"):
-        try:
-            fb_stdout, _fb_stderr, fb_rc = ssh_exec(
-                vm_name, f"cat {OUTPUT_PATH}", timeout=10,
-            )
-            if fb_rc == 0 and fb_stdout.strip():
-                fallback = safe_json_loads(fb_stdout, source="predep-fallback")
-                if (
-                    fallback is not None
-                    and isinstance(fallback, dict)
-                    and "hidden_dependencies" in fallback
-                ):
-                    logger.info(
-                        "Recovered predep output from fallback path %s",
-                        OUTPUT_PATH,
-                    )
-                    result = fallback
-        except (json.JSONDecodeError, OSError):
-            logger.debug("No fallback predep output at %s", OUTPUT_PATH)
+    # Inject the high_risk_dep flag so downstream can know whether
+    # to download high-risk entries
+    result["high_risk_dep"] = config.high_risk_dep
 
-    # Write the result to the VM so the container can read it
-    try:
-        _, _, rc = ssh_exec(vm_name, f"mkdir -p $(dirname {OUTPUT_PATH})")
-        if rc != 0:
-            logger.warning(
-                "Cannot create output directory %s (exit %d) — "
-                "was the VM provisioned correctly?",
-                OUTPUT_PATH, rc,
-            )
-            return result
-        # Inject the high_risk_dep flag so the container knows whether
-        # to download high-risk entries
-        result["high_risk_dep"] = config.high_risk_dep
-        ssh_write_file(vm_name, json.dumps(result, indent=2), OUTPUT_PATH)
-
-        # Log summary with risk breakdown
-        deps = result.get("hidden_dependencies", [])
-        high_risk = [d for d in deps if d.get("risk") == "high"]
-        logger.info(
-            "Pre-dep discovery complete: %d hidden dependencies found "
-            "(%d high-risk, %s)",
-            len(deps),
-            len(high_risk),
-            "will download" if config.high_risk_dep else "will skip download",
-        )
-    except Exception:
-        logger.warning("Failed to write predep results to VM", exc_info=True)
+    # Log summary with risk breakdown
+    deps = result.get("hidden_dependencies", [])
+    high_risk = [d for d in deps if d.get("risk") == "high"]
+    logger.info(
+        "Pre-dep discovery complete: %d hidden dependencies found "
+        "(%d high-risk, %s)",
+        len(deps),
+        len(high_risk),
+        "will download" if config.high_risk_dep else "will skip download",
+    )
 
     return result
 

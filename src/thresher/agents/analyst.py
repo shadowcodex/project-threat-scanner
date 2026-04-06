@@ -1,6 +1,6 @@
 """Agent 1: Independent Security Researcher.
 
-Invokes Claude Code headless inside the VM to independently explore and
+Invokes Claude Code headless locally to independently explore and
 investigate the target repository for supply chain attacks, malicious code,
 and dangerous dependencies. Has NO access to scanner results — conducts
 its own investigation from scratch.
@@ -10,18 +10,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import subprocess
+from pathlib import Path
 from typing import Any
 
 from thresher.agents.prompts import ANALYST_SYSTEM_PROMPT
 from thresher.config import ScanConfig
-from thresher.vm.ssh import ssh_exec, ssh_write_file
 
 logger = logging.getLogger(__name__)
 
-
-def _shell_quote_key(value: str) -> str:
-    """Quote a string for safe inclusion in a shell command."""
-    return "'" + value.replace("'", "'\\''") + "'"
 
 TARGET_DIR = "/opt/target"
 
@@ -171,65 +169,59 @@ def _empty_findings(reason: str) -> dict[str, Any]:
 
 
 def run_analysis(
-    vm_name: str,
     config: ScanConfig,
-) -> None:
+    target_dir: str = TARGET_DIR,
+) -> dict[str, Any]:
     """Run the analyst agent as an independent security researcher.
 
     The agent explores the repository on its own with no scanner context.
     It uses Read, Glob, and Grep to investigate the codebase for supply
     chain attacks, malicious code, and dangerous dependencies.
 
-    Findings are written to the VM at /opt/scan-results/analyst-findings.json
-    and /opt/scan-results/analyst-findings.md.  No structured findings data
-    is returned to the host -- only log-level output crosses the VM boundary.
-
     Args:
-        vm_name: Name of the Lima VM.
         config: Scan configuration.
+        target_dir: Directory to run the agent in.
+
+    Returns:
+        Dict with analyst findings.
     """
     prompt = ANALYST_SYSTEM_PROMPT
 
+    prompt_path = Path("/tmp/analyst_prompt.txt")
     try:
-        ssh_write_file(vm_name, prompt, "/tmp/analyst_prompt.txt")
+        prompt_path.write_text(prompt)
     except Exception:
-        logger.warning("Failed to write prompt file to VM", exc_info=True)
-        return
+        logger.warning("Failed to write prompt file", exc_info=True)
+        return _empty_findings("Failed to write prompt file")
 
     model = config.model
-    claude_cmd = (
-        f"cd {TARGET_DIR} && "
-        f"claude -p \"$(cat /tmp/analyst_prompt.txt)\" "
-        f"--model {model} "
-        f'--allowedTools "Read,Glob,Grep" '
-        f"--output-format stream-json "
-        f"--verbose "
-        f"--max-turns 30"
-    )
+    cmd = [
+        "claude",
+        "-p", str(prompt_path),
+        "--model", model,
+        "--allowedTools", "Read,Glob,Grep",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--max-turns", "30",
+    ]
 
-    # Write credentials to tmpfs and read-and-delete.
-    env = config.ai_env()
-    if env:
-        exports = []
-        for key, value in env.items():
-            tmpfile = f"/dev/shm/.cred_{key}"
-            ssh_exec(
-                vm_name,
-                "printf '%s' " + _shell_quote_key(value) + f" > {tmpfile}"
-                f" && chmod 600 {tmpfile}",
-            )
-            exports.append(f"{key}=$(cat {tmpfile}); export {key}; rm -f {tmpfile}")
-        claude_cmd = "; ".join(exports) + "; " + claude_cmd
+    env = os.environ.copy()
+    ai_env = config.ai_env()
+    env.update(ai_env)
 
-    logger.info("Invoking analyst agent (independent researcher) in VM %s", vm_name)
+    logger.info("Invoking analyst agent (independent researcher)")
     try:
-        stdout, _stderr, _rc = ssh_exec(
-            vm_name, claude_cmd, timeout=3600,
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            timeout=3600,
+            cwd=target_dir,
         )
-        raw_output = stdout
+        raw_output = proc.stdout.decode(errors="replace")
     except Exception as exc:
         logger.error("Analyst agent invocation failed: %s", exc)
-        return
+        return _empty_findings(f"Agent invocation failed: {exc}")
 
     findings = _parse_agent_json_output(raw_output)
     logger.info(
@@ -237,21 +229,7 @@ def run_analysis(
         len(findings.get("findings", [])),
     )
 
-    # Write findings JSON back into the VM so downstream agents can read it.
-    # The slight boundary crossing (stdout -> host -> write back) is acceptable
-    # because we are routing data back into the VM, not consuming it on the host.
-    try:
-        findings_json = json.dumps(findings, indent=2, default=str)
-        ssh_write_file(vm_name, findings_json, "/opt/scan-results/analyst-findings.json")
-    except Exception:
-        logger.warning("Failed to save analyst findings JSON", exc_info=True)
-
-    # Write analyst findings as a readable markdown report
-    try:
-        md = _format_analyst_markdown(findings)
-        ssh_write_file(vm_name, md, "/opt/scan-results/analyst-findings.md")
-    except Exception:
-        logger.warning("Failed to save analyst findings markdown", exc_info=True)
+    return findings
 
 
 def _format_analyst_markdown(findings: dict[str, Any]) -> str:

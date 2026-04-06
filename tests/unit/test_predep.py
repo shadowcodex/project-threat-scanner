@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,7 +12,6 @@ from thresher.agents.predep import (
     run_predep_discovery,
 )
 from thresher.config import ScanConfig, VMConfig
-from thresher.vm.ssh import SSHResult
 
 
 @pytest.fixture
@@ -111,97 +110,71 @@ class TestEmptyResult:
 
 
 class TestRunPredepDiscovery:
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_writes_output_to_vm(self, mock_exec, mock_write, config):
-        mock_exec.return_value = SSHResult(SAMPLE_OUTPUT, "", 0)
-        mock_write.return_value = None
+    @patch("thresher.agents.predep.subprocess.run")
+    def test_returns_findings_dict(self, mock_run, config):
+        mock_proc = MagicMock()
+        mock_proc.stdout = SAMPLE_OUTPUT.encode()
+        mock_run.return_value = mock_proc
 
-        result = run_predep_discovery("test-vm", config)
+        result = run_predep_discovery(config)
 
+        assert isinstance(result, dict)
         assert len(result["hidden_dependencies"]) == 2
-        # Should write the result to hidden_deps.json
-        write_calls = [c[0] for c in mock_write.call_args_list]
-        paths = [c[2] for c in write_calls]
-        assert any("hidden_deps.json" in p for p in paths)
 
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_uses_tmpfs_api_key(self, mock_exec, mock_write, config):
-        mock_exec.return_value = SSHResult(SAMPLE_OUTPUT, "", 0)
-        mock_write.return_value = None
+    @patch("thresher.agents.predep.subprocess.run")
+    def test_injects_high_risk_dep_flag(self, mock_run, config):
+        mock_proc = MagicMock()
+        mock_proc.stdout = SAMPLE_OUTPUT.encode()
+        mock_run.return_value = mock_proc
 
-        run_predep_discovery("test-vm", config)
+        result = run_predep_discovery(config)
+        assert "high_risk_dep" in result
+        assert result["high_risk_dep"] == config.high_risk_dep
 
-        cmds = [c[0][1] for c in mock_exec.call_args_list]
-        assert any("/dev/shm/.cred_" in cmd for cmd in cmds)
+    @patch("thresher.agents.predep.subprocess.run")
+    def test_api_key_in_env(self, mock_run, config):
+        mock_proc = MagicMock()
+        mock_proc.stdout = SAMPLE_OUTPUT.encode()
+        mock_run.return_value = mock_proc
 
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_handles_agent_failure(self, mock_exec, mock_write, config):
-        # mkdir for .claude dir, tmpfs key write succeed, then claude fails
-        mock_exec.side_effect = [
-            SSHResult("", "", 0),  # mkdir .claude
-            SSHResult("", "", 0),  # tmpfs key write
-            Exception("connection lost"),  # claude invocation
-        ]
-        mock_write.return_value = None
+        run_predep_discovery(config)
 
-        result = run_predep_discovery("test-vm", config)
+        call_kwargs = mock_run.call_args[1]
+        env = call_kwargs.get("env", {})
+        assert "ANTHROPIC_API_KEY" in env
+        assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key"
+
+    @patch("thresher.agents.predep.subprocess.run")
+    def test_handles_subprocess_failure(self, mock_run, config):
+        mock_run.side_effect = RuntimeError("connection lost")
+
+        result = run_predep_discovery(config)
         assert result["hidden_dependencies"] == []
         assert "failed" in result["summary"].lower()
 
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_fallback_reads_output_from_vm(self, mock_exec, mock_write, config):
-        """If parsing fails, check if agent wrote output directly to VM path."""
-        fallback_json = '{"hidden_dependencies": [{"type": "git", "source": "https://example.com/repo.git", "found_in": "Makefile:1", "context": "clone", "confidence": "high", "risk": "low"}], "files_scanned": 5, "summary": "found 1"}'
-        mock_exec.side_effect = [
-            SSHResult("", "", 0),  # mkdir .claude
-            SSHResult("", "", 0),  # tmpfs key write
-            SSHResult("garbled output not json", "", 0),  # claude invocation
-            SSHResult(fallback_json, "", 0),  # cat fallback path
-            SSHResult("", "", 0),  # mkdir for output dir
-        ]
-        mock_write.return_value = None
+    @patch("thresher.agents.predep.subprocess.run")
+    def test_handles_bad_output(self, mock_run, config):
+        mock_proc = MagicMock()
+        mock_proc.stdout = b"garbled output not json"
+        mock_run.return_value = mock_proc
 
-        result = run_predep_discovery("test-vm", config)
-        assert len(result["hidden_dependencies"]) == 1
-        assert result["hidden_dependencies"][0]["type"] == "git"
+        result = run_predep_discovery(config)
+        assert isinstance(result, dict)
+        assert "hidden_dependencies" in result
 
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_fallback_skipped_when_parsing_succeeds(self, mock_exec, mock_write, config):
-        """When normal parsing succeeds, no fallback read should happen."""
-        mock_exec.side_effect = [
-            SSHResult("", "", 0),  # mkdir .claude
-            SSHResult("", "", 0),  # tmpfs key write
-            SSHResult(SAMPLE_OUTPUT, "", 0),  # claude invocation
-            SSHResult("", "", 0),  # mkdir for output dir
-        ]
-        mock_write.return_value = None
+    @patch("thresher.agents.predep.subprocess.run")
+    def test_uses_correct_model(self, mock_run, config):
+        mock_proc = MagicMock()
+        mock_proc.stdout = SAMPLE_OUTPUT.encode()
+        mock_run.return_value = mock_proc
 
-        result = run_predep_discovery("test-vm", config)
-        assert len(result["hidden_dependencies"]) == 2
-        # Only 4 ssh_exec calls — no fallback cat
-        assert mock_exec.call_count == 4
+        run_predep_discovery(config)
 
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_handles_mkdir_failure_for_output(self, mock_exec, mock_write, config):
-        """If mkdir for the output dir fails, return result without writing."""
-        mock_exec.side_effect = [
-            SSHResult("", "", 0),  # mkdir .claude
-            SSHResult("", "", 0),  # tmpfs key write
-            SSHResult(SAMPLE_OUTPUT, "", 0),  # claude invocation
-            SSHResult("", "permission denied", 1),  # mkdir for output dir fails
-        ]
-        mock_write.return_value = None
+        cmd = mock_run.call_args[0][0]
+        assert "--model" in cmd
 
-        result = run_predep_discovery("test-vm", config)
-        # Should still return parsed findings even though write failed
-        assert len(result["hidden_dependencies"]) == 2
-        # ssh_write_file should NOT be called for the output (only for prompt + hook)
-        write_calls = [c[0] for c in mock_write.call_args_list]
-        output_writes = [c for c in write_calls if "hidden_deps.json" in c[2]]
-        assert len(output_writes) == 0
+    def test_returns_empty_on_prompt_write_failure(self, config):
+        with patch("thresher.agents.predep.Path.write_text", side_effect=OSError("write failed")):
+            result = run_predep_discovery(config)
+            assert result["hidden_dependencies"] == []
+            assert "failed" in result["summary"].lower()
