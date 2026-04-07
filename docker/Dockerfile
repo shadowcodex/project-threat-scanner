@@ -36,6 +36,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Misc runtime deps
     libssl-dev \
     libffi-dev \
+    libicu-dev \
+    pkg-config \
     file \
     && rm -rf /var/lib/apt/lists/*
 
@@ -58,13 +60,22 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --profile minimal \
     && /root/.cargo/bin/rustup component add clippy
 
+# ── uv (fast Python package installer) ──────────────────────────────────────
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -s /root/.local/bin/uv /usr/local/bin/uv
+
 # ── Python security scanners ─────────────────────────────────────────────────
-RUN pip3 install --no-cache-dir --break-system-packages \
+ENV UV_BREAK_SYSTEM_PACKAGES=1
+# libmagic from apt (scancode's typecode-libmagic has no arm64 wheels)
+RUN apt-get update && apt-get install -y --no-install-recommends libmagic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN uv pip install --system --no-cache \
     semgrep \
     bandit \
     checkov \
     guarddog \
-    scancode-toolkit
+    scancode-toolkit-mini
 
 # ── Go-based scanners ────────────────────────────────────────────────────────
 # govulncheck
@@ -131,7 +142,8 @@ RUN trivy image --download-db-only --no-progress debian:latest 2>/dev/null || tr
 RUN freshclam 2>/dev/null || true
 
 # ── Non-root user ─────────────────────────────────────────────────────────────
-RUN useradd -m -s /bin/bash thresher
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && useradd -m -s /bin/bash -u 1000 thresher
 
 # ── Directory structure ───────────────────────────────────────────────────────
 RUN mkdir -p \
@@ -151,7 +163,7 @@ COPY rules/ /opt/rules/
 # ── Thresher application (last layer — changes most often) ───────────────────
 COPY pyproject.toml /app/pyproject.toml
 COPY src/ /app/src/
-RUN pip3 install --no-cache-dir --break-system-packages /app
+RUN uv pip install --system --no-cache /app
 
 USER thresher
 

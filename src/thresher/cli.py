@@ -115,7 +115,13 @@ def scan(
     import datetime
     repo_short = repo_url.rstrip("/").rsplit("/", 1)[-1]
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    _setup_logging(verbose, config.log_dir, scan_id=f"{repo_short}-{ts}")
+    scan_id = f"{repo_short}-{ts}"
+    # Create timestamped subfolder for this scan's output
+    config.output_dir = str(Path(config.output_dir) / scan_id)
+    _setup_logging(verbose, config.log_dir, scan_id=scan_id)
+
+    from thresher.run import set_verbose
+    set_verbose(verbose)
 
     errors = config.validate()
     if errors:

@@ -471,7 +471,7 @@ def _generate_agent_report(
         "--allowedTools", "Read,Write,Glob,Grep,Bash",
         "--output-format", "stream-json",
         "--verbose",
-        "--max-turns", "30",
+        "--max-turns", "75",
     ]
 
     env = config.ai_env() or {}

@@ -34,6 +34,10 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         stream=sys.stderr,
     )
+
+    from thresher.run import set_verbose
+    set_verbose(config.verbose)
+
     logger.info("Harness starting — repo=%s output=%s", config.repo_url, config.output_dir)
 
     # Pipeline execution will be wired in Task 3

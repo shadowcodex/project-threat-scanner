@@ -117,6 +117,8 @@ def run_pipeline(scan_config: ScanConfig) -> str:
         "branch": scan_config.branch,
         "verbose": scan_config.verbose,
         "depth": scan_config.depth,
+        "output_dir": scan_config.output_dir,
+        "repo_url": scan_config.repo_url,
         "analyst_max_turns": scan_config.analyst_max_turns,
         "analyst_max_turns_by_name": scan_config.analyst_max_turns_by_name,
         "adversarial_max_turns": scan_config.adversarial_max_turns,

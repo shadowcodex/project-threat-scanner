@@ -145,5 +145,20 @@ def generate_report(
             vm_name, scan_config, scanner_results, findings, findings, output_dir
         )
 
+    # Write findings.json (machine-readable output)
+    import json
+    findings_path = Path(output_dir) / "findings.json"
+    findings_path.write_text(json.dumps(findings, indent=2, default=str))
+
+    # Copy raw scanner output files into scan-results/ subfolder
+    scan_results_dir = Path(output_dir) / "scan-results"
+    scan_results_dir.mkdir(exist_ok=True)
+    source_dir = Path("/opt/scan-results")
+    if source_dir.exists():
+        import shutil
+        for f in source_dir.iterdir():
+            if f.is_file():
+                shutil.copy2(f, scan_results_dir / f.name)
+
     validate_report_output(output_dir)
     return output_dir

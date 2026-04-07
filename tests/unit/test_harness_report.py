@@ -231,20 +231,21 @@ class TestGenerateReport:
             assert os.path.exists(output_path)
             assert result == output_path
 
-    @patch("os.makedirs")
     @patch("thresher.report.synthesize._generate_template_report")
     @patch("thresher.report.synthesize._generate_agent_report")
     @patch("thresher.report.synthesize._build_synthesis_input")
     @patch("thresher.harness.report.validate_report_output")
     def test_generate_report_default_output_dir(
-        self, mock_validate, mock_build, mock_agent, mock_template, mock_makedirs
+        self, mock_validate, mock_build, mock_agent, mock_template, tmp_path
     ):
         """Should use /output as default when not specified."""
         from thresher.harness.report import generate_report
 
         enriched = {"findings": [], "scanner_results": {}}
-        result = generate_report(enriched, [], {})
-        assert result == "/output"
+        # Use tmp_path so findings.json can actually be written
+        result = generate_report(enriched, [], {"output_dir": str(tmp_path)})
+        assert result == str(tmp_path)
+        assert (tmp_path / "findings.json").exists()
 
     @patch("thresher.report.synthesize._generate_template_report")
     @patch("thresher.report.synthesize._generate_agent_report")

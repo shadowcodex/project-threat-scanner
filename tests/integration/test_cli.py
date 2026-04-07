@@ -61,7 +61,7 @@ class TestCLI:
         assert config.vm.memory == 32
         assert config.vm.disk == 200
         assert config.depth == 5
-        assert config.output_dir == "/tmp/out"
+        assert config.output_dir.startswith("/tmp/out/y-")
         assert config.verbose is True
 
     def test_scan_keyboard_interrupt(self, monkeypatch):

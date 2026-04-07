@@ -120,6 +120,21 @@ def run_<agent>(config, target_dir, output_dir) -> dict:
 
 API key comes from environment (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN).
 
+## Local Development & Testing
+
+Use Docker mode (`--docker`) for local testing. Build the image first:
+
+```bash
+thresher build                    # or: docker build -t thresher:latest -f docker/Dockerfile .
+```
+
+Test order:
+1. `thresher scan <url> --docker --skip-ai` — deterministic scanners only
+2. `thresher scan <url> --docker` — full pipeline with AI
+
+Direct mode (`--no-vm`) requires all 22 scanner tools installed locally —
+Docker mode is the standard local dev workflow.
+
 ## Configurable Limits
 
 All size limits live in `thresher.toml` under `[limits]`:
