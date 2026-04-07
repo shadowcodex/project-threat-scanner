@@ -11,6 +11,15 @@ from thresher.scanners.registry_meta import (
 )
 
 
+def _mock_popen(returncode=0, stdout=b""):
+    """Create a mock that behaves like subprocess.Popen."""
+    mock = MagicMock()
+    mock.stdout = iter(stdout.splitlines(keepends=True)) if stdout else iter([])
+    mock.returncode = returncode
+    mock.wait.return_value = returncode
+    return mock
+
+
 class TestParseRegistryMetaOutput:
     def test_empty_output(self):
         raw = {"scanner": "registry-meta", "findings": [], "total": 0}
@@ -144,13 +153,9 @@ class TestRegistryMetaScript:
 
 
 class TestRunRegistryMeta:
-    @patch("thresher.scanners.registry_meta.subprocess.run")
-    def test_success(self, mock_run):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = b"Checking 3 packages..."
-        mock_result.stderr = b""
-        mock_run.return_value = mock_result
+    @patch("thresher.run._popen")
+    def test_success(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=b"Checking 3 packages...")
 
         result = run_registry_meta("/opt/scan-results")
 
@@ -158,22 +163,18 @@ class TestRunRegistryMeta:
         assert result.exit_code == 0
         assert result.raw_output_path == "/opt/scan-results/registry-meta.json"
 
-    @patch("thresher.scanners.registry_meta.subprocess.run")
-    def test_failure(self, mock_run):
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stdout = b""
-        mock_result.stderr = b"error"
-        mock_run.return_value = mock_result
+    @patch("thresher.run._popen")
+    def test_failure(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=1, stdout=b"error")
 
         result = run_registry_meta("/opt/scan-results")
 
         assert result.exit_code == 1
         assert len(result.errors) > 0
 
-    @patch("thresher.scanners.registry_meta.subprocess.run")
-    def test_exception_handled(self, mock_run):
-        mock_run.side_effect = RuntimeError("connection lost")
+    @patch("thresher.run._popen")
+    def test_exception_handled(self, mock_popen):
+        mock_popen.side_effect = RuntimeError("connection lost")
 
         result = run_registry_meta("/opt/scan-results")
         assert result.exit_code == -1

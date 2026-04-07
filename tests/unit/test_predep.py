@@ -6,12 +6,23 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from unittest.mock import MagicMock
+
 from thresher.agents.predep import (
     _parse_predep_output,
     _empty_result,
     run_predep_discovery,
 )
 from thresher.config import ScanConfig, VMConfig
+
+
+def _mock_popen(returncode=0, stdout=b""):
+    """Create a mock that behaves like subprocess.Popen."""
+    mock = MagicMock()
+    mock.stdout = iter(stdout.splitlines(keepends=True)) if stdout else iter([])
+    mock.returncode = returncode
+    mock.wait.return_value = returncode
+    return mock
 
 
 @pytest.fixture
@@ -110,67 +121,57 @@ class TestEmptyResult:
 
 
 class TestRunPredepDiscovery:
-    @patch("thresher.agents.predep.subprocess.run")
-    def test_returns_findings_dict(self, mock_run, config):
-        mock_proc = MagicMock()
-        mock_proc.stdout = SAMPLE_OUTPUT.encode()
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_returns_findings_dict(self, mock_popen, config):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=SAMPLE_OUTPUT.encode())
 
         result = run_predep_discovery(config)
 
         assert isinstance(result, dict)
         assert len(result["hidden_dependencies"]) == 2
 
-    @patch("thresher.agents.predep.subprocess.run")
-    def test_injects_high_risk_dep_flag(self, mock_run, config):
-        mock_proc = MagicMock()
-        mock_proc.stdout = SAMPLE_OUTPUT.encode()
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_injects_high_risk_dep_flag(self, mock_popen, config):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=SAMPLE_OUTPUT.encode())
 
         result = run_predep_discovery(config)
         assert "high_risk_dep" in result
         assert result["high_risk_dep"] == config.high_risk_dep
 
-    @patch("thresher.agents.predep.subprocess.run")
-    def test_api_key_in_env(self, mock_run, config):
-        mock_proc = MagicMock()
-        mock_proc.stdout = SAMPLE_OUTPUT.encode()
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_api_key_in_env(self, mock_popen, config):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=SAMPLE_OUTPUT.encode())
 
         run_predep_discovery(config)
 
-        call_kwargs = mock_run.call_args[1]
+        call_kwargs = mock_popen.call_args[1]
         env = call_kwargs.get("env", {})
         assert "ANTHROPIC_API_KEY" in env
         assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key"
 
-    @patch("thresher.agents.predep.subprocess.run")
-    def test_handles_subprocess_failure(self, mock_run, config):
-        mock_run.side_effect = RuntimeError("connection lost")
+    @patch("thresher.run._popen")
+    def test_handles_subprocess_failure(self, mock_popen, config):
+        mock_popen.side_effect = RuntimeError("connection lost")
 
         result = run_predep_discovery(config)
         assert result["hidden_dependencies"] == []
         assert "failed" in result["summary"].lower()
 
-    @patch("thresher.agents.predep.subprocess.run")
-    def test_handles_bad_output(self, mock_run, config):
-        mock_proc = MagicMock()
-        mock_proc.stdout = b"garbled output not json"
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_handles_bad_output(self, mock_popen, config):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=b"garbled output not json")
 
         result = run_predep_discovery(config)
         assert isinstance(result, dict)
         assert "hidden_dependencies" in result
 
-    @patch("thresher.agents.predep.subprocess.run")
-    def test_uses_correct_model(self, mock_run, config):
-        mock_proc = MagicMock()
-        mock_proc.stdout = SAMPLE_OUTPUT.encode()
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_uses_correct_model(self, mock_popen, config):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=SAMPLE_OUTPUT.encode())
 
         run_predep_discovery(config)
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert "--model" in cmd
 
     def test_returns_empty_on_prompt_write_failure(self, config):

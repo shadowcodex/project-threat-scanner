@@ -5,6 +5,15 @@ from pathlib import Path
 from thresher.harness.clone import safe_clone, _sanitize_git_config, _post_checkout_validate
 
 
+def _mock_popen(returncode=0, stdout=b""):
+    """Create a mock that behaves like subprocess.Popen for run_logged."""
+    mock = MagicMock()
+    mock.stdout = iter(stdout.splitlines(keepends=True)) if stdout else iter([])
+    mock.returncode = returncode
+    mock.wait.return_value = returncode
+    return mock
+
+
 class TestSafeClone:
     """Tests for the safe_clone() orchestrator.
 
@@ -19,10 +28,10 @@ class TestSafeClone:
              patch("thresher.harness.clone._post_checkout_validate"):
             return safe_clone(*args, **kwargs)
 
-    @patch("thresher.harness.clone.subprocess.run")
+    @patch("thresher.run._popen")
     def test_clone_calls_git_with_no_checkout(self, mock_run):
         """Phase 1: git clone uses --no-checkout --depth=1."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         self._make_safe_clone_call(mock_run, "https://github.com/test/repo", "/opt/target")
         clone_call = mock_run.call_args_list[0]
         args = clone_call[0][0]
@@ -30,10 +39,10 @@ class TestSafeClone:
         assert "--depth=1" in args
         assert "--single-branch" in args
 
-    @patch("thresher.harness.clone.subprocess.run")
+    @patch("thresher.run._popen")
     def test_clone_disables_hooks(self, mock_run):
         """Phase 1: git clone disables hooks via -c flags."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         self._make_safe_clone_call(mock_run, "https://github.com/test/repo", "/opt/target")
         clone_call = mock_run.call_args_list[0]
         args = clone_call[0][0]
@@ -42,27 +51,27 @@ class TestSafeClone:
         assert "core.hooksPath=/dev/null" in config_args
         assert "core.fsmonitor=false" in config_args
 
-    @patch("thresher.harness.clone.subprocess.run")
+    @patch("thresher.run._popen")
     def test_clone_with_branch(self, mock_run):
         """Phase 1: branch flag passed when specified."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         self._make_safe_clone_call(mock_run, "https://github.com/test/repo", "/opt/target", branch="develop")
         clone_call = mock_run.call_args_list[0]
         args = clone_call[0][0]
         assert "--branch" in args
         assert "develop" in args
 
-    @patch("thresher.harness.clone.subprocess.run")
+    @patch("thresher.run._popen")
     def test_clone_returns_target_path(self, mock_run):
         """safe_clone returns the target directory path."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         result = self._make_safe_clone_call(mock_run, "https://github.com/test/repo", "/opt/target")
         assert result == "/opt/target"
 
-    @patch("thresher.harness.clone.subprocess.run")
+    @patch("thresher.run._popen")
     def test_clone_all_security_c_flags(self, mock_run):
         """Phase 1: all security -c flags from shell script are present."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         self._make_safe_clone_call(mock_run, "https://github.com/test/repo", "/opt/target")
         clone_call = mock_run.call_args_list[0]
         args = clone_call[0][0]
@@ -79,10 +88,10 @@ class TestSafeClone:
         assert "diff.external=" in config_args
         assert "merge.renormalize=false" in config_args
 
-    @patch("thresher.harness.clone.subprocess.run")
+    @patch("thresher.run._popen")
     def test_clone_uses_safe_env(self, mock_run):
         """Phase 1: GIT_TERMINAL_PROMPT=0 and GIT_LFS_SKIP_SMUDGE=1 in env."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         self._make_safe_clone_call(mock_run, "https://github.com/test/repo", "/opt/target")
         clone_call = mock_run.call_args_list[0]
         kwargs = clone_call[1]
@@ -90,17 +99,17 @@ class TestSafeClone:
         assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
         assert kwargs["env"]["GIT_LFS_SKIP_SMUDGE"] == "1"
 
-    @patch("thresher.harness.clone.subprocess.run")
+    @patch("thresher.run._popen")
     def test_clone_fails_on_nonzero_exit(self, mock_run):
         """Phase 1: raises RuntimeError if git clone fails."""
-        mock_run.return_value = MagicMock(returncode=1, stderr="fatal: repository not found")
+        mock_run.return_value = _mock_popen(returncode=1, stdout=b"fatal: repository not found\n")
         with pytest.raises(RuntimeError):
             safe_clone("https://github.com/test/repo", "/opt/target")
 
-    @patch("thresher.harness.clone.subprocess.run")
+    @patch("thresher.run._popen")
     def test_checkout_uses_lfs_skip(self, mock_run):
         """Phase 3: git checkout env has GIT_LFS_SKIP_SMUDGE=1."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         self._make_safe_clone_call(mock_run, "https://github.com/test/repo", "/opt/target")
         # checkout is the second subprocess.run call
         checkout_call = mock_run.call_args_list[1]

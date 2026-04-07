@@ -4,6 +4,17 @@ import json
 import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
+
+
+def _mock_popen(returncode=0, stdout=b""):
+    """Create a mock that behaves like subprocess.Popen for run_logged."""
+    mock = MagicMock()
+    mock.stdout = iter(stdout.splitlines(keepends=True)) if stdout else iter([])
+    mock.returncode = returncode
+    mock.wait.return_value = returncode
+    return mock
+
+
 from thresher.harness.deps import (
     detect_ecosystems,
     download_python,
@@ -55,9 +66,9 @@ class TestDetectEcosystems:
 
 
 class TestDownloadPython:
-    @patch("thresher.harness.deps.subprocess.run")
+    @patch("thresher.run._popen")
     def test_calls_pip_download_no_binary(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         src = tmp_path / "src"
         src.mkdir()
         (src / "requirements.txt").write_text("flask==2.0\n")
@@ -68,9 +79,9 @@ class TestDownloadPython:
         assert "--no-binary" in args
         assert ":all:" in args
 
-    @patch("thresher.harness.deps.subprocess.run")
+    @patch("thresher.run._popen")
     def test_calls_pip_download_with_pyproject(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         src = tmp_path / "src"
         src.mkdir()
         (src / "pyproject.toml").write_text("[project]\nname = 'test'\n")
@@ -81,7 +92,7 @@ class TestDownloadPython:
         assert "pip3" in args
         assert "--no-binary" in args
 
-    @patch("thresher.harness.deps.subprocess.run")
+    @patch("thresher.run._popen")
     def test_no_call_when_no_manifest(self, mock_run, tmp_path):
         src = tmp_path / "src"
         src.mkdir()
@@ -90,9 +101,9 @@ class TestDownloadPython:
         download_python(str(src), str(deps))
         mock_run.assert_not_called()
 
-    @patch("thresher.harness.deps.subprocess.run")
+    @patch("thresher.run._popen")
     def test_pipfile_extraction(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         src = tmp_path / "src"
         src.mkdir()
         (src / "Pipfile").write_text('[packages]\nflask = "*"\nrequests = ">=2.0"\n')
@@ -104,7 +115,7 @@ class TestDownloadPython:
 
 
 class TestDownloadNode:
-    @patch("thresher.harness.deps.subprocess.run")
+    @patch("thresher.run._popen")
     def test_calls_npm_pack(self, mock_run, tmp_path):
         mock_run.return_value = MagicMock(returncode=0, stdout=b"")
         src = tmp_path / "src"
@@ -118,7 +129,7 @@ class TestDownloadNode:
         npm_calls = [c for c in mock_run.call_args_list if "npm" in str(c)]
         assert len(npm_calls) > 0
 
-    @patch("thresher.harness.deps.subprocess.run")
+    @patch("thresher.run._popen")
     def test_no_call_when_no_package_json(self, mock_run, tmp_path):
         src = tmp_path / "src"
         src.mkdir()
@@ -127,7 +138,7 @@ class TestDownloadNode:
         download_node(str(src), str(deps))
         mock_run.assert_not_called()
 
-    @patch("thresher.harness.deps.subprocess.run")
+    @patch("thresher.run._popen")
     def test_packs_dev_dependencies(self, mock_run, tmp_path):
         mock_run.return_value = MagicMock(returncode=0, stdout=b"")
         src = tmp_path / "src"
@@ -143,9 +154,9 @@ class TestDownloadNode:
 
 
 class TestDownloadRust:
-    @patch("thresher.harness.deps.subprocess.run")
+    @patch("thresher.run._popen")
     def test_calls_cargo_vendor(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         src = tmp_path / "src"
         src.mkdir()
         (src / "Cargo.toml").write_text("[package]\nname = 'test'\n")
@@ -155,7 +166,7 @@ class TestDownloadRust:
         args = mock_run.call_args[0][0]
         assert "cargo" in args and "vendor" in args
 
-    @patch("thresher.harness.deps.subprocess.run")
+    @patch("thresher.run._popen")
     def test_no_call_when_no_cargo_toml(self, mock_run, tmp_path):
         src = tmp_path / "src"
         src.mkdir()
@@ -166,9 +177,9 @@ class TestDownloadRust:
 
 
 class TestDownloadGo:
-    @patch("thresher.harness.deps.subprocess.run")
+    @patch("thresher.run._popen")
     def test_calls_go_mod_vendor(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = _mock_popen()
         src = tmp_path / "src"
         src.mkdir()
         (src / "go.mod").write_text("module example.com/test\ngo 1.21\n")
@@ -178,7 +189,7 @@ class TestDownloadGo:
         args = mock_run.call_args[0][0]
         assert "go" in args
 
-    @patch("thresher.harness.deps.subprocess.run")
+    @patch("thresher.run._popen")
     def test_no_call_when_no_go_mod(self, mock_run, tmp_path):
         src = tmp_path / "src"
         src.mkdir()

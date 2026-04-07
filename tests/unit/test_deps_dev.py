@@ -10,6 +10,15 @@ from unittest.mock import patch, MagicMock
 from thresher.scanners.deps_dev import parse_deps_dev_output, run_deps_dev, _DEPS_DEV_SCRIPT
 
 
+def _mock_popen(returncode=0, stdout=b""):
+    """Create a mock that behaves like subprocess.Popen."""
+    mock = MagicMock()
+    mock.stdout = iter(stdout.splitlines(keepends=True)) if stdout else iter([])
+    mock.returncode = returncode
+    mock.wait.return_value = returncode
+    return mock
+
+
 class TestParseDepsDevOutput:
     def test_empty_output(self):
         raw = {"scanner": "deps-dev", "findings": [], "total": 0}
@@ -132,13 +141,9 @@ class TestDepsDevScript:
 
 
 class TestRunDepsDev:
-    @patch("thresher.scanners.deps_dev.subprocess.run")
-    def test_success(self, mock_run):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = b"Checking 5 packages..."
-        mock_result.stderr = b""
-        mock_run.return_value = mock_result
+    @patch("thresher.run._popen")
+    def test_success(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=b"Checking 5 packages...")
 
         result = run_deps_dev("/opt/scan-results")
 
@@ -146,13 +151,9 @@ class TestRunDepsDev:
         assert result.exit_code == 0
         assert result.raw_output_path == "/opt/scan-results/deps-dev.json"
 
-    @patch("thresher.scanners.deps_dev.subprocess.run")
-    def test_failure(self, mock_run):
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stdout = b""
-        mock_result.stderr = b"error"
-        mock_run.return_value = mock_result
+    @patch("thresher.run._popen")
+    def test_failure(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=1, stdout=b"error")
 
         result = run_deps_dev("/opt/scan-results")
 

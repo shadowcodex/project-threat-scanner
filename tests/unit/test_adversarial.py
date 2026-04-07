@@ -21,6 +21,15 @@ from thresher.agents.adversarial import (
 from thresher.config import ScanConfig
 
 
+def _mock_popen(returncode=0, stdout=b""):
+    """Create a mock that behaves like subprocess.Popen."""
+    mock = MagicMock()
+    mock.stdout = iter(stdout.splitlines(keepends=True)) if stdout else iter([])
+    mock.returncode = returncode
+    mock.wait.return_value = returncode
+    return mock
+
+
 def _make_config() -> ScanConfig:
     return ScanConfig(
         repo_url="https://github.com/x/y",
@@ -550,11 +559,9 @@ class TestRunAdversarialVerification:
             }
         ]
 
-    @patch("thresher.agents.adversarial.subprocess.run")
-    def test_returns_merged_findings(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.stdout = self._valid_adversarial_output()
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_returns_merged_findings(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=self._valid_adversarial_output())
 
         result = run_adversarial_verification(
             _make_config(),
@@ -564,32 +571,30 @@ class TestRunAdversarialVerification:
         assert isinstance(result, dict)
         assert "findings" in result
 
-    @patch("thresher.agents.adversarial.subprocess.run")
-    def test_skips_when_no_high_risk(self, mock_run):
+    @patch("thresher.run._popen")
+    def test_skips_when_no_high_risk(self, mock_popen):
         result = run_adversarial_verification(
             _make_config(),
             analyst_findings=self._analyst_findings_low_risk(),
         )
         assert result is None
-        mock_run.assert_not_called()
+        mock_popen.assert_not_called()
 
-    @patch("thresher.agents.adversarial.subprocess.run")
-    def test_skips_when_no_findings(self, mock_run):
+    @patch("thresher.run._popen")
+    def test_skips_when_no_findings(self, mock_popen):
         result = run_adversarial_verification(_make_config(), analyst_findings=[])
         assert result is None
-        mock_run.assert_not_called()
+        mock_popen.assert_not_called()
 
-    @patch("thresher.agents.adversarial.subprocess.run")
-    def test_skips_when_findings_is_none(self, mock_run):
+    @patch("thresher.run._popen")
+    def test_skips_when_findings_is_none(self, mock_popen):
         result = run_adversarial_verification(_make_config(), analyst_findings=None)
         assert result is None
-        mock_run.assert_not_called()
+        mock_popen.assert_not_called()
 
-    @patch("thresher.agents.adversarial.subprocess.run")
-    def test_uses_correct_max_turns(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.stdout = self._valid_adversarial_output()
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_uses_correct_max_turns(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=self._valid_adversarial_output())
 
         config = _make_config()
         config.adversarial_max_turns = 35
@@ -598,15 +603,13 @@ class TestRunAdversarialVerification:
             analyst_findings=self._analyst_findings_with_high_risk(),
         )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         idx = cmd.index("--max-turns")
         assert cmd[idx + 1] == "35"
 
-    @patch("thresher.agents.adversarial.subprocess.run")
-    def test_default_20_turns(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.stdout = self._valid_adversarial_output()
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_default_20_turns(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=self._valid_adversarial_output())
 
         config = _make_config()
         assert config.adversarial_max_turns is None
@@ -615,28 +618,26 @@ class TestRunAdversarialVerification:
             analyst_findings=self._analyst_findings_with_high_risk(),
         )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         idx = cmd.index("--max-turns")
         assert cmd[idx + 1] == "20"
 
-    @patch("thresher.agents.adversarial.subprocess.run")
-    def test_api_key_in_env(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.stdout = self._valid_adversarial_output()
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_api_key_in_env(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=self._valid_adversarial_output())
 
         run_adversarial_verification(
             _make_config(),
             analyst_findings=self._analyst_findings_with_high_risk(),
         )
 
-        call_kwargs = mock_run.call_args[1]
+        call_kwargs = mock_popen.call_args[1]
         env = call_kwargs.get("env", {})
         assert "ANTHROPIC_API_KEY" in env
 
-    @patch("thresher.agents.adversarial.subprocess.run")
-    def test_handles_subprocess_failure(self, mock_run):
-        mock_run.side_effect = RuntimeError("subprocess died")
+    @patch("thresher.run._popen")
+    def test_handles_subprocess_failure(self, mock_popen):
+        mock_popen.side_effect = RuntimeError("subprocess died")
 
         result = run_adversarial_verification(
             _make_config(),

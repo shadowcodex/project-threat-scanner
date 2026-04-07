@@ -21,6 +21,15 @@ from thresher.agents.analysts import (
 from thresher.config import ScanConfig
 
 
+def _mock_popen(returncode=0, stdout=b""):
+    """Create a mock that behaves like subprocess.Popen."""
+    mock = MagicMock()
+    mock.stdout = iter(stdout.splitlines(keepends=True)) if stdout else iter([])
+    mock.returncode = returncode
+    mock.wait.return_value = returncode
+    return mock
+
+
 def _make_config() -> ScanConfig:
     return ScanConfig(
         repo_url="https://github.com/x/y",
@@ -237,12 +246,9 @@ class TestFormatAnalystMarkdown:
 
 class TestRunSingleAnalyst:
     def _valid_proc(self, name="paranoid", number=1):
-        proc = MagicMock()
-        proc.stdout = _valid_proc_output(name, number)
-        return proc
+        return _mock_popen(returncode=0, stdout=_valid_proc_output(name, number))
 
     def _valid_proc_with_findings(self):
-        proc = MagicMock()
         data = {
             "analyst": "paranoid",
             "analyst_number": 1,
@@ -252,12 +258,11 @@ class TestRunSingleAnalyst:
             "summary": "Found issues",
             "risk_score": 5,
         }
-        proc.stdout = json.dumps(data).encode()
-        return proc
+        return _mock_popen(returncode=0, stdout=json.dumps(data).encode())
 
-    @patch("thresher.agents.analysts.subprocess.run")
-    def test_uses_correct_max_turns_from_yaml(self, mock_run):
-        mock_run.return_value = self._valid_proc()
+    @patch("thresher.run._popen")
+    def test_uses_correct_max_turns_from_yaml(self, mock_popen):
+        mock_popen.return_value = self._valid_proc()
 
         config = _make_config()
         assert config.analyst_max_turns is None
@@ -265,14 +270,14 @@ class TestRunSingleAnalyst:
         analyst = ANALYST_DEFINITIONS[0]  # paranoid, max_turns=30
         _run_single_analyst(config, analyst)
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert "--max-turns" in cmd
         idx = cmd.index("--max-turns")
         assert cmd[idx + 1] == "30"
 
-    @patch("thresher.agents.analysts.subprocess.run")
-    def test_global_max_turns_overrides_yaml(self, mock_run):
-        mock_run.return_value = self._valid_proc()
+    @patch("thresher.run._popen")
+    def test_global_max_turns_overrides_yaml(self, mock_popen):
+        mock_popen.return_value = self._valid_proc()
 
         config = _make_config()
         config.analyst_max_turns = 50
@@ -280,13 +285,13 @@ class TestRunSingleAnalyst:
         analyst = ANALYST_DEFINITIONS[0]
         _run_single_analyst(config, analyst)
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         idx = cmd.index("--max-turns")
         assert cmd[idx + 1] == "50"
 
-    @patch("thresher.agents.analysts.subprocess.run")
-    def test_per_analyst_overrides_global(self, mock_run):
-        mock_run.return_value = self._valid_proc()
+    @patch("thresher.run._popen")
+    def test_per_analyst_overrides_global(self, mock_popen):
+        mock_popen.return_value = self._valid_proc()
 
         config = _make_config()
         config.analyst_max_turns = 50
@@ -295,13 +300,13 @@ class TestRunSingleAnalyst:
         analyst = ANALYST_DEFINITIONS[0]  # paranoid
         _run_single_analyst(config, analyst)
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         idx = cmd.index("--max-turns")
         assert cmd[idx + 1] == "60"
 
-    @patch("thresher.agents.analysts.subprocess.run")
-    def test_unmatched_per_analyst_falls_to_global(self, mock_run):
-        mock_run.return_value = self._valid_proc()
+    @patch("thresher.run._popen")
+    def test_unmatched_per_analyst_falls_to_global(self, mock_popen):
+        mock_popen.return_value = self._valid_proc()
 
         config = _make_config()
         config.analyst_max_turns = 50
@@ -310,34 +315,34 @@ class TestRunSingleAnalyst:
         analyst = ANALYST_DEFINITIONS[0]  # paranoid — not in by_name
         _run_single_analyst(config, analyst)
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         idx = cmd.index("--max-turns")
         assert cmd[idx + 1] == "50"
 
-    @patch("thresher.agents.analysts.subprocess.run")
-    def test_uses_bash_in_allowed_tools(self, mock_run):
-        mock_run.return_value = self._valid_proc()
+    @patch("thresher.run._popen")
+    def test_uses_bash_in_allowed_tools(self, mock_popen):
+        mock_popen.return_value = self._valid_proc()
 
         analyst = ANALYST_DEFINITIONS[0]
         _run_single_analyst(_make_config(), analyst)
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert "Read,Glob,Grep,Bash" in cmd
 
-    @patch("thresher.agents.analysts.subprocess.run")
-    def test_api_key_in_env(self, mock_run):
-        mock_run.return_value = self._valid_proc()
+    @patch("thresher.run._popen")
+    def test_api_key_in_env(self, mock_popen):
+        mock_popen.return_value = self._valid_proc()
 
         _run_single_analyst(_make_config(), ANALYST_DEFINITIONS[0])
 
-        call_kwargs = mock_run.call_args[1]
+        call_kwargs = mock_popen.call_args[1]
         env = call_kwargs.get("env", {})
         assert "ANTHROPIC_API_KEY" in env
         assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key"
 
-    @patch("thresher.agents.analysts.subprocess.run")
-    def test_returns_findings_dict(self, mock_run):
-        mock_run.return_value = self._valid_proc()
+    @patch("thresher.run._popen")
+    def test_returns_findings_dict(self, mock_popen):
+        mock_popen.return_value = self._valid_proc()
 
         analyst = ANALYST_DEFINITIONS[0]
         result = _run_single_analyst(_make_config(), analyst)
@@ -346,9 +351,9 @@ class TestRunSingleAnalyst:
         assert "findings" in result
         assert result["analyst"] == "paranoid"
 
-    @patch("thresher.agents.analysts.subprocess.run")
-    def test_returns_timing_metadata(self, mock_run):
-        mock_run.return_value = self._valid_proc()
+    @patch("thresher.run._popen")
+    def test_returns_timing_metadata(self, mock_popen):
+        mock_popen.return_value = self._valid_proc()
 
         analyst = ANALYST_DEFINITIONS[0]
         result = _run_single_analyst(_make_config(), analyst)
@@ -357,9 +362,9 @@ class TestRunSingleAnalyst:
         assert result["_timing"]["name"] == "paranoid"
         assert isinstance(result["_timing"]["duration"], float)
 
-    @patch("thresher.agents.analysts.subprocess.run")
-    def test_returns_none_on_subprocess_failure(self, mock_run):
-        mock_run.side_effect = RuntimeError("subprocess died")
+    @patch("thresher.run._popen")
+    def test_returns_none_on_subprocess_failure(self, mock_popen):
+        mock_popen.side_effect = RuntimeError("subprocess died")
 
         analyst = ANALYST_DEFINITIONS[0]
         result = _run_single_analyst(_make_config(), analyst)

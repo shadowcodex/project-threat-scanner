@@ -15,6 +15,15 @@ from thresher.agents.analyst import (
 from thresher.config import ScanConfig
 
 
+def _mock_popen(returncode=0, stdout=b""):
+    """Create a mock that behaves like subprocess.Popen."""
+    mock = MagicMock()
+    mock.stdout = iter(stdout.splitlines(keepends=True)) if stdout else iter([])
+    mock.returncode = returncode
+    mock.wait.return_value = returncode
+    return mock
+
+
 def _make_config() -> ScanConfig:
     return ScanConfig(
         repo_url="https://github.com/x/y",
@@ -110,55 +119,46 @@ class TestRunAnalysis:
             "files_analyzed": 5,
         }).encode()
 
-    @patch("thresher.agents.analyst.subprocess.run")
-    def test_returns_findings_dict(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.stdout = self._valid_output()
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_returns_findings_dict(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=self._valid_output())
 
         result = run_analysis(_make_config())
         assert isinstance(result, dict)
         assert "findings" in result
 
-    @patch("thresher.agents.analyst.subprocess.run")
-    def test_uses_correct_model(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.stdout = self._valid_output()
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_uses_correct_model(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=self._valid_output())
 
         run_analysis(_make_config())
 
-        call_args = mock_run.call_args
-        cmd = call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert "--model" in cmd
         assert "sonnet" in cmd
 
-    @patch("thresher.agents.analyst.subprocess.run")
-    def test_api_key_in_env(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.stdout = self._valid_output()
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_api_key_in_env(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=self._valid_output())
 
         run_analysis(_make_config())
 
-        call_kwargs = mock_run.call_args[1]
+        call_kwargs = mock_popen.call_args[1]
         env = call_kwargs.get("env", {})
         assert "ANTHROPIC_API_KEY" in env
         assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key"
 
-    @patch("thresher.agents.analyst.subprocess.run")
-    def test_handles_subprocess_failure(self, mock_run):
-        mock_run.side_effect = RuntimeError("subprocess failed")
+    @patch("thresher.run._popen")
+    def test_handles_subprocess_failure(self, mock_popen):
+        mock_popen.side_effect = RuntimeError("subprocess failed")
 
         result = run_analysis(_make_config())
         assert "error" in result
         assert result["findings"] == []
 
-    @patch("thresher.agents.analyst.subprocess.run")
-    def test_returns_empty_on_bad_output(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.stdout = b"not valid json at all"
-        mock_run.return_value = mock_proc
+    @patch("thresher.run._popen")
+    def test_returns_empty_on_bad_output(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=b"not valid json at all")
 
         result = run_analysis(_make_config())
         assert isinstance(result, dict)
