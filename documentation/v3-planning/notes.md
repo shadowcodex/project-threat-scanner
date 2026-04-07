@@ -14,14 +14,14 @@ So we can calculate costs etc and impact and average cost to run them, then buil
 
 Move everything into a dockerfile for provisioning.
 
-1. Build Dockerfile
-    - On builds pin to hash, validate checksums on things like YARA clone
-2. Launch Lima Container, with docker image
-3. Phase 1: Execute docker to git clone and find dependencies
-4. Phase 2: Execute docker to resolve dependencies (Isolates blast radius for local runs)
-5. Phase 3: Execute docker to run tools
-6. Phase 4: Execute docker to run AI Analysts
-7. Phase 5: Copy reports out
+x 1. Build Dockerfile
+    x - On builds pin to hash, validate checksums on things like YARA clone
+x 2. Launch Lima Container, with docker image
+x 3. Phase 1: Execute docker to git clone and find dependencies
+x 4. Phase 2: Execute docker to resolve dependencies (Isolates blast radius for local runs)
+x 5. Phase 3: Execute docker to run tools
+x 6. Phase 4: Execute docker to run AI Analysts
+x 7. Phase 5: Copy reports out
 
 v0.4.0 will do one docker execution in the cloud. The VM is our "cloud" at this point.
 
