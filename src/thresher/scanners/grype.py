@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -40,10 +40,11 @@ def run_grype(sbom_path: str, output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        result = subprocess.run(
+        result = run_cmd(
             ["grype", f"sbom:{sbom_path}", "-o", "json"],
-            capture_output=True,
+            label="grype",
             timeout=300,
+            ok_codes=(0, 1),
         )
         Path(output_path).write_bytes(result.stdout)
         elapsed = time.monotonic() - start
@@ -51,12 +52,12 @@ def run_grype(sbom_path: str, output_dir: str) -> ScanResults:
         # Exit codes: 0 = no vulns, 1 = vulns found (not an error).
         # Anything else is a real failure.
         if result.returncode not in (0, 1):
-            logger.warning("Grype exited with code %d: %s", result.returncode, result.stderr.decode())
+            logger.warning("Grype exited with code %d", result.returncode)
             return ScanResults(
                 tool_name="grype",
                 execution_time_seconds=elapsed,
                 exit_code=result.returncode,
-                errors=[f"Grype failed (exit {result.returncode}): {result.stderr.decode()}"],
+                errors=[f"Grype failed (exit {result.returncode})"],
             )
 
         return ScanResults(

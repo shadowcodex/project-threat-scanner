@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -30,10 +30,11 @@ def run_guarddog(target_dir: str, output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        result = subprocess.run(
+        result = run_cmd(
             ["guarddog", "scan", target_dir, "--output-format", "json"],
-            capture_output=True,
+            label="guarddog",
             timeout=600,
+            ok_codes=(0, 1),
         )
         Path(output_path).write_bytes(result.stdout)
         elapsed = time.monotonic() - start
@@ -41,12 +42,12 @@ def run_guarddog(target_dir: str, output_dir: str) -> ScanResults:
         # GuardDog exit 0 = success.  Non-zero may indicate findings or errors
         # depending on version; treat 0 and 1 as valid.
         if result.returncode not in (0, 1):
-            logger.warning("GuardDog exited with code %d: %s", result.returncode, result.stderr.decode())
+            logger.warning("GuardDog exited with code %d", result.returncode)
             return ScanResults(
                 tool_name="guarddog",
                 execution_time_seconds=elapsed,
                 exit_code=result.returncode,
-                errors=[f"GuardDog failed (exit {result.returncode}): {result.stderr.decode()}"],
+                errors=[f"GuardDog failed (exit {result.returncode})"],
             )
 
         return ScanResults(

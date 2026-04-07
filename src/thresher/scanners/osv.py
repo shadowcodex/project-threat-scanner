@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -38,22 +38,23 @@ def run_osv(target_dir: str, output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        result = subprocess.run(
+        result = run_cmd(
             ["osv-scanner", "scan", "--format", "json", target_dir],
-            capture_output=True,
+            label="osv-scanner",
             timeout=300,
+            ok_codes=(0, 1),
         )
         Path(output_path).write_bytes(result.stdout)
         elapsed = time.monotonic() - start
 
         # Exit 0 = clean, 1 = vulns found (expected).  Other codes are errors.
         if result.returncode not in (0, 1):
-            logger.warning("OSV-Scanner exited with code %d: %s", result.returncode, result.stderr.decode())
+            logger.warning("OSV-Scanner exited with code %d", result.returncode)
             return ScanResults(
                 tool_name="osv-scanner",
                 execution_time_seconds=elapsed,
                 exit_code=result.returncode,
-                errors=[f"OSV-Scanner failed (exit {result.returncode}): {result.stderr.decode()}"],
+                errors=[f"OSV-Scanner failed (exit {result.returncode})"],
             )
 
         return ScanResults(

@@ -12,13 +12,13 @@ Runs as a self-contained Python script via subprocess.
 from __future__ import annotations
 
 import logging
-import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -412,24 +412,21 @@ def run_deps_dev(output_dir: str) -> ScanResults:
             f.write(_DEPS_DEV_SCRIPT)
             script_path = f.name
 
-        result = subprocess.run(
+        result = run_cmd(
             [sys.executable, script_path],
-            capture_output=True,
+            label="deps-dev",
             timeout=600,
+            ok_codes=(0,),
         )
         elapsed = time.monotonic() - start
 
         if result.returncode != 0:
-            logger.warning(
-                "deps.dev scanner exited with code %d: %s",
-                result.returncode,
-                result.stderr.decode(),
-            )
+            logger.warning("deps.dev scanner exited with code %d", result.returncode)
             return ScanResults(
                 tool_name="deps-dev",
                 execution_time_seconds=elapsed,
                 exit_code=result.returncode,
-                errors=[f"deps.dev scanner failed (exit {result.returncode}): {result.stderr.decode()}"],
+                errors=[f"deps.dev scanner failed (exit {result.returncode})"],
             )
 
         return ScanResults(

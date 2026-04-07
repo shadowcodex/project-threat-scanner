@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -362,27 +362,21 @@ def run_entropy(output_dir: str) -> ScanResults:
             f.write(_ENTROPY_SCRIPT)
             script_path = f.name
 
-        result = subprocess.run(
+        result = run_cmd(
             [sys.executable, script_path],
-            capture_output=True,
+            label="entropy",
             timeout=300,
+            ok_codes=(0,),
         )
         elapsed = time.monotonic() - start
 
         if result.returncode != 0:
-            logger.warning(
-                "Entropy scanner exited with code %d: %s",
-                result.returncode,
-                result.stderr.decode(),
-            )
+            logger.warning("Entropy scanner exited with code %d", result.returncode)
             return ScanResults(
                 tool_name="entropy",
                 execution_time_seconds=elapsed,
                 exit_code=result.returncode,
-                errors=[
-                    f"Entropy scanner failed (exit {result.returncode}): "
-                    f"{result.stderr.decode()}"
-                ],
+                errors=[f"Entropy scanner failed (exit {result.returncode})"],
             )
 
         return ScanResults(

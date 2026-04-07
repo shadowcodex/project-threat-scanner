@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -35,21 +35,22 @@ def run_trivy(target_dir: str, output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        result = subprocess.run(
+        result = run_cmd(
             ["trivy", "fs", "--format", "json", target_dir],
-            capture_output=True,
+            label="trivy",
             timeout=300,
+            ok_codes=(0, 1),
         )
         Path(output_path).write_bytes(result.stdout)
         elapsed = time.monotonic() - start
 
         if result.returncode not in (0, 1):
-            logger.warning("Trivy exited with code %d: %s", result.returncode, result.stderr.decode())
+            logger.warning("Trivy exited with code %d", result.returncode)
             return ScanResults(
                 tool_name="trivy",
                 execution_time_seconds=elapsed,
                 exit_code=result.returncode,
-                errors=[f"Trivy failed (exit {result.returncode}): {result.stderr.decode()}"],
+                errors=[f"Trivy failed (exit {result.returncode})"],
             )
 
         return ScanResults(

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -54,10 +54,11 @@ def run_capa(target_dir: str, output_dir: str) -> ScanResults:
         # etc. which always fail with exit code 2.
         binaries: list[str] = []
         if candidates:
-            file_result = subprocess.run(
+            file_result = run_cmd(
                 ["file", "--brief"] + candidates,
-                capture_output=True,
+                label="file",
                 timeout=60,
+                ok_codes=(0,),
             )
             file_lines = file_result.stdout.decode(errors="replace").strip().splitlines()
 
@@ -106,10 +107,11 @@ def run_capa(target_dir: str, output_dir: str) -> ScanResults:
 
         for binary_path in binaries:
             binary_output = f"{output_path}.{binary_path.replace('/', '_')}"
-            result = subprocess.run(
+            result = run_cmd(
                 ["capa", "--format", "json", binary_path],
-                capture_output=True,
+                label="capa",
                 timeout=600,
+                ok_codes=(0, 1),
             )
             Path(binary_output).write_bytes(result.stdout)
             last_exit_code = result.returncode

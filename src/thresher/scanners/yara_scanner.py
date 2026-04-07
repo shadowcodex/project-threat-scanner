@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -52,10 +52,11 @@ def run_yara(target_dir: str, output_dir: str) -> ScanResults:
         last_exit_code = 0
 
         for rule_file in rule_files:
-            result = subprocess.run(
+            result = run_cmd(
                 ["yara", "-r", str(rule_file), target_dir],
-                capture_output=True,
+                label="yara",
                 timeout=600,
+                ok_codes=(0, 1),
             )
             last_exit_code = result.returncode
             # Filter out .git matches to avoid false positives on hook samples.

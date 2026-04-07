@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ def run_scancode(target_dir: str, output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        result = subprocess.run(
+        result = run_cmd(
             [
                 "scancode", "--license",
                 "--json-pp", output_path,
@@ -44,8 +44,9 @@ def run_scancode(target_dir: str, output_dir: str) -> ScanResults:
                 "-n", "4",
                 "--timeout", "120",
             ],
-            capture_output=True,
+            label="scancode",
             timeout=600,
+            ok_codes=(0, 1),
         )
         elapsed = time.monotonic() - start
 
@@ -57,25 +58,16 @@ def run_scancode(target_dir: str, output_dir: str) -> ScanResults:
         #       process.  Treat as success if the output file exists.
         #   2+ = actual error (bad arguments, crash, etc.)
         if result.returncode == 1:
-            logger.info(
-                "ScanCode exited with code 1 (completed with issues). "
-                "stderr: %s",
-                result.stderr.decode()[:500] if result.stderr else "(empty)",
-            )
             file_size = Path(output_path).stat().st_size if Path(output_path).exists() else 0
-            logger.info("ScanCode output file size: %s bytes", file_size)
+            logger.info("ScanCode exited with code 1 (completed with issues). output size: %s bytes", file_size)
 
         if result.returncode not in (0, 1):
-            logger.warning(
-                "ScanCode exited with code %d: %s",
-                result.returncode,
-                result.stderr.decode(),
-            )
+            logger.warning("ScanCode exited with code %d", result.returncode)
             return ScanResults(
                 tool_name="scancode",
                 execution_time_seconds=elapsed,
                 exit_code=result.returncode,
-                errors=[f"ScanCode failed (exit {result.returncode}): {result.stderr.decode()}"],
+                errors=[f"ScanCode failed (exit {result.returncode})"],
             )
 
         return ScanResults(

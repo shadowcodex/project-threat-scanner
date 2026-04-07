@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -38,28 +38,22 @@ def run_semgrep_supply_chain(output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        result = subprocess.run(
+        result = run_cmd(
             ["semgrep", "scan", "--config", RULES_PATH, "--json", DEPS_DIR],
-            capture_output=True,
+            label="semgrep-supply-chain",
             timeout=600,
+            ok_codes=(0, 1),
         )
         Path(output_path).write_bytes(result.stdout)
         elapsed = time.monotonic() - start
 
         if result.returncode not in (0, 1):
-            logger.warning(
-                "Semgrep supply-chain exited with code %d: %s",
-                result.returncode,
-                result.stderr.decode(),
-            )
+            logger.warning("Semgrep supply-chain exited with code %d", result.returncode)
             return ScanResults(
                 tool_name="semgrep-supply-chain",
                 execution_time_seconds=elapsed,
                 exit_code=result.returncode,
-                errors=[
-                    f"Semgrep supply-chain failed (exit {result.returncode}): "
-                    f"{result.stderr.decode()}"
-                ],
+                errors=[f"Semgrep supply-chain failed (exit {result.returncode})"],
             )
 
         return ScanResults(

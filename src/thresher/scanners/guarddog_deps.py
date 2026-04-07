@@ -5,12 +5,12 @@ from __future__ import annotations
 import glob
 import json
 import logging
-import subprocess
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -47,11 +47,11 @@ def run_guarddog_deps(output_dir: str) -> ScanResults:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             for idx, subdir in enumerate(sorted(subdirs)):
-                sub_output = str(Path(tmpdir) / f"guarddog_sub_{idx}.json")
-                result = subprocess.run(
+                result = run_cmd(
                     ["guarddog", "scan", subdir, "--output-format", "json"],
-                    capture_output=True,
+                    label="guarddog-deps",
                     timeout=600,
+                    ok_codes=(0, 1),
                 )
                 last_exit_code = result.returncode
 

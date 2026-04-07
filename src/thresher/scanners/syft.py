@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import ScanResults
 
 logger = logging.getLogger(__name__)
@@ -31,22 +31,23 @@ def run_syft(target_dir: str, output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        result = subprocess.run(
+        result = run_cmd(
             ["syft", target_dir, "-o", "cyclonedx-json"],
-            capture_output=True,
+            label="syft",
             timeout=300,
+            ok_codes=(0,),
         )
         Path(sbom_path).write_bytes(result.stdout)
         elapsed = time.monotonic() - start
 
         # Syft exit 0 on success.  Any non-zero is a real error.
         if result.returncode != 0:
-            logger.warning("Syft exited with code %d: %s", result.returncode, result.stderr.decode())
+            logger.warning("Syft exited with code %d", result.returncode)
             return ScanResults(
                 tool_name="syft",
                 execution_time_seconds=elapsed,
                 exit_code=result.returncode,
-                errors=[f"Syft failed (exit {result.returncode}): {result.stderr.decode()}"],
+                errors=[f"Syft failed (exit {result.returncode})"],
             )
 
         return ScanResults(

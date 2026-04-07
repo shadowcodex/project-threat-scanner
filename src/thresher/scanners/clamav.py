@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -23,21 +23,22 @@ def run_clamav(target_dir: str, output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        result = subprocess.run(
+        result = run_cmd(
             ["clamscan", "-r", "--infected", "--no-summary", target_dir],
-            capture_output=True,
+            label="clamav",
             timeout=600,
+            ok_codes=(0, 1),
         )
         Path(output_path).write_bytes(result.stdout)
         elapsed = time.monotonic() - start
 
         if result.returncode == 2:
-            logger.warning("ClamAV error (exit 2): %s", result.stderr.decode())
+            logger.warning("ClamAV error (exit 2)")
             return ScanResults(
                 tool_name="clamav",
                 execution_time_seconds=elapsed,
                 exit_code=result.returncode,
-                errors=[f"ClamAV error (exit 2): {result.stderr.decode()}"],
+                errors=["ClamAV error (exit 2)"],
             )
 
         return ScanResults(
