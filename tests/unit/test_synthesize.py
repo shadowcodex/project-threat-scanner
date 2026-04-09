@@ -133,3 +133,33 @@ class TestBuildSynthesisInput:
         enriched = [{"composite_priority": "low", "source_tool": "t", "id": "x"}]
         text = _build_synthesis_input({}, None, enriched)
         assert "```json" in text
+
+    def test_important_findings_includes_p0(self):
+        """P0 findings must appear in the Important Findings JSON block."""
+        import json
+        enriched = [
+            {"composite_priority": "P0", "source_tool": "grype", "title": "critical-vuln"},
+            {"composite_priority": "low", "source_tool": "semgrep", "title": "minor"},
+        ]
+        text = _build_synthesis_input({}, None, enriched)
+        # Extract the JSON block from Important Findings section
+        assert "Important Findings" in text
+        json_start = text.index("```json") + len("```json")
+        json_end = text.index("```", json_start)
+        important = json.loads(text[json_start:json_end])
+        titles = [f.get("title") for f in important]
+        assert "critical-vuln" in titles
+        assert "minor" not in titles
+
+    def test_important_findings_includes_high(self):
+        """High-severity findings must appear in Important Findings."""
+        import json
+        enriched = [
+            {"composite_priority": "high", "source_tool": "trivy", "title": "high-vuln"},
+        ]
+        text = _build_synthesis_input({}, None, enriched)
+        json_start = text.index("```json") + len("```json")
+        json_end = text.index("```", json_start)
+        important = json.loads(text[json_start:json_end])
+        assert len(important) == 1
+        assert important[0]["title"] == "high-vuln"

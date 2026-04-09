@@ -406,7 +406,7 @@ def _build_synthesis_input(
     # Include important findings in full, summarize the rest
     important = [
         f for f in enriched
-        if f.get("composite_priority") in ("p0", "critical", "high")
+        if f.get("composite_priority") in ("P0", "critical", "high")
         or f.get("source_tool") == "ai_analysis"
         or f.get("in_kev") is True
     ]
