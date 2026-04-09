@@ -300,3 +300,47 @@ class TestGenerateReport:
             {"output_dir": "/tmp/out", "skip_ai": True},
         )
         mock_validate.assert_called_once_with("/tmp/out")
+
+    @patch("thresher.report.synthesize._generate_template_report")
+    @patch("thresher.report.synthesize._generate_agent_report")
+    @patch("thresher.report.synthesize._build_synthesis_input")
+    @patch("thresher.harness.report.validate_report_output")
+    def test_generate_report_writes_analyst_files(
+        self, mock_validate, mock_build, mock_agent, mock_template, tmp_path
+    ):
+        """Per-analyst findings should be saved as individual JSON files."""
+        from thresher.harness.report import generate_report
+
+        enriched = {"findings": [], "scanner_results": {}}
+        analyst_data = [
+            {"analyst": "paranoid", "analyst_number": 1, "findings": [{"title": "XSS"}], "summary": "ok", "risk_score": 5},
+            {"analyst": "behaviorist", "analyst_number": 2, "findings": [], "summary": "clean", "risk_score": 2},
+        ]
+        generate_report(
+            enriched, [], {"output_dir": str(tmp_path), "skip_ai": True},
+            analyst_findings=analyst_data,
+        )
+        sr = tmp_path / "scan-results"
+        assert (sr / "analyst-01-paranoid.json").exists()
+        assert (sr / "analyst-02-behaviorist.json").exists()
+        data = json.loads((sr / "analyst-01-paranoid.json").read_text())
+        assert data["analyst"] == "paranoid"
+        assert data["findings"] == [{"title": "XSS"}]
+
+    @patch("thresher.report.synthesize._generate_template_report")
+    @patch("thresher.report.synthesize._generate_agent_report")
+    @patch("thresher.report.synthesize._build_synthesis_input")
+    @patch("thresher.harness.report.validate_report_output")
+    def test_generate_report_no_analyst_files_when_none(
+        self, mock_validate, mock_build, mock_agent, mock_template, tmp_path
+    ):
+        """When analyst_findings is None, no analyst files should be written."""
+        from thresher.harness.report import generate_report
+
+        enriched = {"findings": [], "scanner_results": {}}
+        generate_report(
+            enriched, [], {"output_dir": str(tmp_path), "skip_ai": True},
+        )
+        sr = tmp_path / "scan-results"
+        analyst_files = list(sr.glob("analyst-*.json")) if sr.exists() else []
+        assert len(analyst_files) == 0

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -95,6 +96,8 @@ def generate_report(
     enriched_findings: dict[str, Any],
     scan_results: list[ScanResults],
     config,
+    *,
+    analyst_findings: list[dict[str, Any]] | None = None,
 ) -> str:
     """Synthesize final report and write to output directory.
 
@@ -106,6 +109,7 @@ def generate_report(
         enriched_findings: Dict from ``enrich_all_findings``.
         scan_results: Execution metadata list from all scanners.
         config: ScanConfig instance.
+        analyst_findings: Per-analyst findings dicts from run_all_analysts().
 
     Returns:
         Path to the generated report directory.
@@ -152,9 +156,21 @@ def generate_report(
         )
 
     # Write findings.json (machine-readable output)
-    import json
     findings_path = Path(output_dir) / "findings.json"
     findings_path.write_text(json.dumps(findings, indent=2, default=str))
+
+    # Save per-analyst findings as individual JSON files
+    if analyst_findings:
+        scan_results_dir = Path(output_dir) / "scan-results"
+        scan_results_dir.mkdir(exist_ok=True)
+        for af in analyst_findings:
+            number = af.get("analyst_number", 0)
+            name = af.get("analyst", "unknown")
+            filename = f"analyst-{number:02d}-{name}.json"
+            (scan_results_dir / filename).write_text(
+                json.dumps(af, indent=2, default=str)
+            )
+            logger.info("Saved per-analyst findings: %s", filename)
 
     # Copy raw scanner output files into scan-results/ subfolder
     scan_results_dir = Path(output_dir) / "scan-results"

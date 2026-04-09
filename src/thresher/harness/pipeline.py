@@ -94,10 +94,11 @@ def enriched_findings(scan_results: list[ScanResults],
 
 
 def report_path(enriched_findings: dict, scan_results: list[ScanResults],
-                config: ScanConfig) -> str:
+                analyst_findings: list[dict], config: ScanConfig) -> str:
     """Synthesize final report and write to output directory."""
     from thresher.harness.report import generate_report
-    return generate_report(enriched_findings, scan_results, config)
+    return generate_report(enriched_findings, scan_results, config,
+                           analyst_findings=analyst_findings)
 
 
 # ── Pipeline Runner ─────────────────────────────────────────────────
