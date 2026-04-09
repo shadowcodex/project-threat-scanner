@@ -410,19 +410,21 @@ def _merge_adversarial_results(
             list(verification.keys()),
         )
 
-    results_by_path: dict[str, dict[str, Any]] = {}
+    results_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for result in results:
         if isinstance(result, dict):
             fp = result.get("file_path", "")
+            title = result.get("title", "")
             if fp:
-                results_by_path[fp] = result
+                results_by_key[(fp, title)] = result
 
     findings_list = updated_findings.get("findings", [])
     for finding in findings_list:
         if not isinstance(finding, dict):
             continue
         fp = finding.get("file_path", "")
-        verification_result = results_by_path.get(fp)
+        title = finding.get("title", "")
+        verification_result = results_by_key.get((fp, title))
         if verification_result:
             finding["adversarial_status"] = verification_result.get("verdict", "unknown")
             finding["adversarial_reasoning"] = verification_result.get("reasoning", "")

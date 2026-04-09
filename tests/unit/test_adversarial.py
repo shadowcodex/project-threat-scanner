@@ -220,6 +220,46 @@ class TestMergeAdversarialResults:
         assert result["findings"][0]["risk_score"] == 6
         assert "adversarial_status" not in result["findings"][0]
 
+    def test_multiple_findings_same_path_get_correct_verdicts(self):
+        """Two findings at the same file_path should each get their own verdict."""
+        ai = {"findings": [
+            {"file_path": "/main.py", "title": "Rate Limiting", "risk_score": 7},
+            {"file_path": "/main.py", "title": "CORS Misconfiguration", "risk_score": 6},
+        ]}
+        verification = {
+            "verification_summary": "done",
+            "total_reviewed": 2,
+            "confirmed_count": 1,
+            "downgraded_count": 1,
+            "results": [
+                {
+                    "file_path": "/main.py",
+                    "title": "Rate Limiting",
+                    "verdict": "confirmed",
+                    "reasoning": "rate limiting is missing",
+                    "confidence": 90,
+                    "benign_explanation_attempted": "",
+                },
+                {
+                    "file_path": "/main.py",
+                    "title": "CORS Misconfiguration",
+                    "verdict": "downgraded",
+                    "revised_risk_score": 2,
+                    "reasoning": "CORS is correctly configured",
+                    "confidence": 85,
+                    "benign_explanation_attempted": "default deny",
+                },
+            ],
+        }
+        result = _merge_adversarial_results(ai, verification)
+        rate_limit = [f for f in result["findings"] if f["title"] == "Rate Limiting"][0]
+        cors = [f for f in result["findings"] if f["title"] == "CORS Misconfiguration"][0]
+        assert rate_limit["adversarial_status"] == "confirmed"
+        assert rate_limit["risk_score"] == 7  # no revision
+        assert cors["adversarial_status"] == "downgraded"
+        assert cors["risk_score"] == 2
+        assert cors["original_risk_score"] == 6
+
 
 class TestExtractResultFromStream:
     def test_extracts_result(self):
