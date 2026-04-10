@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Thresher Report Data",
+  "description": "Schema for the JSON data structure that drives the Thresher HTML report template",
+  "type": "object",
+  "required": ["meta", "verdict", "counts", "executive_summary", "mitigations", "scanner_findings", "ai_findings", "trust_signals", "dependency_upgrades", "pipeline", "config"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["scan_date", "thresher_version", "scanner_count", "analyst_count", "repo_name", "repo_url"],
+      "properties": {
+        "scan_date": { "type": "string" },
+        "thresher_version": { "type": "string" },
+        "scanner_count": { "type": "string" },
+        "analyst_count": { "type": "string" },
+        "repo_name": { "type": "string" },
+        "repo_url": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "verdict": {
+      "type": "object",
+      "required": ["label", "severity", "callout"],
+      "properties": {
+        "label": { "type": "string" },
+        "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+        "callout": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "counts": {
+      "type": "object",
+      "required": ["total_scanner", "total_ai", "p0", "critical", "high_scanner", "high_ai", "medium", "low"],
+      "properties": {
+        "total_scanner": { "type": "string" },
+        "total_ai": { "type": "string" },
+        "p0": { "type": "string" },
+        "critical": { "type": "string" },
+        "high_scanner": { "type": "string" },
+        "high_ai": { "type": "string" },
+        "medium": { "type": "string" },
+        "low": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "executive_summary": { "type": "string" },
+    "mitigations": { "type": "array", "items": { "type": "string" } },
+    "scanner_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rank", "severity", "package", "title", "cve", "cvss"],
+        "properties": {
+          "rank": { "type": "string" },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "package": { "type": "string" },
+          "title": { "type": "string" },
+          "cve": { "type": "string" },
+          "cvss": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "ai_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "title", "file", "description", "confidence", "analysts"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "title": { "type": "string" },
+          "file": { "type": "string" },
+          "description": { "type": "string" },
+          "confidence": { "type": "string" },
+          "analysts": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    },
+    "trust_signals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["icon", "text"],
+        "properties": {
+          "icon": { "type": "string" },
+          "text": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "dependency_upgrades": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["package", "old_version", "new_version", "severity", "cvss", "cves"],
+        "properties": {
+          "package": { "type": "string" },
+          "old_version": { "type": "string" },
+          "new_version": { "type": "string" },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "cvss": { "type": "string" },
+          "cves": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "remediation": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["pr_title", "pr_url", "summary", "fixes"],
+          "properties": {
+            "pr_title": { "type": "string" },
+            "pr_url": { "type": "string" },
+            "summary": { "type": "string" },
+            "fixes": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "pipeline": {
+      "type": "object",
+      "required": ["scanners", "analysts", "notes"],
+      "properties": {
+        "scanners": { "type": "array", "items": { "type": "string" } },
+        "analysts": { "type": "array", "items": { "type": "string" } },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "config": {
+      "type": "object",
+      "required": ["show_cta", "show_remediation"],
+      "properties": {
+        "show_cta": { "type": "string", "enum": ["true", "false"] },
+        "show_remediation": { "type": "string", "enum": ["true", "false"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
