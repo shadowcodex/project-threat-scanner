@@ -203,3 +203,150 @@ def generate_report(
 
     validate_report_output(output_dir)
     return output_dir
+
+
+def render_report(
+    report_data: dict,
+    output_dir: str,
+    *,
+    template_dir: str | None = None,
+) -> str:
+    """Render HTML report by injecting report_data JSON into the Jinja template.
+
+    Returns the path to the generated report.html.
+    """
+    import json as _json
+    from jinja2 import Environment, FileSystemLoader
+
+    if template_dir is None:
+        candidates = [
+            Path("/opt/templates/report"),
+            Path(__file__).parent.parent.parent.parent / "templates" / "report",
+        ]
+        for candidate in candidates:
+            if (candidate / "template_report.html").exists():
+                template_dir = str(candidate)
+                break
+        if template_dir is None:
+            raise FileNotFoundError(
+                "template_report.html not found. Checked: "
+                + ", ".join(str(c) for c in candidates)
+            )
+
+    env = Environment(
+        loader=FileSystemLoader(template_dir),
+        autoescape=False,
+    )
+    template = env.get_template("template_report.html")
+
+    html = template.render(report_data=_json.dumps(report_data, indent=2))
+
+    out_path = Path(output_dir) / "report.html"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(html)
+
+    logger.info("Report written to %s", out_path)
+    return str(out_path)
+
+
+def build_fallback_report_data(config, enriched_findings: list) -> dict:
+    """Build report JSON programmatically when the AI agent is unavailable."""
+    from datetime import date
+
+    repo_name = config.repo_url.rstrip("/").rstrip(".git")
+    repo_name = "/".join(repo_name.split("/")[-2:]) if "/" in repo_name else repo_name
+
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    for f in enriched_findings:
+        sev = (f.get("composite_priority") or f.get("severity", "low")).lower()
+        if sev in counts:
+            counts[sev] += 1
+
+    if counts["critical"] > 0:
+        verdict_label, verdict_severity = "FIX BEFORE USE", "critical"
+    elif counts["high"] > 0:
+        verdict_label, verdict_severity = "REVIEW BEFORE USE", "high"
+    elif counts["medium"] > 0:
+        verdict_label, verdict_severity = "LOW RISK", "medium"
+    else:
+        verdict_label, verdict_severity = "LOW RISK", "low"
+
+    total = sum(counts.values())
+    callout = f"{total} findings detected." if total > 0 else "No significant issues found."
+
+    scanner = [f for f in enriched_findings if f.get("source_tool") != "ai"]
+    scanner.sort(key=lambda f: float(f.get("cvss_score") or 0), reverse=True)
+    scanner_top = []
+    for i, f in enumerate(scanner[:10], 1):
+        pkg = f.get("package_name", "unknown")
+        ver = f.get("package_version", "")
+        scanner_top.append({
+            "rank": str(i),
+            "severity": (f.get("composite_priority") or f.get("severity", "low")).lower(),
+            "package": f"{pkg}@{ver}" if ver else pkg,
+            "title": f.get("title", ""),
+            "cve": f.get("cve_id", ""),
+            "cvss": str(f.get("cvss_score", "")),
+        })
+
+    mitigations = []
+    for f in enriched_findings:
+        sev = (f.get("composite_priority") or f.get("severity", "")).lower()
+        if sev in ("critical", "high"):
+            cve = f.get("cve_id", "")
+            pkg = f.get("package_name", "unknown")
+            mitigations.append(
+                f"Resolve {cve} in {pkg}" if cve else f"Remediate {pkg}: {f.get('title', '')}"
+            )
+
+    return {
+        "meta": {
+            "scan_date": date.today().isoformat(),
+            "thresher_version": "v0.3.0",
+            "scanner_count": "22",
+            "analyst_count": "0" if config.skip_ai else "8",
+            "repo_name": repo_name,
+            "repo_url": config.repo_url,
+        },
+        "verdict": {
+            "label": verdict_label,
+            "severity": verdict_severity,
+            "callout": callout,
+        },
+        "counts": {
+            "total_scanner": str(total),
+            "total_ai": "0",
+            "p0": "0",
+            "critical": str(counts["critical"]),
+            "high_scanner": str(counts["high"]),
+            "high_ai": "0",
+            "medium": str(counts["medium"]),
+            "low": str(counts["low"]),
+        },
+        "executive_summary": (
+            f"<p>Automated scanning of <strong>{repo_name}</strong> produced "
+            f"<strong>{total} findings</strong> across 22 tools.</p>"
+        ),
+        "mitigations": mitigations[:10],
+        "scanner_findings": scanner_top,
+        "ai_findings": [],
+        "trust_signals": [],
+        "dependency_upgrades": [],
+        "remediation": None,
+        "pipeline": {
+            "scanners": [
+                "grype", "trivy", "osv-scanner", "semgrep", "gitleaks",
+                "checkov", "bandit", "clamav", "guarddog", "yara",
+                "entropy", "install-hooks",
+            ],
+            "analysts": [],
+            "notes": (
+                "AI analysts were not run." if config.skip_ai
+                else "AI agent failed; using fallback report."
+            ),
+        },
+        "config": {
+            "show_cta": "true",
+            "show_remediation": "false",
+        },
+    }
