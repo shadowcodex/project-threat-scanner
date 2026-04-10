@@ -101,57 +101,93 @@ The final recommendation is based on the highest-priority finding:
 
 ## Report Generation
 
-Report generation is the final stage of the scan pipeline. It takes enriched findings from all scanners and AI agents and produces a set of report artifacts inside the VM. The report directory is then copied to the host via `ssh_copy_from_safe()`.
+Report generation is the final stage of the scan pipeline. It runs after synthesis (which merges, deduplicates, and prioritizes findings across scanner and AI tracks). The pipeline produces a data-driven HTML report plus supporting artifacts.
 
-### Generation Paths
+### Architecture
 
-There are two report generation paths depending on whether AI is enabled:
+The report pipeline has three stages:
 
-**Agent path** (default): A Claude Code headless agent runs inside the VM and synthesizes all findings into narrative markdown reports. The agent reads the enriched findings JSON and produces `executive-summary.md`, `detailed-report.md`, and `synthesis-findings.md`. If the agent fails, Thresher falls back to the template path automatically.
-
-**Template path** (`--skip-ai`): Jinja2 templates render the markdown reports directly from enriched finding data. Deterministic and fast, but the narrative prose is less sophisticated than agent-generated content.
-
-**HTML report** (always): After either path completes, an HTML report (`report.html`) is always generated using a Jinja2 template. This is the primary report artifact — the CLI prints its path at the end of a scan. When agent narratives are available, they are read from the VM and embedded into the HTML report. When they aren't (template path or agent failure), the HTML template generates its own prose.
-
-### Report Generation Flow
+1. **Synthesis** (existing) — merges scanner + AI findings, applies priority elevation/downgrade
+2. **Report-maker agent** — reads synthesis output, produces structured JSON conforming to a schema
+3. **Render** — injects JSON into an HTML template via Jinja
 
 ```
-enriched findings + AI findings
-         │
-         ├── Agent path ──────────────> executive-summary.md
-         │   (Claude headless in VM)    detailed-report.md
-         │                              synthesis-findings.md
-         │
-         ├── Template path ───────────> executive-summary.md
-         │   (Jinja2 on host,           detailed-report.md
-         │    fallback or --skip-ai)    synthesis-findings.md
-         │
-         └── HTML report ─────────────> report.html (primary artifact)
-             (always runs,
-              incorporates agent
-              narratives if available)
+synthesis output (findings.json, executive-summary.md, scan-results/*.json)
+  → report-maker agent (Claude Code headless, stop-hook validated)
+    → report_data.json (validated against templates/report/report_schema.json)
+      → render_report() in harness/report.py
+        → Jinja injects JSON into templates/report/template_report.html
+          → /output/report.html
 ```
 
-### Template Context
+### Report-Maker Agent
 
-Both template paths (markdown and HTML) share the same context builder (`_build_template_context`). Key context fields:
+The report-maker agent (`src/thresher/agents/report_maker.py`) transforms synthesis output into the structured JSON the template needs. It runs as a Claude Code headless subprocess, same as the analyst agents.
 
-| Field | Description |
-|-------|-------------|
-| `risk_assessment` | GO / CAUTION / DO NOT USE |
-| `priority_counts` | Finding counts by priority level |
-| `top_findings` | Top 10 findings sorted by composite priority |
-| `findings_by_priority` | All findings grouped by priority |
-| `scanner_finding_counts` | Scanner-only counts by priority |
-| `ai_finding_counts` | AI-only counts by priority |
-| `ai_findings_grouped` | AI findings grouped by priority (for card rendering) |
-| `upgrade_packages` | Deduplicated packages with available fix versions |
-| `agent_executive_summary` | Agent narrative HTML (None if unavailable) |
-| `agent_synthesis` | Agent synthesis narrative HTML (None if unavailable) |
+**Inputs** (read via `--allowedTools Read,Glob,Grep`):
+- `findings.json` — enriched findings with composite priorities
+- `executive-summary.md` — AI-generated narrative from synthesis
+- `scan-results/*.json` — raw scanner outputs
+- `templates/report/*` — schema, template, and example for reference
 
-### HTML Report Safety
+**Output**: A single JSON object conforming to `templates/report/report_schema.json`.
 
-The HTML template uses a separate Jinja2 `Environment` with HTML autoescaping enabled. All user-controlled content (repo URLs, finding titles, file paths, descriptions) is automatically escaped to prevent XSS. Agent narratives are markdown converted to HTML via the `markdown` library and marked safe with `Markup()` so they render correctly without double-escaping.
+**Stop hook validation**: A Claude Code Stop hook (`src/thresher/agents/hooks/report/validate_json_output.sh`) validates the agent's output against the JSON schema before allowing the agent to exit. If validation fails, the hook blocks the stop (exit 2 + stderr feedback) and Claude retries. This ensures the agent can't finish until it produces schema-valid JSON.
+
+The agent definition lives at `src/thresher/agents/definitions/report/report_maker.yaml`.
+
+**Configuration**: `report_maker_max_turns` in `ScanConfig` (default 15, configurable via `thresher.toml` under `[report_maker]`).
+
+### Skip-AI Fallback
+
+When `--skip-ai` is set or the report-maker agent fails, `build_fallback_report_data()` constructs the JSON programmatically from raw findings:
+- Verdict computed from highest severity finding
+- Counts computed by iterating findings
+- Executive summary is a template string
+- Top 10 scanner findings by CVSS score
+- Mitigations generated for critical/high findings
+
+The fallback output passes the same JSON schema validation as agent output.
+
+### Pipeline Integration
+
+Two Hamilton DAG nodes in `harness/pipeline.py`:
+
+- `report_data` — runs report-maker agent (or fallback), returns JSON dict
+- `report_html` — calls `render_report()` for HTML + `finalize_output()` for findings.json/scanner copies
+
+### HTML Report Template
+
+The template (`templates/report/template_report.html`) is a self-contained HTML file with:
+- **Zone 1**: All CSS inline (dark terminal aesthetic — violet/black/bone)
+- **Zone 2**: Empty `<div id="app">` mount point
+- **Zone 3**: JavaScript — Jinja injects the JSON blob as `const REPORT_DATA = {{ report_data }};`, then vanilla JS component functions render it to the DOM
+
+Component functions: `renderNav`, `renderHero`, `renderExecSummary`, `renderFindingsBar`, `renderScannerTable`, `renderAiFindings`, `renderTrustSignals`, `renderUpgrades`, `renderRemediation`, `renderPipeline`, `renderCta`, `renderFooter`.
+
+Each component returns an HTML string from its slice of REPORT_DATA. Empty/null data causes the section to be hidden gracefully.
+
+No build step, no external JS dependencies. Works offline.
+
+### JSON Schema
+
+`templates/report/report_schema.json` enforces the report data contract:
+- All leaf values are strings (prevents type issues in browser JS)
+- Severity fields use `"enum": ["critical", "high", "medium", "low"]`
+- Required sections: `meta`, `verdict`, `counts`, `executive_summary`, `mitigations`, `scanner_findings`, `ai_findings`, `trust_signals`, `dependency_upgrades`, `pipeline`, `config`
+- `remediation` is nullable (populated in a future follow-up pass)
+- `config.show_cta` / `config.show_remediation` control conditional sections
+
+### Configurable Sections
+
+| Config Flag | Controls |
+|-------------|----------|
+| `config.show_cta` | Marketing footer (brew install box). `"true"` or `"false"`. |
+| `config.show_remediation` | Remediation PR section. Hidden by default (`"false"`), includes a JS toggle for testing. |
+
+### Executive Summary HTML
+
+The `executive_summary` field supports a limited set of HTML tags: `<p>`, `<strong>`, `<code>`, `<ul>`, `<li>`. The agent is instructed to use only these tags. The template renders the value as innerHTML.
 
 ## Report Output
 
@@ -159,17 +195,21 @@ Reports are written to `<output-dir>/<scan-id>/`:
 
 ### report.html (primary artifact)
 
-Self-contained HTML report with all CSS inline. Dark-themed, responsive design with these sections:
+Self-contained, data-driven HTML report. Dark-themed terminal aesthetic (violet/black/bone), responsive design. All content rendered by vanilla JS component functions from a single JSON blob.
 
-- **Verdict**: GO (green) / CAUTION (amber) / DO NOT USE (red) with finding count badges
-- **Executive Summary**: Agent-generated narrative when available, template prose otherwise. Includes required mitigations for P0/Critical/High findings.
-- **Findings Distribution**: Visual bar chart showing scanner and AI finding counts by severity
+Sections:
+- **Hero**: Scan date, repo name, verdict box (color-coded by severity), finding counts
+- **Executive Summary**: Agent-generated narrative HTML, verdict callout, mitigations list
+- **Findings Distribution**: Stacked bar charts for scanner and AI finding counts by severity
 - **Scanner Findings**: Top 10 findings table with severity, CVE, and CVSS
-- **AI Analyst Findings**: Cards grouped by severity with confidence scores and analyst attribution. Critical/High shown as full cards, Medium/Low in a collapsible section.
-- **Dependency Upgrades**: Table of packages with current and fixed versions (conditional — only shown when upgrades are available)
-- **Pipeline Details**: Collapsible section listing all scanners and AI personas used
+- **AI Analyst Findings**: Cards grouped by severity with confidence bars and analyst tags. Critical/High shown as full cards, Medium in collapsible `<details>`.
+- **Trust Assessment**: Repository health signals grid (bus factor, SECURITY.md, release tags)
+- **Dependency Upgrades**: Table of packages with current/fixed versions and CVE links
+- **Remediation**: PR details and fix list (hidden by default, JS toggle for testing)
+- **Pipeline Details**: Collapsible section listing all scanners and AI personas
+- **CTA**: Marketing footer with install command (conditional on `config.show_cta`)
 
-Conditional sections (trust assessment, remediation PR) render only when their data is available, keeping the report clean for scans that don't produce that data.
+Empty/null sections are hidden automatically — the report looks clean regardless of how much data is available.
 
 ### executive-summary.md
 
@@ -260,12 +300,23 @@ scan-results/
 
 ## Templates
 
-Report templates live in `src/thresher/report/templates/`:
+Report templates and schema live in `templates/report/`:
 
-| Template | Format | Purpose |
-|----------|--------|---------|
-| `report.html.j2` | HTML | Primary report artifact — polished, self-contained |
-| `executive_summary.md.j2` | Markdown | Executive summary (fallback for `--skip-ai`) |
-| `detailed_report.md.j2` | Markdown | Full findings report (fallback for `--skip-ai`) |
+| File | Purpose |
+|------|---------|
+| `template_report.html` | Jinja template — `{{ report_data }}` placeholder for JSON injection |
+| `example_data_report.html` | Reference: data-driven report with embedded example JSON |
+| `example_report.html` | Reference: original static HTML report (visual target) |
+| `report_schema.json` | JSON Schema enforcing the report data structure |
 
 The HTML template uses the same CSS design system as the Thresher website (dark theme, JetBrains Mono + Inter fonts, violet accent). Google Fonts are linked for host-side viewing but fall back gracefully to system fonts.
+
+### Agent and Hook Files
+
+| File | Purpose |
+|------|---------|
+| `src/thresher/agents/report_maker.py` | Agent runner: builds cmd, calls `thresher.run` |
+| `src/thresher/agents/definitions/report/report_maker.yaml` | Agent persona and system prompt |
+| `src/thresher/agents/hooks/report/validate_json_output.sh` | Stop hook: validates JSON against schema |
+
+The stop hook uses `exit 2` + stderr to block invalid output and `exit 0` to allow valid output. Hook settings are generated at runtime with absolute paths by `_resolve_hooks_settings()` in `report_maker.py`.
