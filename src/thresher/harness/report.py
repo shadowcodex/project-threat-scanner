@@ -136,113 +136,6 @@ def enrich_all_findings(
     }
 
 
-def generate_report(
-    enriched_findings: dict[str, Any],
-    scan_results: list[ScanResults],
-    config,
-    *,
-    analyst_findings: list[dict[str, Any]] | None = None,
-) -> str:
-    """Synthesize final report and write to output directory.
-
-    Generates markdown and HTML reports using either the AI synthesis
-    agent (default) or Jinja2 templates (``skip_ai=True``).  Validates
-    the output directory after generation.
-
-    Args:
-        enriched_findings: Dict from ``enrich_all_findings``.
-        scan_results: Execution metadata list from all scanners.
-        config: ScanConfig instance.
-        analyst_findings: Per-analyst findings dicts from run_all_analysts().
-
-    Returns:
-        Path to the generated report directory.
-    """
-    from thresher.report.synthesize import (
-        _generate_template_report,
-        _generate_agent_report,
-        _generate_html_report,
-        _build_synthesis_input,
-    )
-
-    output_dir = config.output_dir if not isinstance(config, dict) else config.get("output_dir", "/output")
-    os.makedirs(output_dir, exist_ok=True)
-
-    findings: list[dict[str, Any]] = enriched_findings.get("findings", [])
-    scanner_results: dict[str, Any] = enriched_findings.get(
-        "scanner_results", {}
-    )
-
-    # Use config directly if it's already a ScanConfig, otherwise build one
-    if isinstance(config, dict):
-        from thresher.config import ScanConfig, VMConfig
-        scan_config = ScanConfig(
-            repo_url=config.get("repo_url", ""),
-            skip_ai=config.get("skip_ai", False),
-            output_dir=output_dir,
-            vm=VMConfig(),
-            anthropic_api_key=config.get("anthropic_api_key", ""),
-            model=config.get("model", "sonnet"),
-        )
-    else:
-        scan_config = config
-
-    # vm_name is empty string in harness context (runs natively, not in VM)
-    vm_name = ""
-
-    if scan_config.skip_ai:
-        _generate_template_report(
-            vm_name, scan_config, findings, scanner_results, output_dir
-        )
-    else:
-        ai_findings_dict = {"findings": findings}
-        _generate_agent_report(
-            vm_name, scan_config, scanner_results, ai_findings_dict, findings, output_dir
-        )
-
-    # HTML report (always generated after markdown reports)
-    agent_succeeded = False
-    if not scan_config.skip_ai:
-        agent_succeeded = (
-            os.path.isfile(f"{output_dir}/executive-summary.md")
-            and os.path.isfile(f"{output_dir}/detailed-report.md")
-        )
-    _generate_html_report(
-        vm_name, scan_config, findings, scanner_results, output_dir,
-        agent_succeeded=agent_succeeded,
-    )
-
-    # Write findings.json (machine-readable output)
-    findings_path = Path(output_dir) / "findings.json"
-    findings_path.write_text(json.dumps(findings, indent=2, default=str))
-
-    # Save per-analyst findings as individual JSON files
-    if analyst_findings:
-        scan_results_dir = Path(output_dir) / "scan-results"
-        scan_results_dir.mkdir(exist_ok=True)
-        for af in analyst_findings:
-            number = af.get("analyst_number", 0)
-            name = af.get("analyst", "unknown")
-            filename = f"analyst-{number:02d}-{name}.json"
-            (scan_results_dir / filename).write_text(
-                json.dumps(af, indent=2, default=str)
-            )
-            logger.info("Saved per-analyst findings: %s", filename)
-
-    # Copy raw scanner output files into scan-results/ subfolder
-    scan_results_dir = Path(output_dir) / "scan-results"
-    scan_results_dir.mkdir(exist_ok=True)
-    source_dir = Path("/opt/scan-results")
-    if source_dir.exists():
-        import shutil
-        for f in source_dir.iterdir():
-            if f.is_file():
-                shutil.copy2(f, scan_results_dir / f.name)
-
-    validate_report_output(output_dir)
-    return output_dir
-
-
 def finalize_output(
     enriched_findings: dict[str, Any],
     scan_results: list[ScanResults],
@@ -324,6 +217,56 @@ _REQUIRED_REPORT_DATA_KEYS = frozenset({
     "ai_findings",
     "pipeline",
 })
+
+
+def _dep_resolution_dir() -> str:
+    """Return the directory holding ``dep_resolution.json``.
+
+    Defaults to ``/opt/deps`` (the in-container path used by the
+    pipeline). Tests patch this to redirect to a tmp dir.
+    """
+    return "/opt/deps"
+
+
+def summarize_dep_resolution(deps_dir: str | None = None) -> str:
+    """Return a human-readable note about dependency-resolution failures.
+
+    Reads ``deps_dir/dep_resolution.json`` (written by ``resolve_deps``)
+    and produces a one-line summary of any failed ecosystems. Returns an
+    empty string when the file is missing or every ecosystem succeeded —
+    so callers can safely ``or`` it into existing notes.
+    """
+    base = Path(deps_dir or _dep_resolution_dir())
+    status_file = base / "dep_resolution.json"
+    if not status_file.is_file():
+        return ""
+    try:
+        data = json.loads(status_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+    ecosystems = data.get("ecosystems", {}) if isinstance(data, dict) else {}
+    failures: list[tuple[str, str]] = []
+    for name, entry in ecosystems.items():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("status") == "failed":
+            failures.append((name, entry.get("reason", "")))
+
+    if not failures:
+        return ""
+
+    parts = []
+    for name, reason in failures:
+        if reason:
+            parts.append(f"{name} (failed: {reason})")
+        else:
+            parts.append(f"{name} (failed)")
+    return (
+        "Dependency download failed for: "
+        + ", ".join(parts)
+        + ". Downstream scanner coverage for these ecosystems is degraded."
+    )
 
 
 def validate_report_data(report_data: dict) -> set[str]:

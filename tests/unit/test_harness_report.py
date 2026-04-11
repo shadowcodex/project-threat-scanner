@@ -313,231 +313,6 @@ class TestEnrichAllFindings:
             result = enrich_all_findings([], findings)
         assert result["findings"][0]["composite_priority"] == "critical"
 
-    def test_field_parity_with_collect_findings(self):
-        """Fields set by enrich_all_findings should match _collect_findings."""
-        from thresher.report.synthesize import _collect_findings
-
-        ai_input = {"findings": [{
-            "risk_score": 7,
-            "file_path": "/opt/target/app.py",
-            "reasoning": "suspicious",
-            "findings": [
-                {"confidence": 85, "severity": "high", "pattern": "eval", "description": "eval usage"},
-            ],
-        }]}
-
-        # VM path
-        vm_findings = _collect_findings({}, ai_input)
-
-        # Harness path (no enrichment, just field mapping)
-        with patch("thresher.harness.report.enrich_findings", side_effect=lambda f, **kw: f):
-            harness_result = enrich_all_findings([], ai_input)
-        harness_findings = harness_result["findings"]
-
-        # Both paths must set these critical fields
-        for field in ("ai_risk_score", "source_tool", "category", "ai_confidence", "severity"):
-            assert field in vm_findings[0], f"VM path missing {field}"
-            assert field in harness_findings[0], f"Harness path missing {field}"
-            assert vm_findings[0][field] == harness_findings[0][field], \
-                f"Field parity mismatch on {field}: VM={vm_findings[0][field]} vs Harness={harness_findings[0][field]}"
-
-
-class TestGenerateReport:
-    @patch("thresher.report.synthesize._generate_html_report")
-    @patch("thresher.report.synthesize._generate_template_report")
-    @patch("thresher.report.synthesize._generate_agent_report")
-    @patch("thresher.report.synthesize._build_synthesis_input")
-    @patch("thresher.harness.report.validate_report_output")
-    def test_generate_report_skip_ai_uses_template(
-        self, mock_validate, mock_build, mock_agent, mock_template, mock_html
-    ):
-        """When skip_ai=True, should use template-based report generation."""
-        from thresher.harness.report import generate_report
-
-        enriched = {"findings": [], "scanner_results": {}}
-        result = generate_report(
-            enriched,
-            [],
-            {"output_dir": "/tmp/out", "skip_ai": True},
-        )
-        mock_template.assert_called_once()
-        mock_agent.assert_not_called()
-        assert result == "/tmp/out"
-
-    @patch("thresher.report.synthesize._generate_html_report")
-    @patch("thresher.report.synthesize._generate_template_report")
-    @patch("thresher.report.synthesize._generate_agent_report")
-    @patch("thresher.harness.report.validate_report_output")
-    def test_generate_report_ai_enabled_uses_agent(
-        self, mock_validate, mock_agent, mock_template, mock_html
-    ):
-        """When skip_ai=False, should use agent-based report generation."""
-        from thresher.harness.report import generate_report
-
-        enriched = {"findings": [], "scanner_results": {}}
-        result = generate_report(
-            enriched,
-            [],
-            {"output_dir": "/tmp/out", "skip_ai": False},
-        )
-        mock_agent.assert_called_once()
-        mock_template.assert_not_called()
-        assert result == "/tmp/out"
-
-    @patch("thresher.report.synthesize._generate_html_report")
-    @patch("thresher.report.synthesize._generate_template_report")
-    @patch("thresher.report.synthesize._generate_agent_report")
-    @patch("thresher.harness.report.validate_report_output")
-    def test_generate_report_passes_ai_findings_as_dict(
-        self, mock_validate, mock_agent, mock_template, mock_html
-    ):
-        """ai_findings arg to _generate_agent_report must be a dict, not a list."""
-        from thresher.harness.report import generate_report
-
-        findings_list = [{"title": "XSS", "severity": "high"}]
-        enriched = {"findings": findings_list, "scanner_results": {}}
-        generate_report(
-            enriched,
-            [],
-            {"output_dir": "/tmp/out", "skip_ai": False},
-        )
-        call_args = mock_agent.call_args[0]
-        # arg 3 is ai_findings — must be a dict with "findings" key, not a bare list
-        ai_findings_arg = call_args[3]
-        assert isinstance(ai_findings_arg, dict), \
-            f"ai_findings should be dict, got {type(ai_findings_arg).__name__}"
-        assert "findings" in ai_findings_arg
-        assert ai_findings_arg["findings"] == findings_list
-        # arg 4 is enriched — should be the list directly
-        enriched_arg = call_args[4]
-        assert isinstance(enriched_arg, list)
-
-    @patch("thresher.report.synthesize._generate_html_report")
-    @patch("thresher.report.synthesize._generate_template_report")
-    @patch("thresher.report.synthesize._generate_agent_report")
-    @patch("thresher.report.synthesize._build_synthesis_input")
-    @patch("thresher.harness.report.validate_report_output")
-    def test_generate_report_creates_output_dir(
-        self, mock_validate, mock_build, mock_agent, mock_template, mock_html
-    ):
-        """Should create output_dir if it doesn't exist."""
-        from thresher.harness.report import generate_report
-        import tempfile
-        import os
-
-        with tempfile.TemporaryDirectory() as tmp:
-            output_path = os.path.join(tmp, "nested", "output")
-            enriched = {"findings": [], "scanner_results": {}}
-            result = generate_report(
-                enriched,
-                [],
-                {"output_dir": output_path, "skip_ai": True},
-            )
-            assert os.path.exists(output_path)
-            assert result == output_path
-
-    @patch("thresher.report.synthesize._generate_html_report")
-    @patch("thresher.report.synthesize._generate_template_report")
-    @patch("thresher.report.synthesize._generate_agent_report")
-    @patch("thresher.report.synthesize._build_synthesis_input")
-    @patch("thresher.harness.report.validate_report_output")
-    def test_generate_report_default_output_dir(
-        self, mock_validate, mock_build, mock_agent, mock_template, mock_html, tmp_path
-    ):
-        """Should use /output as default when not specified."""
-        from thresher.harness.report import generate_report
-
-        enriched = {"findings": [], "scanner_results": {}}
-        # Use tmp_path so findings.json can actually be written
-        result = generate_report(enriched, [], {"output_dir": str(tmp_path)})
-        assert result == str(tmp_path)
-        assert (tmp_path / "findings.json").exists()
-
-    @patch("thresher.report.synthesize._generate_html_report")
-    @patch("thresher.report.synthesize._generate_template_report")
-    @patch("thresher.report.synthesize._generate_agent_report")
-    @patch("thresher.report.synthesize._build_synthesis_input")
-    @patch("thresher.harness.report.validate_report_output")
-    def test_generate_report_calls_validate(
-        self, mock_validate, mock_build, mock_agent, mock_template, mock_html
-    ):
-        """Should always call validate_report_output after generation."""
-        from thresher.harness.report import generate_report
-
-        enriched = {"findings": [], "scanner_results": {}}
-        generate_report(
-            enriched,
-            [],
-            {"output_dir": "/tmp/out", "skip_ai": True},
-        )
-        mock_validate.assert_called_once_with("/tmp/out")
-
-    @patch("thresher.report.synthesize._generate_html_report")
-    @patch("thresher.report.synthesize._generate_template_report")
-    @patch("thresher.report.synthesize._generate_agent_report")
-    @patch("thresher.report.synthesize._build_synthesis_input")
-    @patch("thresher.harness.report.validate_report_output")
-    def test_generate_report_creates_html(
-        self, mock_validate, mock_build, mock_agent, mock_template, mock_html, tmp_path
-    ):
-        """Should call _generate_html_report after markdown generation."""
-        from thresher.harness.report import generate_report
-
-        enriched = {"findings": [], "scanner_results": {}}
-        generate_report(
-            enriched, [], {"output_dir": str(tmp_path), "skip_ai": True},
-        )
-        mock_html.assert_called_once()
-        call_args = mock_html.call_args[0]
-        assert call_args[4] == str(tmp_path)  # report_dir
-
-    @patch("thresher.report.synthesize._generate_html_report")
-    @patch("thresher.report.synthesize._generate_template_report")
-    @patch("thresher.report.synthesize._generate_agent_report")
-    @patch("thresher.report.synthesize._build_synthesis_input")
-    @patch("thresher.harness.report.validate_report_output")
-    def test_generate_report_writes_analyst_files(
-        self, mock_validate, mock_build, mock_agent, mock_template, mock_html, tmp_path
-    ):
-        """Per-analyst findings should be saved as individual JSON files."""
-        from thresher.harness.report import generate_report
-
-        enriched = {"findings": [], "scanner_results": {}}
-        analyst_data = [
-            {"analyst": "paranoid", "analyst_number": 1, "findings": [{"title": "XSS"}], "summary": "ok", "risk_score": 5},
-            {"analyst": "behaviorist", "analyst_number": 2, "findings": [], "summary": "clean", "risk_score": 2},
-        ]
-        generate_report(
-            enriched, [], {"output_dir": str(tmp_path), "skip_ai": True},
-            analyst_findings=analyst_data,
-        )
-        sr = tmp_path / "scan-results"
-        assert (sr / "analyst-01-paranoid.json").exists()
-        assert (sr / "analyst-02-behaviorist.json").exists()
-        data = json.loads((sr / "analyst-01-paranoid.json").read_text())
-        assert data["analyst"] == "paranoid"
-        assert data["findings"] == [{"title": "XSS"}]
-
-    @patch("thresher.report.synthesize._generate_html_report")
-    @patch("thresher.report.synthesize._generate_template_report")
-    @patch("thresher.report.synthesize._generate_agent_report")
-    @patch("thresher.report.synthesize._build_synthesis_input")
-    @patch("thresher.harness.report.validate_report_output")
-    def test_generate_report_no_analyst_files_when_none(
-        self, mock_validate, mock_build, mock_agent, mock_template, mock_html, tmp_path
-    ):
-        """When analyst_findings is None, no analyst files should be written."""
-        from thresher.harness.report import generate_report
-
-        enriched = {"findings": [], "scanner_results": {}}
-        generate_report(
-            enriched, [], {"output_dir": str(tmp_path), "skip_ai": True},
-        )
-        sr = tmp_path / "scan-results"
-        analyst_files = list(sr.glob("analyst-*.json")) if sr.exists() else []
-        assert len(analyst_files) == 0
-
-
 class TestFinalizeOutputMarkdown:
     """finalize_output writes per-analyst markdown next to per-analyst JSON."""
 
@@ -692,6 +467,80 @@ class TestValidateReportData:
                 config=config,
             )
         assert result is complete
+
+
+class TestDepResolutionNotes:
+    """summarize_dep_resolution turns the deps_dir/dep_resolution.json
+    status file into a human-readable notes string for pipeline.notes."""
+
+    def test_returns_empty_string_when_file_missing(self, tmp_path):
+        from thresher.harness.report import summarize_dep_resolution
+        assert summarize_dep_resolution(str(tmp_path)) == ""
+
+    def test_summarizes_failures(self, tmp_path):
+        from thresher.harness.report import summarize_dep_resolution
+        (tmp_path / "dep_resolution.json").write_text(json.dumps({
+            "ecosystems": {
+                "python": {"status": "failed", "reason": "pip3 download exited 1"},
+                "node": {"status": "ok", "reason": ""},
+            },
+        }))
+        notes = summarize_dep_resolution(str(tmp_path))
+        assert "python" in notes
+        assert "failed" in notes
+        # Successful ecosystems should not be mentioned in failure notes
+        assert "node" not in notes or notes.lower().count("node") == 0
+
+    def test_no_notes_when_all_ok(self, tmp_path):
+        from thresher.harness.report import summarize_dep_resolution
+        (tmp_path / "dep_resolution.json").write_text(json.dumps({
+            "ecosystems": {"python": {"status": "ok", "reason": ""}},
+        }))
+        assert summarize_dep_resolution(str(tmp_path)) == ""
+
+    def test_pipeline_inserts_notes_into_report_data(self, tmp_path):
+        """The report_data DAG node must surface dep failures in
+        pipeline.notes when they exist."""
+        from thresher.harness import pipeline
+        from thresher.config import ScanConfig
+
+        # Stand up a fake deps dir with a failure status file
+        deps_dir = tmp_path / "deps"
+        deps_dir.mkdir()
+        (deps_dir / "dep_resolution.json").write_text(json.dumps({
+            "ecosystems": {
+                "python": {"status": "failed", "reason": "Multiple top-level packages"},
+            },
+        }))
+
+        config = ScanConfig(
+            repo_url="https://github.com/x/y",
+            anthropic_api_key="sk-ant-test",
+            output_dir=str(tmp_path),
+        )
+        complete = {
+            "meta": {"scan_date": "2026-04-10", "repo_name": "x/y"},
+            "verdict": {"label": "OK", "severity": "low", "callout": "fine"},
+            "counts": {"critical": "0"},
+            "executive_summary": "<p>clean</p>",
+            "scanner_findings": [],
+            "ai_findings": [],
+            "pipeline": {"scanners": [], "analysts": [], "notes": ""},
+        }
+
+        with patch("thresher.agents.report_maker.run_report_maker",
+                   return_value=complete), \
+             patch("thresher.harness.report._dep_resolution_dir",
+                   return_value=str(deps_dir)):
+            result = pipeline.report_data(
+                enriched_findings={"findings": [], "scanner_results": {}},
+                scan_results=[],
+                analyst_findings=[],
+                config=config,
+            )
+        notes = result.get("pipeline", {}).get("notes", "")
+        assert "python" in notes.lower()
+        assert "failed" in notes.lower()
 
 
 class TestRenderReportPersistsJson:

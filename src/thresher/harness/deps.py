@@ -10,12 +10,54 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 from thresher.run import run as run_cmd, retry
 
 log = logging.getLogger(__name__)
+
+
+# ── Status accumulator (Task 7: surface dep resolution failures) ──────────────
+
+class DepResolutionStatus:
+    """Tracks per-ecosystem download status so the report pipeline can
+    surface dependency-resolution failures rather than silently degrading
+    downstream scanner coverage."""
+
+    def __init__(self) -> None:
+        self._ecosystems: dict[str, dict[str, str]] = {}
+
+    def record(self, ecosystem: str, status: str, reason: str = "") -> None:
+        self._ecosystems[ecosystem] = {"status": status, "reason": reason}
+
+    def to_dict(self) -> dict:
+        return {"ecosystems": dict(self._ecosystems)}
+
+    def write(self, deps_dir: Path) -> Path:
+        path = deps_dir / "dep_resolution.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.to_dict(), indent=2))
+        return path
+
+    @property
+    def has_failures(self) -> bool:
+        return any(
+            entry.get("status") == "failed" for entry in self._ecosystems.values()
+        )
+
+
+# Module-level current status — set by resolve_deps so download_python /
+# download_node etc. can record their outcome without threading the object
+# through every call site. None outside a resolve_deps call.
+_current_status: DepResolutionStatus | None = None
+
+
+def _record_status(ecosystem: str, status: str, reason: str = "") -> None:
+    if _current_status is not None:
+        _current_status.record(ecosystem, status, reason)
 
 # ── Ecosystem Detection ────────────────────────────────────────────────────────
 
@@ -61,8 +103,129 @@ def _log_download_summary(ecosystem: str, output_dir: Path) -> None:
 
 # ── Download: Python ──────────────────────────────────────────────────────────
 
+def _is_workspace_pyproject(pyproject: Path) -> bool:
+    """True if the given pyproject.toml is a multi-package workspace
+    (uv, poetry, hatch, rye, or PEP 621 with members)."""
+    try:
+        data = tomllib.loads(pyproject.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    tool = data.get("tool", {})
+    if not isinstance(tool, dict):
+        return False
+    for key in ("uv", "poetry", "hatch", "rye"):
+        section = tool.get(key, {})
+        if isinstance(section, dict) and "workspace" in section:
+            return True
+    return False
+
+
+def _glob_workspace_members(root: Path) -> list[Path]:
+    """Return pyproject.toml paths for every workspace member.
+
+    Reads ``[tool.uv.workspace] members`` (and falls back to common
+    layouts) and resolves each glob relative to the root.
+    """
+    try:
+        data = tomllib.loads((root / "pyproject.toml").read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+
+    members: list[str] = []
+    tool = data.get("tool", {})
+    if isinstance(tool, dict):
+        uv = tool.get("uv", {})
+        if isinstance(uv, dict):
+            ws = uv.get("workspace", {})
+            if isinstance(ws, dict):
+                members = list(ws.get("members", []))
+        # poetry uses [tool.poetry] packages — different shape, but for
+        # workspace-style monorepos people commonly mirror the pattern
+        # under [tool.poetry.workspace]
+        poetry = tool.get("poetry", {})
+        if isinstance(poetry, dict):
+            ws = poetry.get("workspace", {})
+            if isinstance(ws, dict):
+                members.extend(ws.get("members", []))
+
+    if not members:
+        return []
+
+    paths: list[Path] = []
+    for pattern in members:
+        for match in sorted(root.glob(pattern)):
+            candidate = match / "pyproject.toml"
+            if candidate.is_file():
+                paths.append(candidate)
+    return paths
+
+
+def _extract_pep621_dependencies(pyproject: Path) -> list[str]:
+    """Return ``[project] dependencies`` (and optional-dependencies) from
+    a PEP 621 pyproject.toml. Returns an empty list on parse failure."""
+    try:
+        data = tomllib.loads(pyproject.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    project = data.get("project", {})
+    if not isinstance(project, dict):
+        return []
+    deps: list[str] = list(project.get("dependencies", []) or [])
+    optional = project.get("optional-dependencies", {}) or {}
+    if isinstance(optional, dict):
+        for group_deps in optional.values():
+            if isinstance(group_deps, list):
+                deps.extend(group_deps)
+    return [d for d in deps if isinstance(d, str) and d.strip()]
+
+
+def _build_workspace_requirements(root: Path, output_dir: Path) -> Path | None:
+    """Synthesize a requirements file from a workspace pyproject + members.
+
+    Walks the root pyproject and every member pyproject, collects all
+    PEP 621 dependencies, dedupes them, and writes a single requirements
+    file under ``output_dir``. Returns the path, or None when no
+    dependencies could be extracted.
+    """
+    pyprojects = [root / "pyproject.toml"]
+    pyprojects.extend(_glob_workspace_members(root))
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for pp in pyprojects:
+        for dep in _extract_pep621_dependencies(pp):
+            # Skip self-references like ``aegra-core`` between workspace
+            # members — they would always fail on the index.
+            if dep in seen:
+                continue
+            seen.add(dep)
+            ordered.append(dep)
+
+    if not ordered:
+        return None
+
+    req_path = output_dir / "_workspace_reqs.txt"
+    req_path.write_text("\n".join(ordered) + "\n")
+    log.info(
+        "Workspace pyproject detected — synthesized %d unique deps from "
+        "%d pyproject.toml files",
+        len(ordered),
+        len(pyprojects),
+    )
+    return req_path
+
+
 def download_python(target_dir: str, deps_dir: str) -> None:
-    """Download Python dependencies (source-only) using pip3 download."""
+    """Download Python dependencies (source-only) using pip3 download.
+
+    Workspace pyprojects (uv, poetry, hatch, rye, or any PEP 621 layout
+    with workspace members) cannot be passed as a positional argument to
+    pip download — setuptools tries to discover packages and explodes
+    with "Multiple top-level packages discovered" on flat layouts.
+
+    For workspace pyprojects we extract ``[project] dependencies`` from
+    the root and every member, dedupe, and download by name.
+    """
     output_dir = Path(deps_dir) / "python"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -71,7 +234,24 @@ def download_python(target_dir: str, deps_dir: str) -> None:
 
     if (base / "requirements.txt").exists():
         req_args = ["-r", str(base / "requirements.txt")]
-    elif (base / "pyproject.toml").exists() or (base / "setup.py").exists():
+    elif (base / "pyproject.toml").exists():
+        if _is_workspace_pyproject(base / "pyproject.toml"):
+            ws_req = _build_workspace_requirements(base, output_dir)
+            if ws_req is not None:
+                req_args = ["-r", str(ws_req)]
+            else:
+                log.warning(
+                    "Workspace pyproject has no extractable PEP 621 "
+                    "dependencies; skipping pip download"
+                )
+                _record_status(
+                    "python", "skipped",
+                    "workspace pyproject with no PEP 621 dependencies",
+                )
+                return
+        else:
+            req_args = [str(base)]
+    elif (base / "setup.py").exists():
         req_args = [str(base)]
     elif (base / "Pipfile").exists():
         # Extract package names from [packages] section
@@ -81,6 +261,7 @@ def download_python(target_dir: str, deps_dir: str) -> None:
             req_args = ["-r", str(tmp_req)]
 
     if not req_args:
+        _record_status("python", "skipped", "no recognized manifest")
         return
 
     log.info("Downloading Python dependencies (source-only)...")
@@ -88,6 +269,12 @@ def download_python(target_dir: str, deps_dir: str) -> None:
     result = retry(cmd, label="pip3-download", attempts=3)
     if result.returncode != 0:
         log.warning("Some Python packages failed to download")
+        _record_status(
+            "python", "failed",
+            f"pip3 download exited {result.returncode}",
+        )
+    else:
+        _record_status("python", "ok")
     _log_download_summary("python", output_dir)
 
 
@@ -457,7 +644,7 @@ def resolve_deps(
     config: dict,
     deps_dir: str = "/opt/deps",
 ) -> str:
-    """Download all dependencies and write dep_manifest.json.
+    """Download all dependencies and write dep_manifest.json + dep_resolution.json.
 
     Returns the path to the deps directory.
     """
@@ -472,20 +659,48 @@ def resolve_deps(
         "go": _self.download_go,
     }
 
-    Path(deps_dir).mkdir(parents=True, exist_ok=True)
+    deps_path = Path(deps_dir)
+    deps_path.mkdir(parents=True, exist_ok=True)
 
-    for eco in ecosystems:
-        downloader = _DOWNLOADERS.get(eco)
-        if downloader is None:
-            log.warning("No downloader for ecosystem: %s", eco)
-            continue
-        log.info("Resolving %s dependencies...", eco)
-        downloader(target_dir, deps_dir)
+    # Activate the per-call status accumulator so download_* functions
+    # can record their outcome via _record_status.
+    global _current_status
+    _current_status = DepResolutionStatus()
+    try:
+        for eco in ecosystems:
+            downloader = _DOWNLOADERS.get(eco)
+            if downloader is None:
+                log.warning("No downloader for ecosystem: %s", eco)
+                _current_status.record(eco, "unknown", "no downloader")
+                continue
+            # Pre-record so the report still shows the ecosystem even if
+            # the downloader is mocked or returns silently. The downloader
+            # overrides this with a more specific status (ok / failed /
+            # skipped).
+            _current_status.record(eco, "ok", "")
+            log.info("Resolving %s dependencies...", eco)
+            try:
+                downloader(target_dir, deps_dir)
+            except Exception as exc:
+                log.exception("Downloader for %s raised", eco)
+                _current_status.record(eco, "failed", str(exc))
 
-    if hidden_deps:
-        _self.download_hidden(hidden_deps, deps_dir, config)
+        if hidden_deps:
+            _self.download_hidden(hidden_deps, deps_dir, config)
 
-    _self.build_manifest(deps_dir)
+        _self.build_manifest(deps_dir)
+
+        # Always persist a status file so the report can show ecosystem
+        # coverage even when nothing failed.
+        _current_status.write(deps_path)
+
+        if _current_status.has_failures:
+            log.warning(
+                "One or more ecosystems failed to download — see %s",
+                deps_path / "dep_resolution.json",
+            )
+    finally:
+        _current_status = None
 
     log.info("Dependency resolution complete.")
     return deps_dir

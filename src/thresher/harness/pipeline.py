@@ -98,6 +98,24 @@ def enriched_findings(scan_results: list[ScanResults],
     return enrich_all_findings(scan_results, verified_findings)
 
 
+def _inject_dep_resolution_notes(result: dict) -> dict:
+    """Append a degraded-coverage note to ``pipeline.notes`` when the
+    ``dep_resolution.json`` status file shows any ecosystem failures.
+    Returns the same dict (mutated)."""
+    from thresher.harness.report import summarize_dep_resolution
+
+    notes = summarize_dep_resolution()
+    if not notes:
+        return result
+    pipeline_section = result.setdefault("pipeline", {})
+    existing = pipeline_section.get("notes", "") or ""
+    if existing:
+        pipeline_section["notes"] = existing.rstrip(". ") + ". " + notes
+    else:
+        pipeline_section["notes"] = notes
+    return result
+
+
 def report_data(enriched_findings: dict, scan_results: list[ScanResults],
                 analyst_findings: list[dict], config: ScanConfig) -> dict:
     """Run report-maker agent to produce structured JSON for the HTML report.
@@ -112,7 +130,9 @@ def report_data(enriched_findings: dict, scan_results: list[ScanResults],
 
     if config.skip_ai:
         findings = enriched_findings.get("findings", [])
-        return build_fallback_report_data(config, findings)
+        return _inject_dep_resolution_notes(
+            build_fallback_report_data(config, findings)
+        )
 
     from thresher.agents.report_maker import run_report_maker
     result = run_report_maker(config, config.output_dir or "/opt/scan-results")
@@ -121,7 +141,9 @@ def report_data(enriched_findings: dict, scan_results: list[ScanResults],
         logger.warning(
             "report_maker returned no data; using fallback report_data"
         )
-        return build_fallback_report_data(config, findings)
+        return _inject_dep_resolution_notes(
+            build_fallback_report_data(config, findings)
+        )
 
     # Schema validation: if the agent's output is missing required keys
     # (typically because it hit error_max_turns), fall back to the
@@ -135,9 +157,11 @@ def report_data(enriched_findings: dict, scan_results: list[ScanResults],
             ", ".join(sorted(missing)),
         )
         findings = enriched_findings.get("findings", [])
-        return build_fallback_report_data(config, findings)
+        return _inject_dep_resolution_notes(
+            build_fallback_report_data(config, findings)
+        )
 
-    return result
+    return _inject_dep_resolution_notes(result)
 
 
 def synthesized_reports(verified_findings: list[dict],
