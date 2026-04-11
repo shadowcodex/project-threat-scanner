@@ -18,6 +18,12 @@ _SEVERITY_MAP: dict[str, str] = {
     "LOW": "low",
 }
 
+# Directories to exclude from bandit scans. Test code uses asserts and
+# subprocess calls everywhere as part of normal practice — scanning them
+# drowns the real findings in noise. The target repo's own security
+# posture is what we care about.
+_BANDIT_EXCLUDE_DIRS = "tests,test,e2e,examples,docs,build,dist,.tox,.venv,venv"
+
 
 def run_bandit(target_dir: str, output_dir: str) -> ScanResults:
     """Run Bandit to detect security issues in Python code.
@@ -37,7 +43,10 @@ def run_bandit(target_dir: str, output_dir: str) -> ScanResults:
     start = time.monotonic()
     try:
         result = run_cmd(
-            ["bandit", "-r", target_dir, "-f", "json", "-q"],
+            [
+                "bandit", "-r", target_dir, "-f", "json", "-q",
+                "-x", _BANDIT_EXCLUDE_DIRS,
+            ],
             label="bandit",
             timeout=300,
             ok_codes=(0, 1),
