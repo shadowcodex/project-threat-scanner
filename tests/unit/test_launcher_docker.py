@@ -7,7 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from thresher.config import ScanConfig
-from thresher.launcher.docker import DOCKER_IMAGE, _build_docker_cmd, launch_docker
+from thresher.launcher._container import DOCKER_IMAGE
+from thresher.launcher.docker import _build_docker_cmd, launch_docker
 
 
 def _make_config() -> ScanConfig:

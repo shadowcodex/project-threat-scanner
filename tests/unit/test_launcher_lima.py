@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from thresher.config import ScanConfig
+from thresher.launcher._container import DOCKER_IMAGE
 from thresher.launcher.lima import (
     BASE_VM_NAME,
-    DOCKER_IMAGE,
     _apply_firewall,
     _build_lima_docker_cmd,
     _copy_report_to_host,

@@ -6,10 +6,10 @@ from pathlib import Path
 
 from thresher.config import ScanConfig
 from thresher.fs import tempfile_with
+from thresher.launcher._container import build_docker_args
 
 logger = logging.getLogger(__name__)
 BASE_VM_NAME = "thresher-base"
-DOCKER_IMAGE = "thresher:latest"
 
 
 def launch_lima(config: ScanConfig) -> int:
@@ -56,30 +56,15 @@ def _apply_firewall() -> None:
 
 
 def _build_lima_docker_cmd(config: ScanConfig) -> list[str]:
-    return [
-        "docker", "run",
-        "-v", "/opt/reports:/output",
-        "-v", "/opt/config.json:/config/config.json:ro",
-        "-e", "ANTHROPIC_API_KEY",
-        "-e", "CLAUDE_CODE_OAUTH_TOKEN",
-        # Use pre-populated vuln DBs from the image; skip runtime downloads
-        "-e", "GRYPE_DB_CACHE_DIR=/opt/vuln-db/grype",
-        "-e", "GRYPE_DB_AUTO_UPDATE=false",
-        "-e", "TRIVY_CACHE_DIR=/opt/vuln-db/trivy",
-        "-e", "TRIVY_SKIP_DB_UPDATE=true",
-        "--rm", "--read-only",
-        "--tmpfs", "/tmp:rw,noexec,nosuid,size=1073741824,uid=1000,gid=1000",
-        "--tmpfs", "/home/thresher:rw,size=536870912,uid=1000,gid=1000",
-        "--tmpfs", "/opt/target:rw,size=2147483648,uid=1000,gid=1000",
-        "--tmpfs", "/opt/scan-results:rw,size=1073741824,uid=1000,gid=1000",
-        "--tmpfs", "/opt/deps:rw,size=2147483648,uid=1000,gid=1000",
-        "--cap-drop=ALL",
-        "--security-opt=no-new-privileges",
-        "--user", "thresher",
-        DOCKER_IMAGE,
-        "--config", "/config/config.json",
-        "--output", "/output",
-    ]
+    return build_docker_args(
+        output_mount="/opt/reports:/output",
+        config_mount="/opt/config.json:/config/config.json:ro",
+        # Forward host env vars by name through limactl shell.
+        env_flags=[
+            "-e", "ANTHROPIC_API_KEY",
+            "-e", "CLAUDE_CODE_OAUTH_TOKEN",
+        ],
+    )
 
 
 def _copy_report_to_host(output_dir: str) -> None:
