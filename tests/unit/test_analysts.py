@@ -8,10 +8,7 @@ from unittest.mock import patch, MagicMock
 from thresher.agents.analysts import (
     ANALYST_DEFINITIONS,
     _build_analyst_prompt,
-    _count_assistant_tool_uses,
     _empty_findings,
-    _extract_num_turns_from_stream,
-    _extract_result_from_stream,
     _format_analyst_markdown,
     _log_timing_summary,
     _parse_analyst_json_output,
@@ -100,53 +97,6 @@ class TestBuildAnalystPrompt:
         assert f'"analyst": "{analyst["name"]}"' in prompt
 
 
-class TestExtractResultFromStream:
-    def test_stream_json(self):
-        stream = (
-            '{"type":"progress","message":"working"}\n'
-            '{"type":"result","result":"hello world"}\n'
-        )
-        assert _extract_result_from_stream(stream) == "hello world"
-
-    def test_fallback(self):
-        assert _extract_result_from_stream("plain text") == "plain text"
-
-    def test_empty(self):
-        assert _extract_result_from_stream("") == ""
-
-    def test_error_max_turns_with_assistant_fallback(self):
-        """When agent hits max_turns, use last assistant text as fallback."""
-        findings_json = json.dumps({
-            "analyst": "paranoid",
-            "findings": [{"title": "partial", "severity": "high"}],
-            "summary": "partial results",
-            "risk_score": 5,
-        })
-        stream = (
-            '{"type":"system","subtype":"init","cwd":"/opt/target","session_id":"abc"}\n'
-            f'{{"type":"assistant","message":{{"content":[{{"type":"text","text":{json.dumps(findings_json)}}}]}}}}\n'
-            '{"type":"result","subtype":"error_max_turns","is_error":true}\n'
-        )
-        result = _extract_result_from_stream(stream)
-        assert result == findings_json
-
-    def test_error_max_turns_no_text_returns_empty(self):
-        """When agent hits max_turns with no text output, return empty string."""
-        stream = (
-            '{"type":"system","subtype":"init","cwd":"/opt/target","session_id":"abc"}\n'
-            '{"type":"result","subtype":"error_max_turns","is_error":true}\n'
-        )
-        result = _extract_result_from_stream(stream)
-        assert result == ""
-
-    def test_successful_result_preferred_over_error_fallback(self):
-        stream = (
-            '{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}\n'
-            '{"type":"result","result":"final"}\n'
-        )
-        assert _extract_result_from_stream(stream) == "final"
-
-
 class TestParseAnalystJsonOutput:
     def _analyst(self):
         return ANALYST_DEFINITIONS[0]
@@ -166,20 +116,6 @@ class TestParseAnalystJsonOutput:
         result = _parse_analyst_json_output(data, self._analyst())
         assert len(result["findings"]) == 1
         assert result["risk_score"] == 5
-
-    def test_stream_json_with_result(self):
-        findings = {
-            "analyst": "paranoid",
-            "findings": [{"title": "x"}],
-            "summary": "test",
-            "risk_score": 3,
-        }
-        stream = (
-            '{"type":"progress","message":"analyzing"}\n'
-            f'{{"type":"result","result":{json.dumps(json.dumps(findings))}}}\n'
-        )
-        result = _parse_analyst_json_output(stream, self._analyst())
-        assert len(result["findings"]) == 1
 
     def test_json_in_code_block(self):
         text = 'Here is my analysis:\n```json\n{"analyst": "paranoid", "findings": [], "summary": "clean", "risk_score": 0}\n```\n'
@@ -523,92 +459,6 @@ class TestRunAllAnalysts:
         result = run_all_analysts(_make_config())
         for item in result:
             assert "_timing" not in item
-
-
-class TestCountAssistantToolUses:
-    """Counts assistant messages containing tool_use blocks. This is NOT
-    the same as Claude Code's authoritative ``num_turns`` — see
-    TestExtractNumTurnsFromStream for that. The two values diverge a lot
-    in practice (a single agent turn can issue many tool_use blocks via
-    parallel tool calls)."""
-
-    def test_counts_only_tool_use_messages(self):
-        stream = (
-            '{"type":"system","subtype":"init"}\n'
-            '{"type":"assistant","message":{"content":[{"type":"text","text":"Let me check..."}]}}\n'
-            '{"type":"assistant","message":{"content":[{"type":"text","text":"Reading file"}, {"type":"tool_use","id":"t1","name":"Read","input":{}}]}}\n'
-            '{"type":"assistant","message":{"content":[{"type":"text","text":"Found it"}]}}\n'
-            '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Grep","input":{}}]}}\n'
-            '{"type":"result","result":"done"}\n'
-        )
-        assert _count_assistant_tool_uses(stream) == 2
-
-    def test_text_only_responses_not_counted(self):
-        stream = (
-            '{"type":"system","subtype":"init"}\n'
-            '{"type":"assistant","message":{"content":[{"type":"text","text":"turn 1"}]}}\n'
-            '{"type":"assistant","message":{"content":[{"type":"text","text":"turn 2"}]}}\n'
-            '{"type":"result","result":"done"}\n'
-        )
-        assert _count_assistant_tool_uses(stream) == 0
-
-    def test_empty_stream(self):
-        assert _count_assistant_tool_uses("") == 0
-
-    def test_no_assistant_messages(self):
-        stream = '{"type":"system","subtype":"init"}\n{"type":"result","result":"done"}\n'
-        assert _count_assistant_tool_uses(stream) == 0
-
-    def test_ignores_invalid_json(self):
-        stream = (
-            'not json\n'
-            '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}\n'
-            'also not json\n'
-        )
-        assert _count_assistant_tool_uses(stream) == 1
-
-    def test_empty_content_not_counted(self):
-        stream = '{"type":"assistant","message":{"content":[]}}\n'
-        assert _count_assistant_tool_uses(stream) == 0
-
-
-class TestExtractNumTurnsFromStream:
-    """Reads Claude Code's authoritative ``num_turns`` from the result line.
-
-    Regression for M1b: the previous local counter reported values like
-    117 / 151 — much larger than the SDK's ``num_turns`` (3-55) on the
-    same runs — and was being misread as the value Claude Code's
-    ``--max-turns`` flag enforces against."""
-
-    def test_reads_num_turns_from_result_line(self):
-        stream = (
-            '{"type":"system","subtype":"init"}\n'
-            '{"type":"assistant","message":{"content":[]}}\n'
-            '{"type":"result","subtype":"success","num_turns":42,"result":"ok"}\n'
-        )
-        assert _extract_num_turns_from_stream(stream) == 42
-
-    def test_returns_zero_when_no_result_line(self):
-        stream = '{"type":"system","subtype":"init"}\n'
-        assert _extract_num_turns_from_stream(stream) == 0
-
-    def test_returns_zero_on_empty_stream(self):
-        assert _extract_num_turns_from_stream("") == 0
-
-    def test_handles_error_max_turns_subtype(self):
-        """When Claude Code terminates on the turn cap, num_turns is still
-        present and should be returned (it equals max_turns + 1)."""
-        stream = (
-            '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":16}\n'
-        )
-        assert _extract_num_turns_from_stream(stream) == 16
-
-    def test_ignores_invalid_json_lines(self):
-        stream = (
-            'not json\n'
-            '{"type":"result","num_turns":7}\n'
-        )
-        assert _extract_num_turns_from_stream(stream) == 7
 
 
 class TestLogTimingSummary:

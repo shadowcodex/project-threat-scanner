@@ -19,6 +19,7 @@ from typing import Any
 
 from thresher.run import run as run_cmd
 
+from thresher.agents._json import extract_json_object, extract_stream_result
 from thresher.agents.prompts import ADVERSARIAL_SYSTEM_PROMPT
 from thresher.config import ScanConfig
 from thresher.fs import tempfile_with
@@ -231,59 +232,6 @@ def _build_adversarial_prompt(findings: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def _extract_result_from_stream(raw_output: str) -> str:
-    """Extract the final result text from stream-json output.
-
-    Handles both successful results and error results (e.g. max_turns).
-    For error results, attempts to extract the last assistant text content
-    as a fallback before giving up.
-    """
-    result_text = ""
-    is_error = False
-    error_reason = ""
-    last_assistant_text = ""
-
-    for line in raw_output.strip().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            if not isinstance(obj, dict):
-                continue
-
-            if obj.get("type") == "result":
-                result_text = obj.get("result", "")
-                is_error = obj.get("is_error", False)
-                if is_error:
-                    error_reason = obj.get("subtype", "unknown_error")
-            elif obj.get("type") == "assistant":
-                content = obj.get("message", {}).get("content", [])
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        last_assistant_text = block.get("text", "")
-            elif "result" in obj and "type" not in obj:
-                result_text = obj["result"]
-        except json.JSONDecodeError:
-            continue
-
-    if result_text:
-        return result_text
-
-    if is_error and last_assistant_text:
-        logger.warning(
-            "Adversarial agent ended with %s; using last assistant text as fallback",
-            error_reason,
-        )
-        return last_assistant_text
-
-    if is_error:
-        logger.warning("Adversarial agent ended with %s and produced no text output", error_reason)
-        return ""
-
-    return raw_output
-
-
 def _normalize_adversarial_schema(parsed: dict[str, Any]) -> dict[str, Any]:
     """Normalize analyst-forced schema to the expected adversarial schema.
 
@@ -341,52 +289,14 @@ def _parse_adversarial_output(raw_output: str) -> dict[str, Any]:
         logger.warning("Empty output from adversarial agent")
         return {"results": [], "error": "Agent returned empty output"}
 
-    text = _extract_result_from_stream(raw_output).strip()
+    text, _ = extract_stream_result(raw_output)
+    parsed = extract_json_object(text)
+    if parsed is not None:
+        return _normalize_adversarial_schema(parsed)
 
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict) and "result" in parsed:
-            inner = parsed["result"]
-            if isinstance(inner, str):
-                try:
-                    return _normalize_adversarial_schema(json.loads(inner))
-                except json.JSONDecodeError:
-                    pass
-            elif isinstance(inner, dict):
-                return _normalize_adversarial_schema(inner)
-        if isinstance(parsed, dict):
-            return _normalize_adversarial_schema(parsed)
-    except json.JSONDecodeError:
-        pass
-
-    # Try code block extraction
-    json_block = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
-    if json_block:
-        try:
-            parsed = json.loads(json_block.group(1))
-            if isinstance(parsed, dict):
-                return _normalize_adversarial_schema(parsed)
-        except json.JSONDecodeError:
-            pass
-
-    brace_start = text.find("{")
-    if brace_start >= 0:
-        depth = 0
-        for i in range(brace_start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = text[brace_start : i + 1]
-                    try:
-                        parsed = json.loads(candidate)
-                        if isinstance(parsed, dict):
-                            return _normalize_adversarial_schema(parsed)
-                    except json.JSONDecodeError:
-                        break
-
-    logger.warning("Could not parse adversarial output. Raw (first 500 chars): %s", text[:500])
+    logger.warning(
+        "Could not parse adversarial output. Raw (first 500 chars): %s", text[:500],
+    )
     return {"results": [], "error": f"Parse failed. Raw: {text[:500]}"}
 
 

@@ -25,6 +25,7 @@ from typing import Any
 
 from thresher.run import run as run_cmd
 
+from thresher.agents._json import extract_json_object, extract_stream_result
 from thresher.config import ScanConfig
 from thresher.fs import tempfile_with
 
@@ -220,95 +221,19 @@ def run_predep_discovery(
     return result
 
 
-def _strip_markdown_fences(text: str) -> str:
-    """Strip ``` / ```json markdown fences from a string, if present.
-
-    Claude often wraps structured output in fenced code blocks even when
-    asked not to. This returns the inner content unchanged if no fences
-    are found.
-    """
-    import re
-    if not isinstance(text, str):
-        return text
-    stripped = text.strip()
-    fence_match = re.match(
-        r"^```(?:json)?\s*\n(.*?)\n```\s*$",
-        stripped,
-        re.DOTALL,
-    )
-    if fence_match:
-        return fence_match.group(1)
-    return text
-
-
 def _parse_predep_output(raw_output: str) -> dict[str, Any]:
-    """Parse the agent's stream-json output to extract the JSON result.
-
-    Uses the same extraction strategies as the analyst agent:
-    stream-json result field, markdown code blocks, bare JSON.
-    """
-    # Try stream-json format first (look for {"type":"result",...} lines)
-    for line in raw_output.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            if isinstance(obj, dict):
-                # stream-json wraps in {"type":"result","result":"..."}
-                if obj.get("type") == "result" and "result" in obj:
-                    inner = obj["result"]
-                    if isinstance(inner, str):
-                        # Claude may wrap the JSON in ```json fences even
-                        # when asked not to — strip them first.
-                        inner_stripped = _strip_markdown_fences(inner)
-                        try:
-                            parsed = json.loads(inner_stripped)
-                            if isinstance(parsed, dict) and "hidden_dependencies" in parsed:
-                                return parsed
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                    elif isinstance(inner, dict) and "hidden_dependencies" in inner:
-                        return inner
-                # Direct JSON object with our expected key
-                if "hidden_dependencies" in obj:
-                    return obj
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-    # Try extracting from markdown code block
-    import re
-    code_block = re.search(r"```(?:json)?\s*\n(.*?)\n```", raw_output, re.DOTALL)
-    if code_block:
-        try:
-            parsed = json.loads(code_block.group(1))
-            if isinstance(parsed, dict) and "hidden_dependencies" in parsed:
-                return parsed
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # Try finding any JSON object with our key
-    brace_start = raw_output.find("{")
-    if brace_start >= 0:
-        # Find matching closing brace
-        depth = 0
-        for i in range(brace_start, len(raw_output)):
-            if raw_output[i] == "{":
-                depth += 1
-            elif raw_output[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = raw_output[brace_start : i + 1]
-                    try:
-                        parsed = json.loads(candidate)
-                        if isinstance(parsed, dict) and "hidden_dependencies" in parsed:
-                            return parsed
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                    break
+    """Parse the agent's stream-json output to extract the JSON result."""
+    text, _ = extract_stream_result(raw_output)
+    parsed = extract_json_object(
+        text, accept=lambda d: "hidden_dependencies" in d,
+    )
+    if parsed is not None:
+        return parsed
 
     preview = raw_output[:500] if raw_output else "(empty)"
-    logger.warning("Could not parse predep agent output. Raw (first 500 chars): %s", preview)
+    logger.warning(
+        "Could not parse predep agent output. Raw (first 500 chars): %s", preview,
+    )
     return _empty_result("Failed to parse agent output")
 
 

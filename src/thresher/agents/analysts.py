@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,6 +23,7 @@ from typing import Any
 
 import yaml
 
+from thresher.agents._json import extract_json_object, extract_stream_result
 from thresher.config import ScanConfig
 from thresher.fs import tempfile_with
 
@@ -113,117 +113,8 @@ def _build_analyst_prompt(analyst_def: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Stream-JSON parsing
+# Output parsing
 # ---------------------------------------------------------------------------
-
-def _extract_result_from_stream(raw_output: str) -> str:
-    """Extract the final result text from stream-json output.
-
-    Handles both successful results and error results (e.g. max_turns).
-    For error results, attempts to extract the last assistant text content
-    as a fallback before giving up.
-    """
-    result_text = ""
-    is_error = False
-    error_reason = ""
-    last_assistant_text = ""
-
-    for line in raw_output.strip().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            if not isinstance(obj, dict):
-                continue
-
-            if obj.get("type") == "result":
-                result_text = obj.get("result", "")
-                is_error = obj.get("is_error", False)
-                if is_error:
-                    error_reason = obj.get("subtype", "unknown_error")
-            elif obj.get("type") == "assistant":
-                # Track last assistant text output for fallback extraction
-                content = obj.get("message", {}).get("content", [])
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        last_assistant_text = block.get("text", "")
-            elif "result" in obj and "type" not in obj:
-                result_text = obj["result"]
-        except json.JSONDecodeError:
-            continue
-
-    if result_text:
-        return result_text
-
-    # For error results (e.g. max_turns), try last assistant text as fallback
-    if is_error and last_assistant_text:
-        logger.warning(
-            "Agent ended with %s; using last assistant text as fallback",
-            error_reason,
-        )
-        return last_assistant_text
-
-    if is_error:
-        logger.warning("Agent ended with %s and produced no text output", error_reason)
-        return ""
-
-    return raw_output
-
-
-def _count_assistant_tool_uses(raw_output: str) -> int:
-    """Count assistant messages that contained tool_use blocks.
-
-    Note: this is NOT the same as Claude Code's authoritative
-    ``num_turns``. A single agent turn can issue many tool_use blocks via
-    parallel tool calls, so this counter inflates relative to the SDK's
-    own metric. For the value enforced by ``--max-turns``, use
-    :func:`_extract_num_turns_from_stream`.
-    """
-    turns = 0
-    for line in raw_output.strip().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            if isinstance(obj, dict) and obj.get("type") == "assistant":
-                content = obj.get("message", {}).get("content", [])
-                has_tool_use = any(
-                    isinstance(b, dict) and b.get("type") == "tool_use"
-                    for b in content
-                )
-                if has_tool_use:
-                    turns += 1
-        except json.JSONDecodeError:
-            continue
-    return turns
-
-
-def _extract_num_turns_from_stream(raw_output: str) -> int:
-    """Read Claude Code's authoritative ``num_turns`` from the result line.
-
-    The result line in stream-json output carries the SDK's own turn
-    counter — this is what ``--max-turns`` enforces against, so it's the
-    only value that matters for cap-tuning decisions. Returns 0 if no
-    result line is present.
-    """
-    for line in raw_output.strip().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(obj, dict):
-            continue
-        if obj.get("type") == "result":
-            num = obj.get("num_turns")
-            if isinstance(num, int):
-                return num
-    return 0
-
 
 _REQUIRED_ANALYST_KEYS = {"analyst", "findings", "summary", "risk_score"}
 
@@ -249,71 +140,22 @@ def _validate_analyst_schema(parsed: dict[str, Any], analyst_def: dict[str, Any]
     return parsed
 
 
-def _parse_analyst_json_output(raw_output: str, analyst_def: dict[str, Any]) -> dict[str, Any]:
-    """Parse JSON from Claude Code headless output for an analyst."""
-    if not raw_output or not raw_output.strip():
+def _parse_analyst_json_output(text: str, analyst_def: dict[str, Any]) -> dict[str, Any]:
+    """Parse the analyst JSON object out of the extracted result text."""
+    if not text or not text.strip():
         logger.warning("Empty output from analyst %s", analyst_def["name"])
         return _empty_findings(analyst_def, "Agent returned empty output")
 
-    text = _extract_result_from_stream(raw_output).strip()
+    parsed = extract_json_object(
+        text,
+        accept=lambda d: _validate_analyst_schema(d, analyst_def) is not None,
+    )
+    if parsed is not None:
+        return parsed
 
-    candidates: list[dict[str, Any]] = []
-
-    # Try direct JSON parse
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict) and "result" in parsed:
-            inner = parsed["result"]
-            if isinstance(inner, str):
-                try:
-                    inner_parsed = json.loads(inner)
-                    if isinstance(inner_parsed, dict):
-                        candidates.append(inner_parsed)
-                except json.JSONDecodeError:
-                    pass
-            elif isinstance(inner, dict):
-                candidates.append(inner)
-        if isinstance(parsed, dict):
-            candidates.append(parsed)
-    except json.JSONDecodeError:
-        pass
-
-    # Try to extract JSON from markdown code blocks
-    json_block = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
-    if json_block:
-        try:
-            parsed = json.loads(json_block.group(1))
-            if isinstance(parsed, dict):
-                candidates.append(parsed)
-        except json.JSONDecodeError:
-            pass
-
-    # Try to find a top-level JSON object by braces
-    brace_start = text.find("{")
-    if brace_start >= 0:
-        depth = 0
-        for i in range(brace_start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = text[brace_start : i + 1]
-                    try:
-                        parsed = json.loads(candidate)
-                        if isinstance(parsed, dict):
-                            candidates.append(parsed)
-                    except json.JSONDecodeError:
-                        pass
-                    break
-
-    # Return the first candidate that passes schema validation
-    for candidate in candidates:
-        validated = _validate_analyst_schema(candidate, analyst_def)
-        if validated is not None:
-            return validated
-
-    logger.warning("Could not parse valid analyst JSON from %s output", analyst_def["name"])
+    logger.warning(
+        "Could not parse valid analyst JSON from %s output", analyst_def["name"],
+    )
     return _empty_findings(analyst_def, f"Failed to parse output. Raw: {text[:500]}")
 
 
@@ -508,8 +350,8 @@ def _run_single_analyst(
     end_time = time.monotonic()
     duration = end_time - start_time
 
-    turns = _extract_num_turns_from_stream(raw_output)
-    findings = _parse_analyst_json_output(raw_output, analyst_def)
+    text, turns = extract_stream_result(raw_output)
+    findings = _parse_analyst_json_output(text, analyst_def)
     logger.info(
         "Analyst %s completed in %.1fs (num_turns=%d): %d findings, risk_score=%s",
         name,

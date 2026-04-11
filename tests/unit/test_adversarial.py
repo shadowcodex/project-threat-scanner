@@ -9,7 +9,6 @@ from thresher.agents.adversarial import (
     RISK_THRESHOLD,
     _deduplicate_findings,
     _extract_high_risk,
-    _extract_result_from_stream,
     _finding_risk_score,
     _merge_adversarial_results,
     _merge_analyst_findings,
@@ -259,37 +258,6 @@ class TestMergeAdversarialResults:
         assert cors["adversarial_status"] == "downgraded"
         assert cors["risk_score"] == 2
         assert cors["original_risk_score"] == 6
-
-
-class TestExtractResultFromStream:
-    def test_extracts_result(self):
-        stream = '{"type":"result","result":"data"}\n'
-        assert _extract_result_from_stream(stream) == "data"
-
-    def test_fallback(self):
-        assert _extract_result_from_stream("plain text") == "plain text"
-
-    def test_error_result_with_assistant_text_fallback(self):
-        stream = (
-            '{"type":"system","subtype":"init","cwd":"/opt/target"}\n'
-            '{"type":"assistant","message":{"content":[{"type":"text","text":"partial output"}]}}\n'
-            '{"type":"result","subtype":"error_max_turns","is_error":true}\n'
-        )
-        assert _extract_result_from_stream(stream) == "partial output"
-
-    def test_error_result_no_assistant_text(self):
-        stream = (
-            '{"type":"system","subtype":"init","cwd":"/opt/target"}\n'
-            '{"type":"result","subtype":"error_max_turns","is_error":true}\n'
-        )
-        assert _extract_result_from_stream(stream) == ""
-
-    def test_successful_result_preferred_over_assistant_text(self):
-        stream = (
-            '{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}\n'
-            '{"type":"result","result":"final answer"}\n'
-        )
-        assert _extract_result_from_stream(stream) == "final answer"
 
 
 class TestNormalizeTitle:

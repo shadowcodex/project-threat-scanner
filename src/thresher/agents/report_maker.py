@@ -16,6 +16,7 @@ from typing import Any
 
 import yaml
 
+from thresher.agents._json import extract_json_object, extract_stream_result
 from thresher.config import ScanConfig
 from thresher.fs import tempfile_with
 from thresher.run import run as run_cmd
@@ -77,61 +78,6 @@ def _build_hooks_settings_json() -> str:
     return json.dumps(settings)
 
 
-def _extract_result_from_stream(raw_output: str) -> str:
-    """Extract the final result text from stream-json output.
-
-    Looks for the last {"type": "result"} line and returns its result field.
-    Falls back to the last assistant text on error, or the raw output.
-    """
-    result_text = ""
-    is_error = False
-    error_reason = ""
-    last_assistant_text = ""
-
-    for line in raw_output.strip().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            if not isinstance(obj, dict):
-                continue
-
-            if obj.get("type") == "result":
-                result_text = obj.get("result", "")
-                is_error = obj.get("is_error", False)
-                if is_error:
-                    error_reason = obj.get("subtype", "unknown_error")
-            elif obj.get("type") == "assistant":
-                content = obj.get("message", {}).get("content", [])
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        last_assistant_text = block.get("text", "")
-            elif "result" in obj and "type" not in obj:
-                result_text = obj["result"]
-        except json.JSONDecodeError:
-            continue
-
-    if result_text:
-        return result_text
-
-    if is_error and last_assistant_text:
-        logger.warning(
-            "Report maker agent ended with %s; using last assistant text as fallback",
-            error_reason,
-        )
-        return last_assistant_text
-
-    if is_error:
-        logger.warning(
-            "Report maker agent ended with %s and produced no text output",
-            error_reason,
-        )
-        return ""
-
-    return raw_output
-
-
 def _parse_report_output(raw_output: str) -> dict[str, Any] | None:
     """Parse the report JSON from stream-json output.
 
@@ -141,56 +87,14 @@ def _parse_report_output(raw_output: str) -> dict[str, Any] | None:
         logger.warning("Empty output from report maker agent")
         return None
 
-    text = _extract_result_from_stream(raw_output).strip()
+    text, _ = extract_stream_result(raw_output)
+    parsed = extract_json_object(text)
+    if parsed is not None:
+        return parsed
 
-    # Try direct JSON parse
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            # Unwrap {"result": "..."} envelope if present
-            if "result" in parsed and isinstance(parsed["result"], str):
-                try:
-                    inner = json.loads(parsed["result"])
-                    if isinstance(inner, dict):
-                        return inner
-                except json.JSONDecodeError:
-                    pass
-            # Already a dict with report keys — return as-is
-            return parsed
-    except json.JSONDecodeError:
-        pass
-
-    # Try extracting from markdown code fences
-    import re
-    code_block = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
-    if code_block:
-        try:
-            parsed = json.loads(code_block.group(1))
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-
-    # Try finding a top-level JSON object by braces
-    brace_start = text.find("{")
-    if brace_start >= 0:
-        depth = 0
-        for i in range(brace_start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = text[brace_start : i + 1]
-                    try:
-                        parsed = json.loads(candidate)
-                        if isinstance(parsed, dict):
-                            return parsed
-                    except json.JSONDecodeError:
-                        pass
-                    break
-
-    logger.warning("Could not parse report maker output. Raw (first 500 chars): %s", text[:500])
+    logger.warning(
+        "Could not parse report maker output. Raw (first 500 chars): %s", text[:500],
+    )
     return None
 
 
