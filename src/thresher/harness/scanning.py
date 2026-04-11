@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable
 
-from thresher.scanners.models import ScanResults
+from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
 MAX_WORKERS = 15
@@ -29,7 +31,7 @@ def run_all_scanners(
         config: Scan configuration dict.
 
     Returns:
-        List of ScanResults with execution metadata.
+        List of ScanResults with execution metadata and parsed findings.
     """
     tasks = _get_scanner_tasks()
     results: list[ScanResults] = []
@@ -50,12 +52,14 @@ def run_all_scanners(
             name = futures[future]
             try:
                 result = future.result()
+                _populate_findings(result)
                 results.append(result)
                 logger.info(
-                    "Scanner %s done (exit=%d, %.1fs)",
+                    "Scanner %s done (exit=%d, %.1fs, %d findings)",
                     name,
                     result.exit_code,
                     result.execution_time_seconds,
+                    len(result.findings),
                 )
             except Exception as exc:
                 logger.exception("Scanner %s failed", name)
@@ -69,6 +73,125 @@ def run_all_scanners(
                 )
 
     return results
+
+
+def _populate_findings(result: ScanResults) -> None:
+    """Parse scanner output file and populate result.findings.
+
+    Reads the raw output file written by the scanner, runs it through
+    the corresponding parse function, and attaches the normalized
+    Finding objects to the ScanResults. Skips gracefully if the output
+    file is missing, empty, or unparseable.
+    """
+    if result.findings:
+        return
+    if not result.raw_output_path:
+        return
+
+    path = Path(result.raw_output_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return
+
+    parser = _get_parser(result.tool_name)
+    if parser is None:
+        return
+
+    try:
+        raw_text = path.read_text(encoding="utf-8", errors="replace")
+
+        # Text-based parsers (yara, govulncheck) take raw text directly
+        if result.tool_name in _TEXT_PARSERS:
+            result.findings = parser(raw_text)
+        else:
+            raw = json.loads(raw_text)
+            result.findings = parser(raw)
+
+        logger.debug(
+            "Parsed %d findings from %s", len(result.findings), result.tool_name,
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning(
+            "Failed to parse %s output (%s): %s",
+            result.tool_name, path, exc,
+        )
+    except Exception:
+        logger.warning(
+            "Unexpected error parsing %s output", result.tool_name, exc_info=True,
+        )
+
+
+# Scanners whose parse functions accept raw text instead of parsed JSON.
+_TEXT_PARSERS = frozenset({"yara", "govulncheck"})
+
+
+def _get_parser(tool_name: str) -> Callable | None:
+    """Return the parse function for a scanner, or None if unavailable.
+
+    Uses lazy imports so we don't load every scanner module at startup.
+    Scanners without a parse function (clamav) or with special signatures
+    (capa — requires binary_path) return None.
+    """
+    try:
+        if tool_name == "grype":
+            from thresher.scanners.grype import parse_grype_output
+            return parse_grype_output
+        elif tool_name == "osv":
+            from thresher.scanners.osv import parse_osv_output
+            return parse_osv_output
+        elif tool_name == "trivy":
+            from thresher.scanners.trivy import parse_trivy_output
+            return parse_trivy_output
+        elif tool_name == "semgrep":
+            from thresher.scanners.semgrep import parse_semgrep_output
+            return parse_semgrep_output
+        elif tool_name == "bandit":
+            from thresher.scanners.bandit import parse_bandit_output
+            return parse_bandit_output
+        elif tool_name == "checkov":
+            from thresher.scanners.checkov import parse_checkov_output
+            return parse_checkov_output
+        elif tool_name == "guarddog":
+            from thresher.scanners.guarddog import parse_guarddog_output
+            return parse_guarddog_output
+        elif tool_name == "guarddog-deps":
+            from thresher.scanners.guarddog_deps import parse_guarddog_deps_output
+            return parse_guarddog_deps_output
+        elif tool_name == "gitleaks":
+            from thresher.scanners.gitleaks import parse_gitleaks_output
+            return parse_gitleaks_output
+        elif tool_name == "hadolint":
+            from thresher.scanners.hadolint import parse_hadolint_output
+            return parse_hadolint_output
+        elif tool_name == "cargo-audit":
+            from thresher.scanners.cargo_audit import parse_cargo_audit_output
+            return parse_cargo_audit_output
+        elif tool_name == "scancode":
+            from thresher.scanners.scancode import parse_scancode_output
+            return parse_scancode_output
+        elif tool_name == "entropy":
+            from thresher.scanners.entropy import parse_entropy_output
+            return parse_entropy_output
+        elif tool_name == "install-hooks":
+            from thresher.scanners.install_hooks import parse_install_hooks_output
+            return parse_install_hooks_output
+        elif tool_name == "deps-dev":
+            from thresher.scanners.deps_dev import parse_deps_dev_output
+            return parse_deps_dev_output
+        elif tool_name == "registry-meta":
+            from thresher.scanners.registry_meta import parse_registry_meta_output
+            return parse_registry_meta_output
+        elif tool_name == "semgrep-sc":
+            from thresher.scanners.semgrep_supply_chain import parse_semgrep_supply_chain_output
+            return parse_semgrep_supply_chain_output
+        elif tool_name == "yara":
+            from thresher.scanners.yara_scanner import parse_yara_output
+            return parse_yara_output
+        elif tool_name == "govulncheck":
+            from thresher.scanners.govulncheck import parse_govulncheck_output
+            return parse_govulncheck_output
+    except ImportError:
+        logger.debug("Could not import parser for %s", tool_name)
+    return None
 
 
 def _get_scanner_tasks() -> list[tuple[str, Callable]]:

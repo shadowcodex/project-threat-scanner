@@ -1,9 +1,11 @@
 """Unit tests for thresher.harness.scanning."""
 
+import json
 import pytest
+from pathlib import Path
 from unittest.mock import patch, MagicMock
-from thresher.harness.scanning import run_all_scanners
-from thresher.scanners.models import ScanResults
+from thresher.harness.scanning import run_all_scanners, _populate_findings, _get_parser
+from thresher.scanners.models import Finding, ScanResults
 
 
 @patch("thresher.harness.scanning._get_scanner_tasks")
@@ -244,3 +246,206 @@ def test_run_all_scanners_partial_failure_continues(mock_tasks):
     passed = [r for r in results if r.exit_code == 0]
     assert len(failed) == 2
     assert len(passed) == 2
+
+
+class TestGetParser:
+    """Verify _get_parser returns a callable for all scanners with parsers."""
+
+    def test_all_json_scanners_have_parser(self):
+        json_scanners = [
+            "grype", "osv", "trivy", "semgrep", "bandit", "checkov",
+            "guarddog", "guarddog-deps", "gitleaks", "hadolint",
+            "cargo-audit", "scancode", "entropy", "install-hooks",
+            "deps-dev", "registry-meta", "semgrep-sc",
+        ]
+        for name in json_scanners:
+            parser = _get_parser(name)
+            assert parser is not None, f"No parser for {name}"
+            assert callable(parser), f"Parser for {name} is not callable"
+
+    def test_text_parsers_exist(self):
+        for name in ("yara", "govulncheck"):
+            parser = _get_parser(name)
+            assert parser is not None, f"No parser for {name}"
+
+    def test_clamav_has_no_parser(self):
+        assert _get_parser("clamav") is None
+
+    def test_unknown_scanner_returns_none(self):
+        assert _get_parser("nonexistent-scanner") is None
+
+
+class TestPopulateFindings:
+    def test_populates_from_grype_json(self, tmp_path):
+        output_file = tmp_path / "grype.json"
+        output_file.write_text(json.dumps({
+            "matches": [{
+                "vulnerability": {
+                    "id": "CVE-2024-1234",
+                    "severity": "High",
+                    "description": "test vuln",
+                    "cvss": [{"metrics": {"baseScore": 8.1}}],
+                    "fix": {"versions": ["2.0.0"]},
+                },
+                "artifact": {"name": "requests", "version": "1.0.0"},
+            }]
+        }))
+        result = ScanResults(
+            tool_name="grype",
+            execution_time_seconds=1.0,
+            exit_code=0,
+            raw_output_path=str(output_file),
+        )
+        _populate_findings(result)
+        assert len(result.findings) == 1
+        assert result.findings[0].source_tool == "grype"
+        assert result.findings[0].cve_id == "CVE-2024-1234"
+        assert result.findings[0].severity == "high"
+
+    def test_populates_from_semgrep_json(self, tmp_path):
+        output_file = tmp_path / "semgrep.json"
+        output_file.write_text(json.dumps({
+            "results": [{
+                "check_id": "test-rule",
+                "path": "app.py",
+                "start": {"line": 10},
+                "extra": {
+                    "message": "Test finding",
+                    "severity": "WARNING",
+                    "metadata": {},
+                },
+            }]
+        }))
+        result = ScanResults(
+            tool_name="semgrep",
+            execution_time_seconds=0.5,
+            exit_code=0,
+            raw_output_path=str(output_file),
+        )
+        _populate_findings(result)
+        assert len(result.findings) == 1
+        assert result.findings[0].source_tool == "semgrep"
+
+    def test_skips_when_no_output_path(self):
+        result = ScanResults(
+            tool_name="grype", execution_time_seconds=1.0, exit_code=0,
+        )
+        _populate_findings(result)
+        assert result.findings == []
+
+    def test_skips_when_file_missing(self, tmp_path):
+        result = ScanResults(
+            tool_name="grype",
+            execution_time_seconds=1.0,
+            exit_code=0,
+            raw_output_path=str(tmp_path / "nonexistent.json"),
+        )
+        _populate_findings(result)
+        assert result.findings == []
+
+    def test_skips_when_file_empty(self, tmp_path):
+        output_file = tmp_path / "grype.json"
+        output_file.write_text("")
+        result = ScanResults(
+            tool_name="grype",
+            execution_time_seconds=1.0,
+            exit_code=0,
+            raw_output_path=str(output_file),
+        )
+        _populate_findings(result)
+        assert result.findings == []
+
+    def test_skips_when_no_parser(self, tmp_path):
+        output_file = tmp_path / "clamav.txt"
+        output_file.write_text("some output")
+        result = ScanResults(
+            tool_name="clamav",
+            execution_time_seconds=1.0,
+            exit_code=0,
+            raw_output_path=str(output_file),
+        )
+        _populate_findings(result)
+        assert result.findings == []
+
+    def test_does_not_overwrite_existing_findings(self, tmp_path):
+        output_file = tmp_path / "grype.json"
+        output_file.write_text(json.dumps({"matches": []}))
+        existing = Finding(
+            id="existing", source_tool="grype", category="sca",
+            severity="high", cvss_score=None, cve_id=None,
+            title="pre-existing", description="already here",
+            file_path=None, line_number=None, package_name=None,
+            package_version=None, fix_version=None, raw_output={},
+        )
+        result = ScanResults(
+            tool_name="grype",
+            execution_time_seconds=1.0,
+            exit_code=0,
+            findings=[existing],
+            raw_output_path=str(output_file),
+        )
+        _populate_findings(result)
+        assert len(result.findings) == 1
+        assert result.findings[0].title == "pre-existing"
+
+    def test_handles_invalid_json_gracefully(self, tmp_path):
+        output_file = tmp_path / "grype.json"
+        output_file.write_text("not valid json {{{")
+        result = ScanResults(
+            tool_name="grype",
+            execution_time_seconds=1.0,
+            exit_code=0,
+            raw_output_path=str(output_file),
+        )
+        _populate_findings(result)
+        assert result.findings == []
+
+    def test_text_parser_yara(self, tmp_path):
+        output_file = tmp_path / "yara.txt"
+        output_file.write_text("")
+        result = ScanResults(
+            tool_name="yara",
+            execution_time_seconds=0.5,
+            exit_code=0,
+            raw_output_path=str(output_file),
+        )
+        # yara output is text-based, empty text produces no findings
+        _populate_findings(result)
+        assert result.findings == []
+
+
+class TestRunAllScannersPopulatesFindings:
+    @patch("thresher.harness.scanning._get_scanner_tasks")
+    def test_findings_populated_after_scan(self, mock_tasks, tmp_path):
+        """Scanner output should be parsed and findings populated on ScanResults."""
+        output_file = tmp_path / "grype.json"
+        output_file.write_text(json.dumps({
+            "matches": [{
+                "vulnerability": {
+                    "id": "CVE-2024-9999",
+                    "severity": "Critical",
+                    "description": "rce",
+                    "cvss": [{"metrics": {"baseScore": 9.8}}],
+                    "fix": {"versions": ["3.0.0"]},
+                },
+                "artifact": {"name": "evil-lib", "version": "0.1.0"},
+            }]
+        }))
+
+        def mock_grype(**kwargs):
+            return ScanResults(
+                tool_name="grype",
+                execution_time_seconds=1.0,
+                exit_code=1,
+                raw_output_path=str(output_file),
+            )
+
+        mock_tasks.return_value = [("grype", mock_grype)]
+        results = run_all_scanners(
+            sbom_path="/x", target_dir="/x", deps_dir="/x",
+            output_dir=str(tmp_path), config={},
+        )
+        assert len(results) == 1
+        assert len(results[0].findings) == 1
+        assert results[0].findings[0].cve_id == "CVE-2024-9999"
+        assert results[0].findings[0].severity == "critical"
