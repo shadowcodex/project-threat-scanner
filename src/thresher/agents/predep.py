@@ -16,19 +16,16 @@ Outputs a structured dict with discovered hidden dependencies.
 
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from thresher.agents._json import extract_json_object
-from thresher.agents._runner import AgentSpec, run_agent
+from thresher.agents._runner import AgentSpec, build_stop_hook_settings, run_agent
 from thresher.config import ScanConfig
 
 logger = logging.getLogger(__name__)
 
 TARGET_DIR = "/opt/target"
-_HOOKS_DIR = Path(__file__).parent / "hooks" / "predep"
 OUTPUT_PATH = "/opt/thresher/work/deps/hidden_deps.json"
 
 PREDEP_PROMPT = """\
@@ -104,34 +101,6 @@ installs, well-known CDN URLs
 """
 
 
-def _build_hooks_settings_json() -> str:
-    """Return the settings.json content for the predep stop hook.
-
-    Resolves the hook script path to an absolute path so the hook works
-    regardless of cwd (important inside Docker).
-    """
-    hook_script = _HOOKS_DIR / "validate_json_output.sh"
-    if not hook_script.exists():
-        raise FileNotFoundError(f"Hook script not found: {hook_script}")
-
-    settings = {
-        "hooks": {
-            "Stop": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": str(hook_script.resolve()),
-                            "timeout": 15,
-                        }
-                    ]
-                }
-            ]
-        }
-    }
-    return json.dumps(settings)
-
-
 def run_predep_discovery(
     config: ScanConfig,
     target_dir: str = TARGET_DIR,
@@ -143,7 +112,7 @@ def run_predep_discovery(
     hidden_dependencies schema before accepting it.
     """
     try:
-        hooks_json: str | None = _build_hooks_settings_json()
+        hooks_json: str | None = build_stop_hook_settings("predep")
     except Exception:
         logger.warning("Failed to resolve predep hook settings", exc_info=True)
         # Continue without the hook — output validation still happens

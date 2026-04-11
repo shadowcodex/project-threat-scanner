@@ -7,7 +7,6 @@ JSON object suitable for rendering into the HTML report template.
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -15,13 +14,12 @@ from typing import Any
 import yaml
 
 from thresher.agents._json import extract_json_object
-from thresher.agents._runner import AgentSpec, run_agent
+from thresher.agents._runner import AgentSpec, build_stop_hook_settings, run_agent
 from thresher.config import ScanConfig
 
 logger = logging.getLogger(__name__)
 
 _DEFINITION_PATH = Path(__file__).parent / "definitions" / "report" / "report_maker.yaml"
-_HOOKS_DIR = Path(__file__).parent / "hooks" / "report"
 
 
 def _resolve_schema_path() -> str:
@@ -45,34 +43,6 @@ def _load_definition() -> dict[str, Any]:
     """Load the report_maker YAML definition."""
     with open(_DEFINITION_PATH) as f:
         return yaml.safe_load(f)
-
-
-def _build_hooks_settings_json() -> str:
-    """Return the settings.json content for the report-maker stop hook.
-
-    Resolves the hook script path to an absolute path so the hook works
-    regardless of cwd (important inside Docker).
-    """
-    hook_script = _HOOKS_DIR / "validate_json_output.sh"
-    if not hook_script.exists():
-        raise FileNotFoundError(f"Hook script not found: {hook_script}")
-
-    settings = {
-        "hooks": {
-            "Stop": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": str(hook_script.resolve()),
-                            "timeout": 15,
-                        }
-                    ]
-                }
-            ]
-        }
-    }
-    return json.dumps(settings)
 
 
 def _parse_report_output(text: str) -> dict[str, Any] | None:
@@ -132,7 +102,7 @@ def run_report_maker(
     )
 
     try:
-        hooks_json = _build_hooks_settings_json()
+        hooks_json = build_stop_hook_settings("report")
     except Exception as exc:
         logger.error("Report maker agent failed to resolve hook settings: %s", exc)
         return None

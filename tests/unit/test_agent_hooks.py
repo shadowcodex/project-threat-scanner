@@ -17,10 +17,8 @@ import pytest
 
 _HOOKS_BASE = Path(__file__).resolve().parents[2] / "src" / "thresher" / "agents" / "hooks"
 
-HOOK_SCRIPT = _HOOKS_BASE / "report" / "validate_json_output.sh"
-PREDEP_HOOK = _HOOKS_BASE / "predep" / "validate_json_output.sh"
-ANALYST_HOOK = _HOOKS_BASE / "analyst" / "validate_json_output.sh"
-ADVERSARIAL_HOOK = _HOOKS_BASE / "adversarial" / "validate_json_output.sh"
+# All four agent hooks dispatch through one shared script with a schema arg.
+SHARED_HOOK = _HOOKS_BASE / "_common" / "validate_json_output.sh"
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "templates" / "report" / "report_schema.json"
 
 
@@ -70,12 +68,12 @@ def _valid_report_data():
 
 
 def _run_hook(last_assistant_message, schema_path=None):
-    """Run the stop hook script with a crafted hook event on stdin."""
+    """Run the report stop hook with a crafted hook event on stdin."""
     event = json.dumps({"last_assistant_message": last_assistant_message})
     env = os.environ.copy()
     env["REPORT_SCHEMA_PATH"] = str(schema_path or SCHEMA_PATH)
     result = subprocess.run(
-        ["bash", str(HOOK_SCRIPT)],
+        ["bash", str(SHARED_HOOK), "report"],
         input=event.encode(),
         capture_output=True,
         timeout=10,
@@ -173,7 +171,7 @@ def test_unset_schema_path_blocks():
     env = os.environ.copy()
     env.pop("REPORT_SCHEMA_PATH", None)
     result = subprocess.run(
-        ["bash", str(HOOK_SCRIPT)],
+        ["bash", str(SHARED_HOOK), "report"],
         input=event.encode(),
         capture_output=True,
         timeout=10,
@@ -212,7 +210,7 @@ def test_jsonschema_unimportable_fails_loud(tmp_path):
     blocker.write_text("raise ImportError('jsonschema deliberately blocked for test')\n")
 
     result = subprocess.run(
-        ["bash", str(HOOK_SCRIPT)],
+        ["bash", str(SHARED_HOOK), "report"],
         input=event.encode(),
         capture_output=True,
         timeout=10,
@@ -229,11 +227,11 @@ def test_jsonschema_unimportable_fails_loud(tmp_path):
 # Helper for non-report hooks (no schema file needed)
 # ---------------------------------------------------------------------------
 
-def _run_agent_hook(hook_path, last_assistant_message):
-    """Run a stop hook script with a crafted hook event on stdin."""
+def _run_agent_hook(schema_name, last_assistant_message):
+    """Run the shared stop hook with the given schema dispatch arg."""
     event = json.dumps({"last_assistant_message": last_assistant_message})
     result = subprocess.run(
-        ["bash", str(hook_path)],
+        ["bash", str(SHARED_HOOK), schema_name],
         input=event.encode(),
         capture_output=True,
         timeout=10,
@@ -265,73 +263,73 @@ class TestPredepHook:
 
     def test_valid_json_allows_stop(self):
         data = self._valid_predep_data()
-        result = _run_agent_hook(PREDEP_HOOK, json.dumps(data))
+        result = _run_agent_hook("predep", json.dumps(data))
         assert result.returncode == 0
 
     def test_empty_deps_allows_stop(self):
         data = {"hidden_dependencies": [], "files_scanned": 5, "summary": "None found"}
-        result = _run_agent_hook(PREDEP_HOOK, json.dumps(data))
+        result = _run_agent_hook("predep", json.dumps(data))
         assert result.returncode == 0
 
     def test_invalid_json_blocks_stop(self):
-        result = _run_agent_hook(PREDEP_HOOK, "this is not json")
+        result = _run_agent_hook("predep", "this is not json")
         assert result.returncode == 2
         assert "JSON" in result.stderr.decode()
 
     def test_missing_hidden_dependencies_blocks(self):
         data = {"files_scanned": 5, "summary": "oops"}
-        result = _run_agent_hook(PREDEP_HOOK, json.dumps(data))
+        result = _run_agent_hook("predep", json.dumps(data))
         assert result.returncode == 2
         assert "hidden_dependencies" in result.stderr.decode()
 
     def test_missing_files_scanned_blocks(self):
         data = {"hidden_dependencies": [], "summary": "None found"}
-        result = _run_agent_hook(PREDEP_HOOK, json.dumps(data))
+        result = _run_agent_hook("predep", json.dumps(data))
         assert result.returncode == 2
         assert "files_scanned" in result.stderr.decode()
 
     def test_missing_summary_blocks(self):
         data = {"hidden_dependencies": [], "files_scanned": 5}
-        result = _run_agent_hook(PREDEP_HOOK, json.dumps(data))
+        result = _run_agent_hook("predep", json.dumps(data))
         assert result.returncode == 2
         assert "summary" in result.stderr.decode()
 
     def test_invalid_dep_type_blocks(self):
         data = self._valid_predep_data()
         data["hidden_dependencies"][0]["type"] = "invalid_type"
-        result = _run_agent_hook(PREDEP_HOOK, json.dumps(data))
+        result = _run_agent_hook("predep", json.dumps(data))
         assert result.returncode == 2
         assert "invalid type" in result.stderr.decode().lower()
 
     def test_invalid_confidence_blocks(self):
         data = self._valid_predep_data()
         data["hidden_dependencies"][0]["confidence"] = "very_high"
-        result = _run_agent_hook(PREDEP_HOOK, json.dumps(data))
+        result = _run_agent_hook("predep", json.dumps(data))
         assert result.returncode == 2
         assert "confidence" in result.stderr.decode()
 
     def test_invalid_risk_blocks(self):
         data = self._valid_predep_data()
         data["hidden_dependencies"][0]["risk"] = "extreme"
-        result = _run_agent_hook(PREDEP_HOOK, json.dumps(data))
+        result = _run_agent_hook("predep", json.dumps(data))
         assert result.returncode == 2
         assert "risk" in result.stderr.decode()
 
     def test_missing_dep_field_blocks(self):
         data = self._valid_predep_data()
         del data["hidden_dependencies"][0]["source"]
-        result = _run_agent_hook(PREDEP_HOOK, json.dumps(data))
+        result = _run_agent_hook("predep", json.dumps(data))
         assert result.returncode == 2
         assert "source" in result.stderr.decode()
 
     def test_json_in_markdown_code_fence(self):
         data = self._valid_predep_data()
         message = "```json\n" + json.dumps(data, indent=2) + "\n```"
-        result = _run_agent_hook(PREDEP_HOOK, message)
+        result = _run_agent_hook("predep", message)
         assert result.returncode == 0
 
     def test_empty_message_allows_stop(self):
-        result = _run_agent_hook(PREDEP_HOOK, "")
+        result = _run_agent_hook("predep", "")
         assert result.returncode == 0
 
 
@@ -366,7 +364,7 @@ class TestAnalystHook:
 
     def test_valid_json_allows_stop(self):
         data = self._valid_analyst_data()
-        result = _run_agent_hook(ANALYST_HOOK, json.dumps(data))
+        result = _run_agent_hook("analyst", json.dumps(data))
         assert result.returncode == 0
 
     def test_empty_findings_allows_stop(self):
@@ -374,53 +372,53 @@ class TestAnalystHook:
         data["findings"] = []
         data["risk_score"] = 0
         data["summary"] = "All clear"
-        result = _run_agent_hook(ANALYST_HOOK, json.dumps(data))
+        result = _run_agent_hook("analyst", json.dumps(data))
         assert result.returncode == 0
 
     def test_invalid_json_blocks_stop(self):
-        result = _run_agent_hook(ANALYST_HOOK, "not json at all")
+        result = _run_agent_hook("analyst", "not json at all")
         assert result.returncode == 2
         assert "JSON" in result.stderr.decode()
 
     def test_missing_analyst_blocks(self):
         data = self._valid_analyst_data()
         del data["analyst"]
-        result = _run_agent_hook(ANALYST_HOOK, json.dumps(data))
+        result = _run_agent_hook("analyst", json.dumps(data))
         assert result.returncode == 2
         assert "analyst" in result.stderr.decode()
 
     def test_missing_findings_blocks(self):
         data = self._valid_analyst_data()
         del data["findings"]
-        result = _run_agent_hook(ANALYST_HOOK, json.dumps(data))
+        result = _run_agent_hook("analyst", json.dumps(data))
         assert result.returncode == 2
         assert "findings" in result.stderr.decode()
 
     def test_missing_risk_score_blocks(self):
         data = self._valid_analyst_data()
         del data["risk_score"]
-        result = _run_agent_hook(ANALYST_HOOK, json.dumps(data))
+        result = _run_agent_hook("analyst", json.dumps(data))
         assert result.returncode == 2
         assert "risk_score" in result.stderr.decode()
 
     def test_invalid_severity_blocks(self):
         data = self._valid_analyst_data()
         data["findings"][0]["severity"] = "URGENT"
-        result = _run_agent_hook(ANALYST_HOOK, json.dumps(data))
+        result = _run_agent_hook("analyst", json.dumps(data))
         assert result.returncode == 2
         assert "severity" in result.stderr.decode().lower()
 
     def test_risk_score_out_of_range_blocks(self):
         data = self._valid_analyst_data()
         data["risk_score"] = 15
-        result = _run_agent_hook(ANALYST_HOOK, json.dumps(data))
+        result = _run_agent_hook("analyst", json.dumps(data))
         assert result.returncode == 2
         assert "risk_score" in result.stderr.decode()
 
     def test_risk_score_negative_blocks(self):
         data = self._valid_analyst_data()
         data["risk_score"] = -1
-        result = _run_agent_hook(ANALYST_HOOK, json.dumps(data))
+        result = _run_agent_hook("analyst", json.dumps(data))
         assert result.returncode == 2
 
     def test_rejects_predep_schema(self):
@@ -429,32 +427,32 @@ class TestAnalystHook:
             "files_scanned": 10,
             "summary": "wrong schema",
         }
-        result = _run_agent_hook(ANALYST_HOOK, json.dumps(data))
+        result = _run_agent_hook("analyst", json.dumps(data))
         assert result.returncode == 2
         assert "hidden_dependencies" in result.stderr.decode()
 
     def test_missing_finding_title_blocks(self):
         data = self._valid_analyst_data()
         del data["findings"][0]["title"]
-        result = _run_agent_hook(ANALYST_HOOK, json.dumps(data))
+        result = _run_agent_hook("analyst", json.dumps(data))
         assert result.returncode == 2
         assert "title" in result.stderr.decode()
 
     def test_missing_finding_description_blocks(self):
         data = self._valid_analyst_data()
         del data["findings"][0]["description"]
-        result = _run_agent_hook(ANALYST_HOOK, json.dumps(data))
+        result = _run_agent_hook("analyst", json.dumps(data))
         assert result.returncode == 2
         assert "description" in result.stderr.decode()
 
     def test_json_in_markdown_code_fence(self):
         data = self._valid_analyst_data()
         message = "```json\n" + json.dumps(data, indent=2) + "\n```"
-        result = _run_agent_hook(ANALYST_HOOK, message)
+        result = _run_agent_hook("analyst", message)
         assert result.returncode == 0
 
     def test_empty_message_allows_stop(self):
-        result = _run_agent_hook(ANALYST_HOOK, "")
+        result = _run_agent_hook("analyst", "")
         assert result.returncode == 0
 
 
@@ -486,7 +484,7 @@ class TestAdversarialHook:
 
     def test_valid_json_allows_stop(self):
         data = self._valid_adversarial_data()
-        result = _run_agent_hook(ADVERSARIAL_HOOK, json.dumps(data))
+        result = _run_agent_hook("adversarial", json.dumps(data))
         assert result.returncode == 0
 
     def test_empty_results_allows_stop(self):
@@ -497,60 +495,60 @@ class TestAdversarialHook:
             "confirmed_count": 0,
             "downgraded_count": 0,
         }
-        result = _run_agent_hook(ADVERSARIAL_HOOK, json.dumps(data))
+        result = _run_agent_hook("adversarial", json.dumps(data))
         assert result.returncode == 0
 
     def test_invalid_json_blocks_stop(self):
-        result = _run_agent_hook(ADVERSARIAL_HOOK, "not json")
+        result = _run_agent_hook("adversarial", "not json")
         assert result.returncode == 2
         assert "JSON" in result.stderr.decode()
 
     def test_missing_results_blocks(self):
         data = self._valid_adversarial_data()
         del data["results"]
-        result = _run_agent_hook(ADVERSARIAL_HOOK, json.dumps(data))
+        result = _run_agent_hook("adversarial", json.dumps(data))
         assert result.returncode == 2
         assert "results" in result.stderr.decode()
 
     def test_missing_verification_summary_blocks(self):
         data = self._valid_adversarial_data()
         del data["verification_summary"]
-        result = _run_agent_hook(ADVERSARIAL_HOOK, json.dumps(data))
+        result = _run_agent_hook("adversarial", json.dumps(data))
         assert result.returncode == 2
         assert "verification_summary" in result.stderr.decode()
 
     def test_missing_total_reviewed_blocks(self):
         data = self._valid_adversarial_data()
         del data["total_reviewed"]
-        result = _run_agent_hook(ADVERSARIAL_HOOK, json.dumps(data))
+        result = _run_agent_hook("adversarial", json.dumps(data))
         assert result.returncode == 2
         assert "total_reviewed" in result.stderr.decode()
 
     def test_total_reviewed_not_number_blocks(self):
         data = self._valid_adversarial_data()
         data["total_reviewed"] = "one"
-        result = _run_agent_hook(ADVERSARIAL_HOOK, json.dumps(data))
+        result = _run_agent_hook("adversarial", json.dumps(data))
         assert result.returncode == 2
         assert "total_reviewed" in result.stderr.decode()
 
     def test_invalid_verdict_blocks(self):
         data = self._valid_adversarial_data()
         data["results"][0]["verdict"] = "maybe"
-        result = _run_agent_hook(ADVERSARIAL_HOOK, json.dumps(data))
+        result = _run_agent_hook("adversarial", json.dumps(data))
         assert result.returncode == 2
         assert "verdict" in result.stderr.decode()
 
     def test_missing_result_file_path_blocks(self):
         data = self._valid_adversarial_data()
         del data["results"][0]["file_path"]
-        result = _run_agent_hook(ADVERSARIAL_HOOK, json.dumps(data))
+        result = _run_agent_hook("adversarial", json.dumps(data))
         assert result.returncode == 2
         assert "file_path" in result.stderr.decode()
 
     def test_missing_result_reasoning_blocks(self):
         data = self._valid_adversarial_data()
         del data["results"][0]["reasoning"]
-        result = _run_agent_hook(ADVERSARIAL_HOOK, json.dumps(data))
+        result = _run_agent_hook("adversarial", json.dumps(data))
         assert result.returncode == 2
         assert "reasoning" in result.stderr.decode()
 
@@ -559,17 +557,17 @@ class TestAdversarialHook:
         data["results"][0]["verdict"] = "downgraded"
         data["downgraded_count"] = 1
         data["confirmed_count"] = 0
-        result = _run_agent_hook(ADVERSARIAL_HOOK, json.dumps(data))
+        result = _run_agent_hook("adversarial", json.dumps(data))
         assert result.returncode == 0
 
     def test_json_in_markdown_code_fence(self):
         data = self._valid_adversarial_data()
         message = "```json\n" + json.dumps(data, indent=2) + "\n```"
-        result = _run_agent_hook(ADVERSARIAL_HOOK, message)
+        result = _run_agent_hook("adversarial", message)
         assert result.returncode == 0
 
     def test_empty_message_allows_stop(self):
-        result = _run_agent_hook(ADVERSARIAL_HOOK, "")
+        result = _run_agent_hook("adversarial", "")
         assert result.returncode == 0
 
 
@@ -578,38 +576,19 @@ class TestAdversarialHook:
 # ---------------------------------------------------------------------------
 
 
-class TestBuildHooksSettingsJson:
-    def test_predep_settings_has_correct_hook_path(self):
-        from thresher.agents.predep import _build_hooks_settings_json
-        settings = json.loads(_build_hooks_settings_json())
-        hook_cmd = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
-        assert "predep" in hook_cmd
-        assert hook_cmd.endswith("validate_json_output.sh")
-        assert os.path.isfile(hook_cmd)
+class TestBuildStopHookSettings:
+    """The shared helper points every agent at one script with a schema arg."""
 
-    def test_analyst_settings_has_correct_hook_path(self):
-        from thresher.agents.analysts import _build_hooks_settings_json
-        settings = json.loads(_build_hooks_settings_json())
+    @pytest.mark.parametrize("schema", ["predep", "analyst", "adversarial", "report"])
+    def test_settings_command_dispatches_to_shared_script(self, schema):
+        from thresher.agents._runner import build_stop_hook_settings
+        settings = json.loads(build_stop_hook_settings(schema))
         hook_cmd = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
-        assert "analyst" in hook_cmd
-        assert hook_cmd.endswith("validate_json_output.sh")
-        assert os.path.isfile(hook_cmd)
-
-    def test_adversarial_settings_has_correct_hook_path(self):
-        from thresher.agents.adversarial import _build_hooks_settings_json
-        settings = json.loads(_build_hooks_settings_json())
-        hook_cmd = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
-        assert "adversarial" in hook_cmd
-        assert hook_cmd.endswith("validate_json_output.sh")
-        assert os.path.isfile(hook_cmd)
-
-    def test_report_settings_has_correct_hook_path(self):
-        from thresher.agents.report_maker import _build_hooks_settings_json
-        settings = json.loads(_build_hooks_settings_json())
-        hook_cmd = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
-        assert "report" in hook_cmd
-        assert hook_cmd.endswith("validate_json_output.sh")
-        assert os.path.isfile(hook_cmd)
+        # Command is "<absolute path to script> <schema name>"
+        script_path, _, dispatched_schema = hook_cmd.rpartition(" ")
+        assert dispatched_schema == schema
+        assert script_path.endswith("_common/validate_json_output.sh")
+        assert os.path.isfile(script_path)
 
 
 class TestSettingsPassedToCommand:

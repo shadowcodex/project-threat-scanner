@@ -8,7 +8,6 @@ only verifies the AI researcher's findings.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from collections import defaultdict
@@ -16,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from thresher.agents._json import extract_json_object
-from thresher.agents._runner import AgentSpec, run_agent
+from thresher.agents._runner import AgentSpec, build_stop_hook_settings, run_agent
 from thresher.agents.prompts import ADVERSARIAL_SYSTEM_PROMPT
 from thresher.config import ScanConfig
 
@@ -24,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 
 TARGET_DIR = "/opt/target"
-_HOOKS_DIR = Path(__file__).parent / "hooks" / "adversarial"
 
 # Risk threshold: findings at or above this score go through adversarial review
 RISK_THRESHOLD = 4
@@ -404,34 +402,6 @@ def _merge_analyst_findings(analyst_findings_list: list[dict[str, Any]]) -> dict
     return {"findings": combined_findings}
 
 
-def _build_hooks_settings_json() -> str:
-    """Return the settings.json content for the adversarial stop hook.
-
-    Resolves the hook script path to an absolute path so the hook works
-    regardless of cwd (important inside Docker).
-    """
-    hook_script = _HOOKS_DIR / "validate_json_output.sh"
-    if not hook_script.exists():
-        raise FileNotFoundError(f"Hook script not found: {hook_script}")
-
-    settings = {
-        "hooks": {
-            "Stop": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": str(hook_script.resolve()),
-                            "timeout": 15,
-                        }
-                    ]
-                }
-            ]
-        }
-    }
-    return json.dumps(settings)
-
-
 def run_adversarial_verification(
     config: ScanConfig,
     analyst_findings: list[dict[str, Any]] | None = None,
@@ -484,7 +454,7 @@ def run_adversarial_verification(
     )
 
     try:
-        hooks_json: str | None = _build_hooks_settings_json()
+        hooks_json: str | None = build_stop_hook_settings("adversarial")
     except Exception:
         logger.warning("Failed to resolve adversarial hook settings", exc_info=True)
         hooks_json = None

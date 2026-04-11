@@ -9,7 +9,6 @@ a list from run_all_analysts.
 
 from __future__ import annotations
 
-import json
 import logging
 import statistics
 import time
@@ -20,7 +19,7 @@ from typing import Any
 import yaml
 
 from thresher.agents._json import extract_json_object
-from thresher.agents._runner import AgentSpec, run_agent
+from thresher.agents._runner import AgentSpec, build_stop_hook_settings, run_agent
 from thresher.config import ScanConfig
 
 logger = logging.getLogger(__name__)
@@ -30,7 +29,6 @@ DEPS_DIR = "/opt/deps"
 SCAN_RESULTS_DIR = "/opt/scan-results"
 
 _DEFINITIONS_DIR = Path(__file__).parent / "definitions"
-_HOOKS_DIR = Path(__file__).parent / "hooks" / "analyst"
 
 
 # ---------------------------------------------------------------------------
@@ -242,38 +240,6 @@ def _format_analyst_markdown(findings: dict[str, Any], analyst_def: dict[str, An
 
 
 # ---------------------------------------------------------------------------
-# Stop hook settings
-# ---------------------------------------------------------------------------
-
-def _build_hooks_settings_json() -> str:
-    """Return the settings.json content for the analyst stop hook.
-
-    Resolves the hook script path to an absolute path so the hook works
-    regardless of cwd (important inside Docker).
-    """
-    hook_script = _HOOKS_DIR / "validate_json_output.sh"
-    if not hook_script.exists():
-        raise FileNotFoundError(f"Hook script not found: {hook_script}")
-
-    settings = {
-        "hooks": {
-            "Stop": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": str(hook_script.resolve()),
-                            "timeout": 15,
-                        }
-                    ]
-                }
-            ]
-        }
-    }
-    return json.dumps(settings)
-
-
-# ---------------------------------------------------------------------------
 # Single analyst execution
 # ---------------------------------------------------------------------------
 
@@ -298,7 +264,7 @@ def _run_single_analyst(
     logger.info("%s using max_turns=%d", label, max_turns)
 
     try:
-        hooks_json: str | None = _build_hooks_settings_json()
+        hooks_json: str | None = build_stop_hook_settings("analyst")
     except Exception:
         logger.warning(
             "Failed to resolve analyst hook settings for %s", label, exc_info=True,

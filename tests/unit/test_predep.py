@@ -201,7 +201,11 @@ class TestRunPredepDiscovery:
         assert "--model" in cmd
 
     def test_returns_empty_on_prompt_write_failure(self, config):
-        with patch("thresher.agents.predep.Path.write_text", side_effect=OSError("write failed")):
+        """If the prompt tempfile can't be written, predep degrades to empty."""
+        with patch(
+            "thresher.agents._runner.tempfile_with",
+            side_effect=OSError("write failed"),
+        ):
             result = run_predep_discovery(config)
             assert result["hidden_dependencies"] == []
             assert "failed" in result["summary"].lower()
