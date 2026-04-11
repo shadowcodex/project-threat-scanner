@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
-import time
-from pathlib import Path
 from typing import Any
 
-from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
+from thresher.scanners._runner import ScanSpec, run_scanner
+from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
 
@@ -24,58 +22,14 @@ _SEVERITY_MAP: dict[str, str] = {
 
 
 def run_grype(sbom_path: str, output_dir: str) -> ScanResults:
-    """Run Grype against a CycloneDX SBOM produced by Syft.
-
-    Grype exits with code 0 when no vulnerabilities are found and code 1
-    when vulnerabilities *are* found.  Both are treated as successful runs.
-
-    Args:
-        sbom_path: Path to the SBOM JSON.
-        output_dir: Directory for scan artifacts.
-
-    Returns:
-        ScanResults with execution metadata only (findings stay in output_dir).
-    """
-    output_path = f"{output_dir}/grype.json"
-
-    start = time.monotonic()
-    try:
-        result = run_cmd(
-            ["grype", f"sbom:{sbom_path}", "-o", "json"],
-            label="grype",
-            timeout=300,
-            ok_codes=(0, 1),
-        )
-        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "grype"))
-        elapsed = time.monotonic() - start
-
-        # Exit codes: 0 = no vulns, 1 = vulns found (not an error).
-        # Anything else is a real failure.
-        if result.returncode not in (0, 1):
-            logger.warning("Grype exited with code %d", result.returncode)
-            return ScanResults(
-                tool_name="grype",
-                execution_time_seconds=elapsed,
-                exit_code=result.returncode,
-                errors=[f"Grype failed (exit {result.returncode})"],
-            )
-
-        return ScanResults(
-            tool_name="grype",
-            execution_time_seconds=elapsed,
-            exit_code=result.returncode,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Grype execution failed")
-        return ScanResults(
-            tool_name="grype",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Grype execution error: {exc}"],
-        )
+    """Run Grype against a CycloneDX SBOM produced by Syft."""
+    return run_scanner(
+        ScanSpec(
+            name="grype",
+            cmd=["grype", f"sbom:{sbom_path}", "-o", "json"],
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_grype_output(raw: dict[str, Any]) -> list[Finding]:

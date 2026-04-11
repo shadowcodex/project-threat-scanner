@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import logging
-import time
-from pathlib import Path
 from typing import Any
 
-from thresher.run import run as run_cmd
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -19,44 +17,16 @@ def run_clamav(target_dir: str, output_dir: str) -> ScanResults:
     Uses clamscan (on-demand scanner) rather than the daemon.
     Exit 0 = clean, 1 = virus found, 2 = error.
     """
-    output_path = f"{output_dir}/clamav.txt"
-
-    start = time.monotonic()
-    try:
-        result = run_cmd(
-            ["clamscan", "-r", "--infected", "--no-summary", target_dir],
-            label="clamav",
+    return run_scanner(
+        ScanSpec(
+            name="clamav",
+            cmd=["clamscan", "-r", "--infected", "--no-summary", target_dir],
             timeout=600,
-            ok_codes=(0, 1),
-        )
-        Path(output_path).write_bytes(result.stdout)
-        elapsed = time.monotonic() - start
-
-        if result.returncode == 2:
-            logger.warning("ClamAV error (exit 2)")
-            return ScanResults(
-                tool_name="clamav",
-                execution_time_seconds=elapsed,
-                exit_code=result.returncode,
-                errors=["ClamAV error (exit 2)"],
-            )
-
-        return ScanResults(
-            tool_name="clamav",
-            execution_time_seconds=elapsed,
-            exit_code=result.returncode,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("ClamAV execution failed")
-        return ScanResults(
-            tool_name="clamav",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"ClamAV execution error: {exc}"],
-        )
+            output_filename="clamav.txt",
+            sanitize_stdout=False,
+        ),
+        output_dir=output_dir,
+    )
 
 
 def _parse_clamav_output(text: str) -> list[Finding]:

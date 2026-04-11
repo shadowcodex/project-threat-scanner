@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import logging
-import time
-from pathlib import Path
 from typing import Any
 
-from thresher.run import run as run_cmd
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
@@ -23,69 +21,26 @@ def run_scancode(target_dir: str, output_dir: str) -> ScanResults:
     """Run ScanCode to detect license compliance issues.
 
     ScanCode is slow, so we use ``--timeout 120`` and ``-n 4`` for
-    parallel processing.
-
-    Args:
-        target_dir: Path to the repository.
-        output_dir: Directory for scan artifacts.
-
-    Returns:
-        ScanResults with parsed Finding objects.
+    parallel processing. Exit 1 means "completed with per-file issues"
+    (timeouts, perms) and is treated as success — the output file is
+    still valid.
     """
     output_path = f"{output_dir}/scancode.json"
-
-    start = time.monotonic()
-    try:
-        result = run_cmd(
-            [
+    return run_scanner(
+        ScanSpec(
+            name="scancode",
+            cmd=[
                 "scancode", "--license",
                 "--json-pp", output_path,
                 target_dir,
                 "-n", "4",
                 "--timeout", "120",
             ],
-            label="scancode",
             timeout=600,
-            ok_codes=(0, 1),
-        )
-        elapsed = time.monotonic() - start
-
-        # ScanCode exit code semantics:
-        #   0 = completed successfully, no issues
-        #   1 = completed with some issues (e.g. individual file timeouts,
-        #       permission errors on specific files).  This is NOT a failure
-        #       — scancode still produces valid output for the files it could
-        #       process.  Treat as success if the output file exists.
-        #   2+ = actual error (bad arguments, crash, etc.)
-        if result.returncode == 1:
-            file_size = Path(output_path).stat().st_size if Path(output_path).exists() else 0
-            logger.info("ScanCode exited with code 1 (completed with issues). output size: %s bytes", file_size)
-
-        if result.returncode not in (0, 1):
-            logger.warning("ScanCode exited with code %d", result.returncode)
-            return ScanResults(
-                tool_name="scancode",
-                execution_time_seconds=elapsed,
-                exit_code=result.returncode,
-                errors=[f"ScanCode failed (exit {result.returncode})"],
-            )
-
-        return ScanResults(
-            tool_name="scancode",
-            execution_time_seconds=elapsed,
-            exit_code=result.returncode,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("ScanCode execution failed")
-        return ScanResults(
-            tool_name="scancode",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"ScanCode execution error: {exc}"],
-        )
+            output_mode="self",
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_scancode_output(raw: dict[str, Any]) -> list[Finding]:

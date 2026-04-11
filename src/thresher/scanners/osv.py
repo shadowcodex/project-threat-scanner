@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
-import time
-from pathlib import Path
 from typing import Any
 
-from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
+from thresher.scanners._runner import ScanSpec, run_scanner
+from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
 
@@ -22,57 +20,15 @@ _SEVERITY_MAP: dict[str, str] = {
 
 
 def run_osv(target_dir: str, output_dir: str) -> ScanResults:
-    """Run OSV-Scanner against the target directory.
-
-    OSV-Scanner exits with code 0 when no vulnerabilities are found and
-    code 1 when vulnerabilities are present.  Both are valid results.
-
-    Args:
-        target_dir: Path to the repository.
-        output_dir: Directory for scan artifacts.
-
-    Returns:
-        ScanResults with execution metadata only (findings stay in output_dir).
-    """
-    output_path = f"{output_dir}/osv.json"
-
-    start = time.monotonic()
-    try:
-        result = run_cmd(
-            ["osv-scanner", "scan", "--format", "json", target_dir],
-            label="osv-scanner",
-            timeout=300,
-            ok_codes=(0, 1),
-        )
-        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "osv"))
-        elapsed = time.monotonic() - start
-
-        # Exit 0 = clean, 1 = vulns found (expected).  Other codes are errors.
-        if result.returncode not in (0, 1):
-            logger.warning("OSV-Scanner exited with code %d", result.returncode)
-            return ScanResults(
-                tool_name="osv-scanner",
-                execution_time_seconds=elapsed,
-                exit_code=result.returncode,
-                errors=[f"OSV-Scanner failed (exit {result.returncode})"],
-            )
-
-        return ScanResults(
-            tool_name="osv-scanner",
-            execution_time_seconds=elapsed,
-            exit_code=result.returncode,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("OSV-Scanner execution failed")
-        return ScanResults(
-            tool_name="osv-scanner",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"OSV-Scanner execution error: {exc}"],
-        )
+    """Run OSV-Scanner against the target directory."""
+    return run_scanner(
+        ScanSpec(
+            name="osv-scanner",
+            cmd=["osv-scanner", "scan", "--format", "json", target_dir],
+            output_filename="osv.json",
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_osv_output(raw: dict[str, Any]) -> list[Finding]:

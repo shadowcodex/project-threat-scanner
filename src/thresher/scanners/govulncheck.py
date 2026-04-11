@@ -4,79 +4,37 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from pathlib import Path
 from typing import Any
 
-from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
+from thresher.scanners._runner import ScanSpec, run_scanner
+from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
 
 
 def run_govulncheck(target_dir: str, output_dir: str) -> ScanResults:
-    """Run govulncheck to detect vulnerabilities in Go modules.
+    """Run govulncheck to detect reachable vulnerabilities in Go modules.
 
-    First checks if a go.mod file exists.  If not, returns empty results.
-    govulncheck only reports reachable vulnerabilities.
-
-    Args:
-        target_dir: Path to the repository.
-        output_dir: Directory for scan artifacts.
-
-    Returns:
-        ScanResults with parsed Finding objects.
+    Skips quietly when there's no ``go.mod`` to scan.
     """
-    output_path = f"{output_dir}/govulncheck.json"
+    if not Path(target_dir, "go.mod").exists():
+        logger.info("No go.mod found, skipping govulncheck")
+        return ScanResults(
+            tool_name="govulncheck",
+            execution_time_seconds=0.0,
+            exit_code=0,
+            findings=[],
+        )
 
-    start = time.monotonic()
-    try:
-        # Check if go.mod exists.
-        if not Path(target_dir, "go.mod").exists():
-            elapsed = time.monotonic() - start
-            logger.info("No go.mod found, skipping govulncheck")
-            return ScanResults(
-                tool_name="govulncheck",
-                execution_time_seconds=elapsed,
-                exit_code=0,
-                findings=[],
-            )
-
-        result = run_cmd(
-            ["govulncheck", "-json", "./..."],
-            label="govulncheck",
-            timeout=300,
-            ok_codes=(0, 1),
+    return run_scanner(
+        ScanSpec(
+            name="govulncheck",
+            cmd=["govulncheck", "-json", "./..."],
             cwd=target_dir,
-        )
-        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "govulncheck"))
-        elapsed = time.monotonic() - start
-
-        if result.returncode not in (0, 1):
-            logger.warning("govulncheck exited with code %d", result.returncode)
-            return ScanResults(
-                tool_name="govulncheck",
-                execution_time_seconds=elapsed,
-                exit_code=result.returncode,
-                errors=[f"govulncheck failed (exit {result.returncode})"],
-            )
-
-        return ScanResults(
-            tool_name="govulncheck",
-            execution_time_seconds=elapsed,
-            exit_code=result.returncode,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("govulncheck execution failed")
-        return ScanResults(
-            tool_name="govulncheck",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"govulncheck execution error: {exc}"],
-        )
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_govulncheck_output(raw_text: str) -> list[Finding]:

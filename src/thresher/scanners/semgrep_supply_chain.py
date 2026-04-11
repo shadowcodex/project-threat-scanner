@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
-import time
-from pathlib import Path
 from typing import Any
 
-from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
+from thresher.scanners._runner import ScanSpec, run_scanner
+from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
 
@@ -23,55 +21,15 @@ RULES_PATH = "/opt/rules/semgrep/supply-chain.yaml"
 
 
 def run_semgrep_supply_chain(output_dir: str) -> ScanResults:
-    """Run Semgrep with custom supply-chain rules against /opt/deps/.
-
-    Uses the supply-chain.yaml rules file instead of ``--config auto``.
-    Findings remain in output_dir.
-
-    Args:
-        output_dir: Directory for scan artifacts.
-
-    Returns:
-        ScanResults with execution metadata only (findings stay in output_dir).
-    """
-    output_path = f"{output_dir}/semgrep-supply-chain.json"
-
-    start = time.monotonic()
-    try:
-        result = run_cmd(
-            ["semgrep", "scan", "--config", RULES_PATH, "--json", DEPS_DIR],
-            label="semgrep-supply-chain",
+    """Run Semgrep with custom supply-chain rules against /opt/deps/."""
+    return run_scanner(
+        ScanSpec(
+            name="semgrep-supply-chain",
+            cmd=["semgrep", "scan", "--config", RULES_PATH, "--json", DEPS_DIR],
             timeout=600,
-            ok_codes=(0, 1),
-        )
-        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "semgrep-supply-chain"))
-        elapsed = time.monotonic() - start
-
-        if result.returncode not in (0, 1):
-            logger.warning("Semgrep supply-chain exited with code %d", result.returncode)
-            return ScanResults(
-                tool_name="semgrep-supply-chain",
-                execution_time_seconds=elapsed,
-                exit_code=result.returncode,
-                errors=[f"Semgrep supply-chain failed (exit {result.returncode})"],
-            )
-
-        return ScanResults(
-            tool_name="semgrep-supply-chain",
-            execution_time_seconds=elapsed,
-            exit_code=result.returncode,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Semgrep supply-chain execution failed")
-        return ScanResults(
-            tool_name="semgrep-supply-chain",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Semgrep supply-chain execution error: {exc}"],
-        )
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_semgrep_supply_chain_output(raw: dict[str, Any]) -> list[Finding]:

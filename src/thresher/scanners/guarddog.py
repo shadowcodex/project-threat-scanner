@@ -3,69 +3,24 @@
 from __future__ import annotations
 
 import logging
-import time
-from pathlib import Path
 from typing import Any
 
-from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
+from thresher.scanners._runner import ScanSpec, run_scanner
+from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
 
 
 def run_guarddog(target_dir: str, output_dir: str) -> ScanResults:
-    """Run GuardDog to detect malicious package behaviors.
-
-    GuardDog exits with code 0 on success.  Non-zero typically indicates
-    a real error (e.g. unsupported ecosystem, missing files).
-
-    Args:
-        target_dir: Path to the repository.
-        output_dir: Directory for scan artifacts.
-
-    Returns:
-        ScanResults with parsed Finding objects.
-    """
-    output_path = f"{output_dir}/guarddog.json"
-
-    start = time.monotonic()
-    try:
-        result = run_cmd(
-            ["guarddog", "scan", target_dir, "--output-format", "json"],
-            label="guarddog",
+    """Run GuardDog to detect malicious package behaviors."""
+    return run_scanner(
+        ScanSpec(
+            name="guarddog",
+            cmd=["guarddog", "scan", target_dir, "--output-format", "json"],
             timeout=600,
-            ok_codes=(0, 1),
-        )
-        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "guarddog"))
-        elapsed = time.monotonic() - start
-
-        # GuardDog exit 0 = success.  Non-zero may indicate findings or errors
-        # depending on version; treat 0 and 1 as valid.
-        if result.returncode not in (0, 1):
-            logger.warning("GuardDog exited with code %d", result.returncode)
-            return ScanResults(
-                tool_name="guarddog",
-                execution_time_seconds=elapsed,
-                exit_code=result.returncode,
-                errors=[f"GuardDog failed (exit {result.returncode})"],
-            )
-
-        return ScanResults(
-            tool_name="guarddog",
-            execution_time_seconds=elapsed,
-            exit_code=result.returncode,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("GuardDog execution failed")
-        return ScanResults(
-            tool_name="guarddog",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"GuardDog execution error: {exc}"],
-        )
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_guarddog_output(raw: dict[str, Any]) -> list[Finding]:

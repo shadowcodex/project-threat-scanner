@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-import time
 from pathlib import Path
 from typing import Any
 
-from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
+from thresher.scanners._runner import ScanSpec, run_scanner
+from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
 
@@ -21,75 +20,31 @@ _LEVEL_MAP: dict[str, str] = {
 
 
 def run_hadolint(target_dir: str, output_dir: str) -> ScanResults:
-    """Run Hadolint to lint Dockerfiles in the target directory.
+    """Run Hadolint against every Dockerfile* in the target directory.
 
-    First finds all Dockerfiles, then runs Hadolint on each.  If no
-    Dockerfiles are found, returns empty results.
-
-    Args:
-        target_dir: Path to the repository.
-        output_dir: Directory for scan artifacts.
-
-    Returns:
-        ScanResults with parsed Finding objects.
+    Skips quietly when no Dockerfiles are found.
     """
-    output_path = f"{output_dir}/hadolint.json"
-
-    start = time.monotonic()
-    try:
-        # Find Dockerfiles in the target directory.
-        dockerfiles = [
-            str(p)
-            for p in Path(target_dir).rglob("Dockerfile*")
-            if ".git" not in p.parts
-        ]
-        elapsed = time.monotonic() - start
-
-        if not dockerfiles:
-            logger.info("No Dockerfiles found, skipping Hadolint")
-            return ScanResults(
-                tool_name="hadolint",
-                execution_time_seconds=elapsed,
-                exit_code=0,
-                findings=[],
-            )
-
-        # Run Hadolint on all discovered Dockerfiles.
-        result = run_cmd(
-            ["hadolint", "--format", "json"] + dockerfiles,
-            label="hadolint",
-            timeout=300,
-            ok_codes=(0, 1),
-        )
-        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "hadolint"))
-        elapsed = time.monotonic() - start
-
-        # Hadolint exits 0 = no issues, 1 = issues found.
-        if result.returncode not in (0, 1):
-            logger.warning("Hadolint exited with code %d", result.returncode)
-            return ScanResults(
-                tool_name="hadolint",
-                execution_time_seconds=elapsed,
-                exit_code=result.returncode,
-                errors=[f"Hadolint failed (exit {result.returncode})"],
-            )
-
+    dockerfiles = [
+        str(p)
+        for p in Path(target_dir).rglob("Dockerfile*")
+        if ".git" not in p.parts
+    ]
+    if not dockerfiles:
+        logger.info("No Dockerfiles found, skipping Hadolint")
         return ScanResults(
             tool_name="hadolint",
-            execution_time_seconds=elapsed,
-            exit_code=result.returncode,
-            raw_output_path=output_path,
+            execution_time_seconds=0.0,
+            exit_code=0,
+            findings=[],
         )
 
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Hadolint execution failed")
-        return ScanResults(
-            tool_name="hadolint",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Hadolint execution error: {exc}"],
-        )
+    return run_scanner(
+        ScanSpec(
+            name="hadolint",
+            cmd=["hadolint", "--format", "json"] + dockerfiles,
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_hadolint_output(raw: list[dict[str, Any]]) -> list[Finding]:

@@ -3,73 +3,31 @@
 from __future__ import annotations
 
 import logging
-import time
-from pathlib import Path
 from typing import Any
 
-from thresher.run import run as run_cmd
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
 
 
 def run_gitleaks(target_dir: str, output_dir: str) -> ScanResults:
-    """Run Gitleaks to detect hardcoded secrets in the repository.
-
-    Gitleaks exits with code 0 when no leaks are found and code 1 when
-    leaks are detected.  Both are valid scan results.
-
-    Args:
-        target_dir: Path to the repository.
-        output_dir: Directory for scan artifacts.
-
-    Returns:
-        ScanResults with parsed Finding objects.
-    """
+    """Run Gitleaks to detect hardcoded secrets in the repository."""
     output_path = f"{output_dir}/gitleaks.json"
-
-    start = time.monotonic()
-    try:
-        result = run_cmd(
-            [
+    return run_scanner(
+        ScanSpec(
+            name="gitleaks",
+            cmd=[
                 "gitleaks", "detect",
                 "--source", target_dir,
                 "--report-format", "json",
                 "--report-path", output_path,
                 "--no-banner",
             ],
-            label="gitleaks",
-            timeout=300,
-            ok_codes=(0, 1),
-        )
-        elapsed = time.monotonic() - start
-
-        # Exit 0 = no leaks, 1 = leaks found.  Other codes are errors.
-        if result.returncode not in (0, 1):
-            logger.warning("Gitleaks exited with code %d", result.returncode)
-            return ScanResults(
-                tool_name="gitleaks",
-                execution_time_seconds=elapsed,
-                exit_code=result.returncode,
-                errors=[f"Gitleaks failed (exit {result.returncode})"],
-            )
-
-        return ScanResults(
-            tool_name="gitleaks",
-            execution_time_seconds=elapsed,
-            exit_code=result.returncode,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Gitleaks execution failed")
-        return ScanResults(
-            tool_name="gitleaks",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Gitleaks execution error: {exc}"],
-        )
+            output_mode="self",
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_gitleaks_output(raw: list[dict[str, Any]]) -> list[Finding]:

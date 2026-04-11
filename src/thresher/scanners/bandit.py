@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
-import time
-from pathlib import Path
 from typing import Any
 
-from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
+from thresher.scanners._runner import ScanSpec, run_scanner
+from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
 
@@ -26,60 +24,17 @@ _BANDIT_EXCLUDE_DIRS = "tests,test,e2e,examples,docs,build,dist,.tox,.venv,venv"
 
 
 def run_bandit(target_dir: str, output_dir: str) -> ScanResults:
-    """Run Bandit to detect security issues in Python code.
-
-    Bandit exits with code 0 when no issues are found and code 1 when
-    issues are detected.  Both are valid scan results.
-
-    Args:
-        target_dir: Path to the repository.
-        output_dir: Directory for scan artifacts.
-
-    Returns:
-        ScanResults with parsed Finding objects.
-    """
-    output_path = f"{output_dir}/bandit.json"
-
-    start = time.monotonic()
-    try:
-        result = run_cmd(
-            [
+    """Run Bandit to detect security issues in Python code."""
+    return run_scanner(
+        ScanSpec(
+            name="bandit",
+            cmd=[
                 "bandit", "-r", target_dir, "-f", "json", "-q",
                 "-x", _BANDIT_EXCLUDE_DIRS,
             ],
-            label="bandit",
-            timeout=300,
-            ok_codes=(0, 1),
-        )
-        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "bandit"))
-        elapsed = time.monotonic() - start
-
-        # Exit 0 = no issues, 1 = issues found.  Other codes are errors.
-        if result.returncode not in (0, 1):
-            logger.warning("Bandit exited with code %d", result.returncode)
-            return ScanResults(
-                tool_name="bandit",
-                execution_time_seconds=elapsed,
-                exit_code=result.returncode,
-                errors=[f"Bandit failed (exit {result.returncode})"],
-            )
-
-        return ScanResults(
-            tool_name="bandit",
-            execution_time_seconds=elapsed,
-            exit_code=result.returncode,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Bandit execution failed")
-        return ScanResults(
-            tool_name="bandit",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Bandit execution error: {exc}"],
-        )
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_bandit_output(raw: dict[str, Any]) -> list[Finding]:

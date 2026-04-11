@@ -3,68 +3,23 @@
 from __future__ import annotations
 
 import logging
-import time
-from pathlib import Path
 from typing import Any
 
-from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
+from thresher.scanners._runner import ScanSpec, run_scanner
+from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
 
 
 def run_checkov(target_dir: str, output_dir: str) -> ScanResults:
-    """Run Checkov to detect IaC misconfigurations.
-
-    Checkov exits with code 0 when all checks pass and code 1 when
-    failures are found.  Both are valid scan results.
-
-    Args:
-        target_dir: Path to the repository.
-        output_dir: Directory for scan artifacts.
-
-    Returns:
-        ScanResults with parsed Finding objects.
-    """
-    output_path = f"{output_dir}/checkov.json"
-
-    start = time.monotonic()
-    try:
-        result = run_cmd(
-            ["checkov", "-d", target_dir, "-o", "json", "--quiet"],
-            label="checkov",
-            timeout=300,
-            ok_codes=(0, 1),
-        )
-        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "checkov"))
-        elapsed = time.monotonic() - start
-
-        # Exit 0 = pass, 1 = failures found.  Other codes are errors.
-        if result.returncode not in (0, 1):
-            logger.warning("Checkov exited with code %d", result.returncode)
-            return ScanResults(
-                tool_name="checkov",
-                execution_time_seconds=elapsed,
-                exit_code=result.returncode,
-                errors=[f"Checkov failed (exit {result.returncode})"],
-            )
-
-        return ScanResults(
-            tool_name="checkov",
-            execution_time_seconds=elapsed,
-            exit_code=result.returncode,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Checkov execution failed")
-        return ScanResults(
-            tool_name="checkov",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Checkov execution error: {exc}"],
-        )
+    """Run Checkov to detect IaC misconfigurations."""
+    return run_scanner(
+        ScanSpec(
+            name="checkov",
+            cmd=["checkov", "-d", target_dir, "-o", "json", "--quiet"],
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_checkov_output(raw: Any) -> list[Finding]:
