@@ -130,6 +130,13 @@ class TestParseRegistryMetaOutput:
         assert findings[0].id != findings[1].id
 
 
+def _exec_script_function(func_name: str):
+    """Exec the embedded script and return a specific function from it."""
+    ns = {}
+    exec(_REGISTRY_META_SCRIPT, ns)
+    return ns[func_name]
+
+
 class TestRegistryMetaScript:
     """Tests for the embedded registry metadata scanner script."""
 
@@ -138,6 +145,14 @@ class TestRegistryMetaScript:
         assert "/opt/deps/dep_manifest.json" in _REGISTRY_META_SCRIPT
         assert "/opt/target/package-lock.json" in _REGISTRY_META_SCRIPT
         assert "/opt/target/package.json" in _REGISTRY_META_SCRIPT
+
+    def test_script_searches_uv_lock(self):
+        assert "/opt/target/uv.lock" in _REGISTRY_META_SCRIPT
+        assert "/opt/deps/uv.lock" in _REGISTRY_META_SCRIPT
+
+    def test_script_searches_requirements_txt(self):
+        assert "/opt/target/requirements.txt" in _REGISTRY_META_SCRIPT
+        assert "/opt/deps/requirements.txt" in _REGISTRY_META_SCRIPT
 
     def test_script_logs_searched_paths_on_no_manifests(self):
         """When no manifests found, script should report searched paths."""
@@ -150,6 +165,48 @@ class TestRegistryMetaScript:
     def test_script_has_package_json_parser(self):
         """Script should parse package.json as fallback."""
         assert "_parse_package_json" in _REGISTRY_META_SCRIPT
+
+    def test_script_has_uv_lock_parser(self):
+        assert "_parse_uv_lock" in _REGISTRY_META_SCRIPT
+
+    def test_script_has_requirements_txt_parser(self):
+        assert "_parse_requirements_txt" in _REGISTRY_META_SCRIPT
+
+
+class TestRegistryMetaParseUvLock:
+    def test_parses_basic_uv_lock(self, tmp_path):
+        parse_uv_lock = _exec_script_function("_parse_uv_lock")
+        uv_lock = tmp_path / "uv.lock"
+        uv_lock.write_text(
+            '[[package]]\nname = "requests"\nversion = "2.31.0"\n\n'
+            '[[package]]\nname = "flask"\nversion = "3.0.2"\n'
+        )
+        result = parse_uv_lock(str(uv_lock))
+        assert ("requests", "2.31.0") in result
+        assert ("flask", "3.0.2") in result
+
+    def test_empty_file(self, tmp_path):
+        parse_uv_lock = _exec_script_function("_parse_uv_lock")
+        uv_lock = tmp_path / "uv.lock"
+        uv_lock.write_text("version = 1\n")
+        assert parse_uv_lock(str(uv_lock)) == []
+
+
+class TestRegistryMetaParseRequirementsTxt:
+    def test_parses_pinned(self, tmp_path):
+        parse_req = _exec_script_function("_parse_requirements_txt")
+        req = tmp_path / "requirements.txt"
+        req.write_text("requests==2.31.0\nflask==3.0.2\n")
+        result = parse_req(str(req))
+        assert ("requests", "2.31.0") in result
+        assert ("flask", "3.0.2") in result
+
+    def test_skips_comments(self, tmp_path):
+        parse_req = _exec_script_function("_parse_requirements_txt")
+        req = tmp_path / "requirements.txt"
+        req.write_text("# comment\nrequests==1.0\n")
+        result = parse_req(str(req))
+        assert len(result) == 1
 
 
 class TestRunRegistryMeta:

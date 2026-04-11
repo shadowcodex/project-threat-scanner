@@ -113,6 +113,13 @@ class TestParseDepsDevOutput:
         assert findings[0].severity == "low"
 
 
+def _exec_script_function(func_name: str):
+    """Exec the embedded script and return a specific function from it."""
+    ns = {}
+    exec(_DEPS_DEV_SCRIPT, ns)
+    return ns[func_name]
+
+
 class TestDepsDevScript:
     """Tests for the embedded deps.dev scanner script."""
 
@@ -122,6 +129,16 @@ class TestDepsDevScript:
         assert "/opt/target/package-lock.json" in _DEPS_DEV_SCRIPT
         assert "/opt/target/package.json" in _DEPS_DEV_SCRIPT
         assert "/opt/target/Cargo.toml" in _DEPS_DEV_SCRIPT
+
+    def test_script_searches_uv_lock(self):
+        """The script should search for uv.lock files."""
+        assert "/opt/target/uv.lock" in _DEPS_DEV_SCRIPT
+        assert "/opt/deps/uv.lock" in _DEPS_DEV_SCRIPT
+
+    def test_script_searches_requirements_txt(self):
+        """The script should search for requirements.txt files."""
+        assert "/opt/target/requirements.txt" in _DEPS_DEV_SCRIPT
+        assert "/opt/deps/requirements.txt" in _DEPS_DEV_SCRIPT
 
     def test_script_logs_searched_paths_on_no_manifests(self):
         """When no manifests found, script should report searched paths."""
@@ -138,6 +155,115 @@ class TestDepsDevScript:
     def test_script_has_cargo_toml_parser(self):
         """Script should contain logic to parse Cargo.toml files."""
         assert "_parse_cargo_toml" in _DEPS_DEV_SCRIPT
+
+    def test_script_has_uv_lock_parser(self):
+        assert "_parse_uv_lock" in _DEPS_DEV_SCRIPT
+
+    def test_script_has_requirements_txt_parser(self):
+        assert "_parse_requirements_txt" in _DEPS_DEV_SCRIPT
+
+
+class TestParseUvLock:
+    """Test uv.lock parsing in the embedded script."""
+
+    def test_parses_basic_uv_lock(self, tmp_path):
+        parse_uv_lock = _exec_script_function("_parse_uv_lock")
+        uv_lock = tmp_path / "uv.lock"
+        uv_lock.write_text(textwrap.dedent("""\
+            version = 1
+            requires-python = ">=3.12"
+
+            [[package]]
+            name = "requests"
+            version = "2.31.0"
+
+            [[package]]
+            name = "flask"
+            version = "3.0.2"
+        """))
+        result = parse_uv_lock(str(uv_lock))
+        assert ("pypi", "requests", "2.31.0") in result
+        assert ("pypi", "flask", "3.0.2") in result
+        assert len(result) == 2
+
+    def test_parses_uv_lock_with_extras(self, tmp_path):
+        parse_uv_lock = _exec_script_function("_parse_uv_lock")
+        uv_lock = tmp_path / "uv.lock"
+        uv_lock.write_text(textwrap.dedent("""\
+            [[package]]
+            name = "boto3"
+            version = "1.34.0"
+            source = { registry = "https://pypi.org/simple" }
+            dependencies = [
+                { name = "botocore" },
+            ]
+
+            [[package]]
+            name = "botocore"
+            version = "1.34.0"
+        """))
+        result = parse_uv_lock(str(uv_lock))
+        assert ("pypi", "boto3", "1.34.0") in result
+        assert ("pypi", "botocore", "1.34.0") in result
+
+    def test_empty_uv_lock(self, tmp_path):
+        parse_uv_lock = _exec_script_function("_parse_uv_lock")
+        uv_lock = tmp_path / "uv.lock"
+        uv_lock.write_text("version = 1\n")
+        result = parse_uv_lock(str(uv_lock))
+        assert result == []
+
+    def test_missing_file(self):
+        parse_uv_lock = _exec_script_function("_parse_uv_lock")
+        result = parse_uv_lock("/nonexistent/uv.lock")
+        assert result == []
+
+
+class TestParseRequirementsTxt:
+    """Test requirements.txt parsing in the embedded script."""
+
+    def test_parses_pinned_versions(self, tmp_path):
+        parse_req = _exec_script_function("_parse_requirements_txt")
+        req = tmp_path / "requirements.txt"
+        req.write_text("requests==2.31.0\nflask==3.0.2\n")
+        result = parse_req(str(req))
+        assert ("pypi", "requests", "2.31.0") in result
+        assert ("pypi", "flask", "3.0.2") in result
+
+    def test_parses_range_versions(self, tmp_path):
+        parse_req = _exec_script_function("_parse_requirements_txt")
+        req = tmp_path / "requirements.txt"
+        req.write_text("requests>=2.28.0\nflask~=3.0\n")
+        result = parse_req(str(req))
+        assert ("pypi", "requests", "2.28.0") in result
+        assert ("pypi", "flask", "3.0") in result
+
+    def test_skips_comments_and_flags(self, tmp_path):
+        parse_req = _exec_script_function("_parse_requirements_txt")
+        req = tmp_path / "requirements.txt"
+        req.write_text("# comment\n-r other.txt\nrequests==1.0\n\n")
+        result = parse_req(str(req))
+        assert len(result) == 1
+        assert result[0][1] == "requests"
+
+    def test_handles_extras(self, tmp_path):
+        parse_req = _exec_script_function("_parse_requirements_txt")
+        req = tmp_path / "requirements.txt"
+        req.write_text("uvicorn[standard]==0.30.0\n")
+        result = parse_req(str(req))
+        assert result[0][1] == "uvicorn"
+
+    def test_bare_package_name(self, tmp_path):
+        parse_req = _exec_script_function("_parse_requirements_txt")
+        req = tmp_path / "requirements.txt"
+        req.write_text("requests\n")
+        result = parse_req(str(req))
+        assert ("pypi", "requests", "unknown") in result
+
+    def test_missing_file(self):
+        parse_req = _exec_script_function("_parse_requirements_txt")
+        result = parse_req("/nonexistent/requirements.txt")
+        assert result == []
 
 
 class TestRunDepsDev:

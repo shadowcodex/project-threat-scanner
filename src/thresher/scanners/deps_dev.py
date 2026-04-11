@@ -281,6 +281,85 @@ def _parse_cargo_toml(path: str) -> list[tuple[str, str, str]]:
     return packages
 
 
+def _parse_uv_lock(path: str) -> list[tuple[str, str, str]]:
+    """Extract packages from a uv.lock file.
+
+    uv.lock uses a TOML-like format with [[package]] sections:
+        [[package]]
+        name = "requests"
+        version = "2.31.0"
+    """
+    packages = []
+    try:
+        with open(path) as f:
+            content = f.read()
+    except IOError:
+        return []
+
+    current_name = ""
+    current_version = ""
+    in_package = False
+
+    for line in content.splitlines():
+        stripped = line.strip()
+
+        if stripped == "[[package]]":
+            # Save previous package if complete
+            if in_package and current_name:
+                packages.append(("pypi", current_name, current_version or "unknown"))
+            in_package = True
+            current_name = ""
+            current_version = ""
+            continue
+
+        if not in_package:
+            continue
+
+        if stripped.startswith("name") and "=" in stripped:
+            val = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+            current_name = val
+        elif stripped.startswith("version") and "=" in stripped:
+            val = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+            current_version = val
+
+    # Don't forget the last package
+    if in_package and current_name:
+        packages.append(("pypi", current_name, current_version or "unknown"))
+
+    return packages
+
+
+def _parse_requirements_txt(path: str) -> list[tuple[str, str, str]]:
+    """Extract packages from a requirements.txt file."""
+    packages = []
+    try:
+        with open(path) as f:
+            content = f.read()
+    except IOError:
+        return []
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("-"):
+            continue
+
+        # Handle name==version, name>=version, name~=version, etc.
+        for sep in ("==", ">=", "<=", "~=", "!=", ">", "<"):
+            if sep in stripped:
+                name = stripped.split(sep)[0].strip().split("[")[0].strip()
+                version = stripped.split(sep, 1)[1].strip().split(",")[0].strip()
+                if name:
+                    packages.append(("pypi", name, version or "unknown"))
+                break
+        else:
+            # No version specifier — just a package name
+            name = stripped.split("[")[0].strip()  # strip extras like pkg[extra]
+            if name and not name.startswith("http"):
+                packages.append(("pypi", name, "unknown"))
+
+    return packages
+
+
 def load_manifest() -> list[tuple[str, str, str]]:
     """Load the dependency manifest and return (system, name, version) tuples.
 
@@ -321,6 +400,8 @@ def load_manifest() -> list[tuple[str, str, str]]:
         ("/opt/target/package-lock.json", _parse_package_json),
         ("/opt/target/package.json", _parse_package_json),
         ("/opt/target/Cargo.toml", _parse_cargo_toml),
+        ("/opt/target/uv.lock", _parse_uv_lock),
+        ("/opt/target/requirements.txt", _parse_requirements_txt),
     ]
 
     packages = []
@@ -335,6 +416,8 @@ def load_manifest() -> list[tuple[str, str, str]]:
         ("/opt/deps/package-lock.json", _parse_package_json),
         ("/opt/deps/package.json", _parse_package_json),
         ("/opt/deps/Cargo.toml", _parse_cargo_toml),
+        ("/opt/deps/uv.lock", _parse_uv_lock),
+        ("/opt/deps/requirements.txt", _parse_requirements_txt),
     ]
     for path, parser in deps_fallbacks:
         searched_paths.append(path)
