@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -12,14 +13,27 @@ from thresher.scanners.models import Finding, ScanResults
 
 logger = logging.getLogger(__name__)
 
-YARA_RULES_DIR = "/opt/yara-rules"
+DEFAULT_YARA_RULES_DIR = "/opt/yara-rules"
+
+
+def resolve_yara_rules_dir() -> str:
+    """Return the YARA rules dir path, honoring the ``YARA_RULES_DIR``
+    environment variable. Defaults to ``/opt/yara-rules``.
+
+    The Docker image does not currently bundle YARA rules — operators who
+    want YARA scanning must mount their own rules directory and point this
+    env var at it.
+    """
+    return os.environ.get("YARA_RULES_DIR", DEFAULT_YARA_RULES_DIR)
 
 
 def run_yara(target_dir: str, output_dir: str) -> ScanResults:
     """Run YARA rules against the target directory to detect malware patterns.
 
-    Scans using key rule categories from /opt/yara-rules.  If the rules
-    directory does not exist, returns empty results with a warning.
+    Scans using key rule categories from the configured rules dir
+    (override with ``YARA_RULES_DIR``). If the rules directory does not
+    exist, returns clean empty results with an INFO log — this is the
+    default state when no rules are mounted, and is not an error.
 
     Args:
         target_dir: Path to the repository.
@@ -29,13 +43,18 @@ def run_yara(target_dir: str, output_dir: str) -> ScanResults:
         ScanResults with parsed Finding objects.
     """
     output_path = f"{output_dir}/yara.txt"
+    rules_dir = resolve_yara_rules_dir()
 
     start = time.monotonic()
     try:
         # Check if YARA rules directory exists.
-        if not Path(YARA_RULES_DIR).is_dir():
+        if not Path(rules_dir).is_dir():
             elapsed = time.monotonic() - start
-            logger.warning("YARA rules directory /opt/yara-rules not found")
+            logger.info(
+                "YARA rules dir %r not found — skipping YARA scan. "
+                "Set YARA_RULES_DIR to enable.",
+                rules_dir,
+            )
             return ScanResults(
                 tool_name="yara",
                 execution_time_seconds=elapsed,
@@ -44,8 +63,8 @@ def run_yara(target_dir: str, output_dir: str) -> ScanResults:
             )
 
         # Gather rule files to scan.
-        malw_rules = sorted(Path(YARA_RULES_DIR, "malware").glob("MALW_*.yar"))
-        packer_rules = sorted(Path(YARA_RULES_DIR, "packers").glob("*.yar"))
+        malw_rules = sorted(Path(rules_dir, "malware").glob("MALW_*.yar"))
+        packer_rules = sorted(Path(rules_dir, "packers").glob("*.yar"))
         rule_files = malw_rules + packer_rules
 
         all_output_lines: list[str] = []
