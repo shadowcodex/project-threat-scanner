@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -186,9 +187,12 @@ def run_synthesize_agent(
     )
 
     logger.info("Invoking synthesis agent (max_turns=%d)", max_turns)
+    start_time = time.monotonic()
     agent_result = run_agent(spec, config)
+    duration = time.monotonic() - start_time
     logger.info(
-        "Synthesis agent completed: exit_code=%d",
+        "Synthesis agent completed in %.1fs: exit_code=%d",
+        duration,
         agent_result.returncode,
     )
 
@@ -201,4 +205,8 @@ def run_synthesize_agent(
     else:
         logger.warning("Synthesis agent did not produce expected files")
 
-    return agent_succeeded
+    return agent_succeeded, {
+        "duration": duration,
+        "turns": agent_result.num_turns,
+        "token_usage": agent_result.token_usage,
+    }

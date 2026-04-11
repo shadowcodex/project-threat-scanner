@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -422,18 +423,26 @@ def run_adversarial_verification(
     )
 
     logger.info("Invoking adversarial agent")
+    start_time = time.monotonic()
     agent_result = run_agent(spec, config)
+    duration = time.monotonic() - start_time
     if agent_result.failed:
         return None
 
     verification = _parse_adversarial_output(agent_result.result_text)
     logger.info(
-        "Adversarial verification completed: confirmed=%s, downgraded=%s",
+        "Adversarial verification completed in %.1fs: confirmed=%s, downgraded=%s",
+        duration,
         verification.get("confirmed_count", "?"),
         verification.get("downgraded_count", "?"),
     )
 
     merged = _merge_adversarial_results(ai_findings, verification)
+    merged["_benchmark"] = {
+        "duration": duration,
+        "turns": agent_result.num_turns,
+        "token_usage": agent_result.token_usage,
+    }
 
     # Persist a human-readable adversarial-verification.md report next to
     # the main report. Without this the verification work is only visible

@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from thresher.harness.benchmarks import BenchmarkCollector
 from thresher.harness.report import (
     ALLOWED_EXTENSIONS,
     enrich_all_findings,
@@ -507,6 +508,7 @@ class TestValidateReportData:
                 analyst_findings=[],
                 synthesized_reports=True,
                 config=config,
+                benchmark=BenchmarkCollector(),
             )
         # Fallback report has every required key
         from thresher.harness.report import validate_report_data
@@ -544,6 +546,7 @@ class TestValidateReportData:
                 analyst_findings=[],
                 synthesized_reports=True,
                 config=config,
+                benchmark=BenchmarkCollector(),
             )
         assert result is complete
 
@@ -633,6 +636,7 @@ class TestDepResolutionNotes:
                 analyst_findings=[],
                 synthesized_reports=True,
                 config=config,
+                benchmark=BenchmarkCollector(),
             )
         notes = result.get("pipeline", {}).get("notes", "")
         assert "python" in notes.lower()

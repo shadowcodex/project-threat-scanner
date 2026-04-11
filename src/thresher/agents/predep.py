@@ -17,6 +17,7 @@ Outputs a structured dict with discovered hidden dependencies.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,7 @@ def run_predep_discovery(
         hooks_json = None
 
     logger.info("Running pre-dependency discovery agent")
+    start_time = time.monotonic()
     spec = AgentSpec(
         label="predep",
         prompt=_DEFINITION["prompt"],
@@ -72,10 +74,16 @@ def run_predep_discovery(
         hooks_settings_json=hooks_json,
     )
     agent_result = run_agent(spec, config)
+    duration = time.monotonic() - start_time
     if agent_result.failed:
         return _empty_result(f"Agent invocation failed: {agent_result.error}")
 
     result = _parse_predep_output(agent_result.result_text)
+    result["_benchmark"] = {
+        "duration": duration,
+        "turns": agent_result.num_turns,
+        "token_usage": agent_result.token_usage,
+    }
 
     # Inject the high_risk_dep flag so downstream can know whether
     # to download high-risk entries.

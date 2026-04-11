@@ -308,6 +308,7 @@ def _run_single_analyst(
         "name": name,
         "duration": duration,
         "turns": agent_result.num_turns,
+        "token_usage": agent_result.token_usage,
     }
     return findings
 

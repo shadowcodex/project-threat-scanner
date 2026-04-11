@@ -20,11 +20,21 @@ import json
 import logging
 import re
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
+
+
+@dataclass
+class StreamResult:
+    """Parsed result from Claude Code stream-json output."""
+
+    text: str
+    num_turns: int = 0
+    token_usage: dict[str, int] = field(default_factory=dict)
 
 
 def _stringify_result(value: Any) -> str:
@@ -41,23 +51,23 @@ def _stringify_result(value: Any) -> str:
     return ""
 
 
-def extract_stream_result(raw_output: str) -> tuple[str, int]:
-    """Pull ``(result_text, num_turns)`` from Claude Code stream-json output.
+def extract_stream_result(raw_output: str) -> StreamResult:
+    """Pull result from Claude Code stream-json output.
 
-    Returns the final result text from the ``{"type": "result"}`` line.
+    Returns a StreamResult with the final result text, turn count,
+    and token usage from the ``usage`` field on the result line.
+
     On error results (e.g. ``max_turns``), falls back to the last
     assistant text block so callers still get *something* parseable.
     If neither is present the raw input is returned unchanged so
     downstream extraction can still try.
-
-    ``num_turns`` is the SDK's authoritative turn counter from the
-    result line, or 0 if no result line exists.
     """
     result_text = ""
     is_error = False
     error_reason = ""
     last_assistant_text = ""
     num_turns = 0
+    token_usage: dict[str, int] = {}
 
     for line in raw_output.strip().splitlines():
         line = line.strip()
@@ -79,33 +89,40 @@ def extract_stream_result(raw_output: str) -> tuple[str, int]:
             n = obj.get("num_turns")
             if isinstance(n, int):
                 num_turns = n
+            usage = obj.get("usage")
+            if isinstance(usage, dict):
+                token_usage = {
+                    "input_tokens": usage.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0),
+                    "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
+                    "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
+                }
         elif obj_type == "assistant":
             content = obj.get("message", {}).get("content", [])
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
                     last_assistant_text = block.get("text", "")
         elif "result" in obj and obj_type is None:
-            # Handle bare {"result": "..."} lines without a "type" field.
             result_text = _stringify_result(obj["result"])
 
     if result_text:
-        return result_text, num_turns
+        return StreamResult(text=result_text, num_turns=num_turns, token_usage=token_usage)
 
     if is_error and last_assistant_text:
         logger.warning(
             "Agent ended with %s; using last assistant text as fallback",
             error_reason,
         )
-        return last_assistant_text, num_turns
+        return StreamResult(text=last_assistant_text, num_turns=num_turns, token_usage=token_usage)
 
     if is_error:
         logger.warning(
             "Agent ended with %s and produced no text output",
             error_reason,
         )
-        return "", num_turns
+        return StreamResult(text="", num_turns=num_turns, token_usage=token_usage)
 
-    return raw_output, num_turns
+    return StreamResult(text=raw_output, num_turns=num_turns, token_usage=token_usage)
 
 
 def extract_json_object(

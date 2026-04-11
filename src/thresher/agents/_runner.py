@@ -85,6 +85,7 @@ class AgentResult:
     returncode: int
     failed: bool = False
     error: str | None = None
+    token_usage: dict[str, int] = field(default_factory=dict)
 
 
 def run_agent(spec: AgentSpec, config: ScanConfig) -> AgentResult:
@@ -146,9 +147,10 @@ def run_agent(spec: AgentSpec, config: ScanConfig) -> AgentResult:
             error=str(exc),
         )
 
-    text, turns = extract_stream_result(raw_output)
+    stream_result = extract_stream_result(raw_output)
     return AgentResult(
-        result_text=text,
-        num_turns=turns,
+        result_text=stream_result.text,
+        num_turns=stream_result.num_turns,
         returncode=proc.returncode,
+        token_usage=stream_result.token_usage,
     )

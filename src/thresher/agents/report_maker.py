@@ -8,6 +8,7 @@ JSON object suitable for rendering into the HTML report template.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -108,13 +109,20 @@ def run_report_maker(
     )
 
     logger.info("Invoking report maker agent (max_turns=%d)", max_turns)
+    start_time = time.monotonic()
     agent_result = run_agent(spec, config)
+    duration = time.monotonic() - start_time
     if agent_result.failed:
         return None
 
     result = _parse_report_output(agent_result.result_text)
     if result is not None:
-        logger.info("Report maker agent completed successfully")
+        result["_benchmark"] = {
+            "duration": duration,
+            "turns": agent_result.num_turns,
+            "token_usage": agent_result.token_usage,
+        }
+        logger.info("Report maker agent completed in %.1fs", duration)
     else:
         logger.warning("Report maker agent produced unparseable output")
     return result

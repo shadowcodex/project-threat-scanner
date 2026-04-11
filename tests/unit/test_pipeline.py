@@ -4,6 +4,13 @@ from hamilton import driver
 
 from thresher.config import ScanConfig
 from thresher.harness import pipeline
+from thresher.harness.benchmarks import BenchmarkCollector
+
+
+def _collector() -> BenchmarkCollector:
+    c = BenchmarkCollector()
+    c.start()
+    return c
 
 
 def test_pipeline_module_has_required_functions():
@@ -35,7 +42,7 @@ def test_pipeline_dag_builds():
 def test_pipeline_skip_ai_short_circuits():
     """When skip_ai=True, AI stages return empty results."""
     config = ScanConfig(skip_ai=True, high_risk_dep=False)
-    result = pipeline.hidden_deps(cloned_path="/opt/target", config=config)
+    result = pipeline.hidden_deps(cloned_path="/opt/target", config=config, benchmark=_collector())
     assert result == {}
 
 
@@ -47,6 +54,7 @@ def test_pipeline_skip_ai_analyst_findings():
         deps_path="/opt/deps",
         scan_results=[],
         config=config,
+        benchmark=_collector(),
     )
     assert result == []
 
@@ -58,6 +66,7 @@ def test_pipeline_verified_findings_empty_input():
         analyst_findings=[],
         cloned_path="/opt/target",
         config=config,
+        benchmark=_collector(),
     )
     assert result == []
 
@@ -71,6 +80,7 @@ def test_pipeline_verified_findings_unwraps_dict():
             analyst_findings=[{"title": "something"}],
             cloned_path="/opt/target",
             config=config,
+            benchmark=_collector(),
         )
     assert result == findings_list
 
@@ -83,6 +93,7 @@ def test_pipeline_verified_findings_handles_none():
             analyst_findings=[{"title": "something"}],
             cloned_path="/opt/target",
             config=config,
+            benchmark=_collector(),
         )
     assert result == []
 
@@ -110,6 +121,7 @@ def test_synthesized_reports_skip_ai_returns_false():
         enriched_findings={"findings": [], "scanner_results": {}},
         scan_results=[],
         config=config,
+        benchmark=_collector(),
     )
     assert result is False
 
@@ -122,12 +134,16 @@ def test_synthesized_reports_invokes_agent():
         output_dir="/tmp/test-output",
     )
     enriched = {"findings": [{"title": "x", "severity": "high"}], "scanner_results": {}}
-    with patch("thresher.agents.synthesize.run_synthesize_agent", return_value=True) as mock_agent:
+    with patch(
+        "thresher.agents.synthesize.run_synthesize_agent",
+        return_value=(True, {"duration": 10.0, "turns": 5, "token_usage": {}}),
+    ) as mock_agent:
         result = pipeline.synthesized_reports(
             verified_findings=[],
             enriched_findings=enriched,
             scan_results=[],
             config=config,
+            benchmark=_collector(),
         )
     mock_agent.assert_called_once()
     assert result is True

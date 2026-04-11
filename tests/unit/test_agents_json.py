@@ -20,14 +20,39 @@ class TestExtractStreamResult:
                 json.dumps({"type": "result", "result": "hello world", "num_turns": 3}),
             ]
         )
-        text, turns = extract_stream_result(raw)
-        assert text == "hello world"
-        assert turns == 3
+        sr = extract_stream_result(raw)
+        assert sr.text == "hello world"
+        assert sr.num_turns == 3
 
     def test_returns_zero_turns_when_no_result_line(self):
         raw = json.dumps({"type": "assistant", "message": {"content": []}})
-        _text, turns = extract_stream_result(raw)
-        assert turns == 0
+        sr = extract_stream_result(raw)
+        assert sr.num_turns == 0
+
+    def test_extracts_token_usage(self):
+        raw = json.dumps(
+            {
+                "type": "result",
+                "result": "done",
+                "num_turns": 5,
+                "usage": {
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "cache_creation_input_tokens": 200,
+                    "cache_read_input_tokens": 300,
+                },
+            }
+        )
+        sr = extract_stream_result(raw)
+        assert sr.token_usage["input_tokens"] == 1000
+        assert sr.token_usage["output_tokens"] == 500
+        assert sr.token_usage["cache_creation_input_tokens"] == 200
+        assert sr.token_usage["cache_read_input_tokens"] == 300
+
+    def test_empty_token_usage_when_no_usage_field(self):
+        raw = json.dumps({"type": "result", "result": "done", "num_turns": 1})
+        sr = extract_stream_result(raw)
+        assert sr.token_usage == {}
 
     def test_falls_back_to_last_assistant_text_on_error(self):
         raw = "\n".join(
@@ -51,9 +76,9 @@ class TestExtractStreamResult:
                 ),
             ]
         )
-        text, turns = extract_stream_result(raw)
-        assert text == "partial output"
-        assert turns == 10
+        sr = extract_stream_result(raw)
+        assert sr.text == "partial output"
+        assert sr.num_turns == 10
 
     def test_returns_empty_when_error_and_no_fallback(self):
         raw = json.dumps(
@@ -64,8 +89,8 @@ class TestExtractStreamResult:
                 "subtype": "max_turns",
             }
         )
-        text, _turns = extract_stream_result(raw)
-        assert text == ""
+        sr = extract_stream_result(raw)
+        assert sr.text == ""
 
     def test_ignores_invalid_json_lines(self):
         raw = "\n".join(
@@ -75,16 +100,15 @@ class TestExtractStreamResult:
                 "more garbage",
             ]
         )
-        text, turns = extract_stream_result(raw)
-        assert text == "ok"
-        assert turns == 1
+        sr = extract_stream_result(raw)
+        assert sr.text == "ok"
+        assert sr.num_turns == 1
 
     def test_returns_raw_when_no_result_line_and_no_assistant(self):
         raw = "just some text without stream-json structure"
-        text, turns = extract_stream_result(raw)
-        # Falls through to returning raw as-is
-        assert text == raw
-        assert turns == 0
+        sr = extract_stream_result(raw)
+        assert sr.text == raw
+        assert sr.num_turns == 0
 
     def test_stringifies_dict_result_value(self):
         """Some agent configs emit result as a dict; round-trip through json."""
@@ -95,9 +119,9 @@ class TestExtractStreamResult:
                 "num_turns": 2,
             }
         )
-        text, turns = extract_stream_result(raw)
-        assert json.loads(text) == {"hidden_dependencies": [], "summary": "ok"}
-        assert turns == 2
+        sr = extract_stream_result(raw)
+        assert json.loads(sr.text) == {"hidden_dependencies": [], "summary": "ok"}
+        assert sr.num_turns == 2
 
 
 # ---------------------------------------------------------------------------
