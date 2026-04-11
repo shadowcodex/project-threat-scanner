@@ -141,7 +141,11 @@ class TestEnrichAllFindings:
         mock_enrich.assert_called_once()
         call_args = mock_enrich.call_args
         passed_findings = call_args[0][0]
-        assert passed_findings == findings
+        # After P0 fix, AI findings get source_tool and category mapped
+        assert len(passed_findings) == 1
+        assert passed_findings[0]["id"] == "f1"
+        assert passed_findings[0]["cve_id"] == "CVE-2024-1234"
+        assert passed_findings[0]["source_tool"] == "ai_analysis"
 
     @patch("thresher.harness.report.enrich_findings")
     def test_empty_inputs(self, mock_enrich):
@@ -165,7 +169,9 @@ class TestEnrichAllFindings:
         call_args = mock_enrich.call_args
         passed_findings = call_args[0][0]
         assert isinstance(passed_findings, list)
-        assert passed_findings == [{"id": "f1", "cve_id": "CVE-2024-1234"}]
+        assert len(passed_findings) == 1
+        assert passed_findings[0]["id"] == "f1"
+        assert passed_findings[0]["source_tool"] == "ai_analysis"
 
     @patch("thresher.harness.report.enrich_findings")
     def test_passes_vm_name_as_empty_string(self, mock_enrich):
@@ -207,6 +213,133 @@ class TestEnrichAllFindings:
         assert "grype" in sources
         assert "ai_analysis" in sources
         assert len(passed) == 2
+
+    @patch("thresher.harness.report.enrich_findings")
+    def test_maps_risk_score_to_ai_risk_score(self, mock_enrich):
+        """AI findings with risk_score should get ai_risk_score mapped."""
+        mock_enrich.return_value = []
+        findings = [{"risk_score": 8, "title": "backdoor"}]
+        enrich_all_findings([], findings)
+        passed = mock_enrich.call_args[0][0]
+        assert passed[0]["ai_risk_score"] == 8
+
+    @patch("thresher.harness.report.enrich_findings")
+    def test_does_not_overwrite_existing_ai_risk_score(self, mock_enrich):
+        """If ai_risk_score is already set, risk_score should not overwrite it."""
+        mock_enrich.return_value = []
+        findings = [{"risk_score": 8, "ai_risk_score": 5}]
+        enrich_all_findings([], findings)
+        passed = mock_enrich.call_args[0][0]
+        assert passed[0]["ai_risk_score"] == 5
+
+    @patch("thresher.harness.report.enrich_findings")
+    def test_sets_source_tool_on_ai_findings(self, mock_enrich):
+        """AI findings must get source_tool='ai_analysis' for downstream filtering."""
+        mock_enrich.return_value = []
+        findings = [{"title": "suspicious eval"}]
+        enrich_all_findings([], findings)
+        passed = mock_enrich.call_args[0][0]
+        assert passed[0]["source_tool"] == "ai_analysis"
+
+    @patch("thresher.harness.report.enrich_findings")
+    def test_sets_category_on_ai_findings(self, mock_enrich):
+        """AI findings must get category='ai_analysis' as default."""
+        mock_enrich.return_value = []
+        findings = [{"title": "suspicious eval"}]
+        enrich_all_findings([], findings)
+        passed = mock_enrich.call_args[0][0]
+        assert passed[0]["category"] == "ai_analysis"
+
+    @patch("thresher.harness.report.enrich_findings")
+    def test_derives_ai_confidence_from_sub_findings(self, mock_enrich):
+        """ai_confidence should be derived from max sub-finding confidence."""
+        mock_enrich.return_value = []
+        findings = [{
+            "risk_score": 7,
+            "findings": [
+                {"confidence": 85, "severity": "high"},
+                {"confidence": 92, "severity": "medium"},
+            ],
+        }]
+        enrich_all_findings([], findings)
+        passed = mock_enrich.call_args[0][0]
+        assert passed[0]["ai_confidence"] == 92
+
+    @patch("thresher.harness.report.enrich_findings")
+    def test_derives_severity_from_worst_sub_finding(self, mock_enrich):
+        """Severity should be derived from worst sub-finding severity."""
+        mock_enrich.return_value = []
+        findings = [{
+            "risk_score": 7,
+            "findings": [
+                {"severity": "medium", "confidence": 80},
+                {"severity": "high", "confidence": 70},
+                {"severity": "low", "confidence": 90},
+            ],
+        }]
+        enrich_all_findings([], findings)
+        passed = mock_enrich.call_args[0][0]
+        assert passed[0]["severity"] == "high"
+
+    @patch("thresher.harness.report.enrich_findings")
+    def test_defaults_severity_to_low_without_sub_findings(self, mock_enrich):
+        """Without sub-findings, severity should default to 'low'."""
+        mock_enrich.return_value = []
+        findings = [{"risk_score": 3}]
+        enrich_all_findings([], findings)
+        passed = mock_enrich.call_args[0][0]
+        assert passed[0]["severity"] == "low"
+
+    def test_composite_priority_reflects_ai_risk_score(self):
+        """End-to-end: high risk_score AI finding should NOT get 'low' composite_priority."""
+        findings = [{"risk_score": 8, "title": "backdoor detected"}]
+        with patch("thresher.report.scoring.fetch_epss_scores", return_value={}), \
+             patch("thresher.report.scoring.load_kev_catalog", return_value=set()):
+            result = enrich_all_findings([], findings)
+        enriched = result["findings"]
+        assert len(enriched) == 1
+        assert enriched[0]["ai_risk_score"] == 8
+        assert enriched[0]["composite_priority"] == "high"
+
+    def test_composite_priority_critical_for_confirmed_high_risk(self):
+        """End-to-end: risk_score 9 + confirmed should yield 'critical'."""
+        findings = [{
+            "risk_score": 9,
+            "adversarial_status": "confirmed",
+            "title": "data exfiltration",
+        }]
+        with patch("thresher.report.scoring.fetch_epss_scores", return_value={}), \
+             patch("thresher.report.scoring.load_kev_catalog", return_value=set()):
+            result = enrich_all_findings([], findings)
+        assert result["findings"][0]["composite_priority"] == "critical"
+
+    def test_field_parity_with_collect_findings(self):
+        """Fields set by enrich_all_findings should match _collect_findings."""
+        from thresher.report.synthesize import _collect_findings
+
+        ai_input = {"findings": [{
+            "risk_score": 7,
+            "file_path": "/opt/target/app.py",
+            "reasoning": "suspicious",
+            "findings": [
+                {"confidence": 85, "severity": "high", "pattern": "eval", "description": "eval usage"},
+            ],
+        }]}
+
+        # VM path
+        vm_findings = _collect_findings({}, ai_input)
+
+        # Harness path (no enrichment, just field mapping)
+        with patch("thresher.harness.report.enrich_findings", side_effect=lambda f, **kw: f):
+            harness_result = enrich_all_findings([], ai_input)
+        harness_findings = harness_result["findings"]
+
+        # Both paths must set these critical fields
+        for field in ("ai_risk_score", "source_tool", "category", "ai_confidence", "severity"):
+            assert field in vm_findings[0], f"VM path missing {field}"
+            assert field in harness_findings[0], f"Harness path missing {field}"
+            assert vm_findings[0][field] == harness_findings[0][field], \
+                f"Field parity mismatch on {field}: VM={vm_findings[0][field]} vs Harness={harness_findings[0][field]}"
 
 
 class TestGenerateReport:

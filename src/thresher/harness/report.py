@@ -77,11 +77,49 @@ def enrich_all_findings(
         (tool_name -> ScanResults mapping).
     """
     if isinstance(verified_findings, dict):
-        all_findings = verified_findings.get("findings", [])
+        raw_ai = verified_findings.get("findings", [])
     elif verified_findings:
-        all_findings = list(verified_findings)
+        raw_ai = list(verified_findings)
     else:
-        all_findings = []
+        raw_ai = []
+
+    # Map AI-specific fields so composite priority scoring works.
+    # This mirrors the field mapping in synthesize.py:_collect_findings()
+    # which the harness path bypasses.
+    all_findings: list[dict[str, Any]] = []
+    for af in raw_ai:
+        if not isinstance(af, dict):
+            continue
+        mapped = dict(af)
+        if "risk_score" in mapped and "ai_risk_score" not in mapped:
+            mapped["ai_risk_score"] = mapped["risk_score"]
+        mapped.setdefault("source_tool", "ai_analysis")
+        mapped.setdefault("category", "ai_analysis")
+
+        # Derive ai_confidence from sub-findings if not set directly
+        sub_findings = mapped.get("findings", [])
+        if isinstance(sub_findings, list) and sub_findings:
+            max_conf = max(
+                (sf.get("confidence", 0) for sf in sub_findings
+                 if isinstance(sf, dict)),
+                default=0,
+            )
+            if max_conf and "ai_confidence" not in mapped:
+                mapped["ai_confidence"] = max_conf
+
+            # Derive severity from highest sub-finding severity
+            sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+            worst_sev = "low"
+            for sf in sub_findings:
+                if isinstance(sf, dict):
+                    s = sf.get("severity", "low").lower()
+                    if sev_rank.get(s, 99) < sev_rank.get(worst_sev, 99):
+                        worst_sev = s
+            mapped.setdefault("severity", worst_sev)
+        else:
+            mapped.setdefault("severity", "low")
+
+        all_findings.append(mapped)
 
     # Merge scanner findings into the combined list
     for sr in (scan_results or []):
