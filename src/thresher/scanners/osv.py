@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults
+from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def run_osv(target_dir: str, output_dir: str) -> ScanResults:
             timeout=300,
             ok_codes=(0, 1),
         )
-        Path(output_path).write_bytes(result.stdout)
+        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "osv"))
         elapsed = time.monotonic() - start
 
         # Exit 0 = clean, 1 = vulns found (expected).  Other codes are errors.

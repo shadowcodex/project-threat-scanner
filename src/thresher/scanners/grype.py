@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults
+from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ def run_grype(sbom_path: str, output_dir: str) -> ScanResults:
             timeout=300,
             ok_codes=(0, 1),
         )
-        Path(output_path).write_bytes(result.stdout)
+        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "grype"))
         elapsed = time.monotonic() - start
 
         # Exit codes: 0 = no vulns, 1 = vulns found (not an error).

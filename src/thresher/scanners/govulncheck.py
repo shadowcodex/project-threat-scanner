@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults
+from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def run_govulncheck(target_dir: str, output_dir: str) -> ScanResults:
             ok_codes=(0, 1),
             cwd=target_dir,
         )
-        Path(output_path).write_bytes(result.stdout)
+        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "govulncheck"))
         elapsed = time.monotonic() - start
 
         if result.returncode not in (0, 1):

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from thresher.run import run as run_cmd
-from thresher.scanners.models import ScanResults
+from thresher.scanners.models import ScanResults, sanitize_json_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def run_syft(target_dir: str, output_dir: str) -> ScanResults:
             timeout=300,
             ok_codes=(0,),
         )
-        Path(sbom_path).write_bytes(result.stdout)
+        Path(sbom_path).write_bytes(sanitize_json_bytes(result.stdout, "syft"))
         elapsed = time.monotonic() - start
 
         # Syft exit 0 on success.  Any non-zero is a real error.

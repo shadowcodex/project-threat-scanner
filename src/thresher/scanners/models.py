@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 VALID_SEVERITIES = frozenset({"critical", "high", "medium", "low", "info"})
@@ -76,3 +79,50 @@ class ScanResults:
             "raw_output_path": self.raw_output_path,
             "metadata": self.metadata,
         }
+
+
+def sanitize_json_bytes(data: bytes, tool_name: str = "") -> bytes:
+    """Strip non-JSON prefixes from scanner stdout before writing to disk.
+
+    Some tools (e.g. bandit) write progress bars or warnings to stdout
+    before the JSON payload.  Scans for the first ``{`` or ``[`` that
+    starts valid JSON and strips everything before it.
+
+    Returns the original bytes unchanged if they already start with JSON
+    or contain no JSON at all.
+    """
+    import json as _json
+
+    stripped = data.lstrip()
+    if not stripped:
+        return data
+
+    # Already starts with JSON object or array — validate before fast path
+    if stripped[0:1] in (b"{", b"["):
+        try:
+            _json.loads(stripped)
+            return stripped
+        except (ValueError, _json.JSONDecodeError):
+            pass  # Fall through to scan
+
+    # Scan for each { and [ and try to parse from that position.
+    # Progress bars contain [ ] characters that aren't JSON, so we
+    # validate by attempting a parse.
+    text = stripped.decode(errors="replace")
+    for i, ch in enumerate(text):
+        if ch not in ("{", "["):
+            continue
+        try:
+            _json.loads(text[i:])
+            prefix = stripped[:i]
+            logger.warning(
+                "[%s] stripped %d bytes of non-JSON prefix from stdout: %s",
+                tool_name or "scanner",
+                len(prefix),
+                prefix[:200].decode(errors="replace").replace("\n", "\\n"),
+            )
+            return stripped[i:]
+        except (ValueError, _json.JSONDecodeError):
+            continue
+
+    return data

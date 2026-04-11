@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults
+from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def run_guarddog(target_dir: str, output_dir: str) -> ScanResults:
             timeout=600,
             ok_codes=(0, 1),
         )
-        Path(output_path).write_bytes(result.stdout)
+        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "guarddog"))
         elapsed = time.monotonic() - start
 
         # GuardDog exit 0 = success.  Non-zero may indicate findings or errors

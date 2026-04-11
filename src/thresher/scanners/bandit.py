@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from thresher.run import run as run_cmd
-from thresher.scanners.models import Finding, ScanResults
+from thresher.scanners.models import Finding, ScanResults, sanitize_json_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +37,12 @@ def run_bandit(target_dir: str, output_dir: str) -> ScanResults:
     start = time.monotonic()
     try:
         result = run_cmd(
-            ["bandit", "-r", target_dir, "-f", "json"],
+            ["bandit", "-r", target_dir, "-f", "json", "-q"],
             label="bandit",
             timeout=300,
             ok_codes=(0, 1),
         )
-        Path(output_path).write_bytes(result.stdout)
+        Path(output_path).write_bytes(sanitize_json_bytes(result.stdout, "bandit"))
         elapsed = time.monotonic() - start
 
         # Exit 0 = no issues, 1 = issues found.  Other codes are errors.
