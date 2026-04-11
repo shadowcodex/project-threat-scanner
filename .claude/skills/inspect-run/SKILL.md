@@ -33,7 +33,6 @@ Any anomolies identify the root cause.
 
 Finally look for any missing artifacts. All analyst findings and summaries are in the scan-results folder? All scanner results are in scan results folder and no corrupted? All files in root report folder are there like summaries and reports and deduped findings? the html report is there? 
 
-
 Generate a report whith CRITICAL/HIGH/MEDIUM/LOW issues.
 
 - What it is
@@ -42,5 +41,7 @@ Generate a report whith CRITICAL/HIGH/MEDIUM/LOW issues.
 - What potential areas to look at or potential reasons for bug
 
 Generate a list at end of report of unit tests that if they existed today would fail because of these findings. And then think of any additional unit tests we should ad on edge cases around these areas that we wouldn't have thought of otherwise.
+
+After full analysis generate a chain of events and findings, summary of things in a dagpipline view.
 
 Write the report to a file.
