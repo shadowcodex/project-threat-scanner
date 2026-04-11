@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import statistics
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -32,6 +33,7 @@ DEPS_DIR = "/opt/deps"
 SCAN_RESULTS_DIR = "/opt/scan-results"
 
 _DEFINITIONS_DIR = Path(__file__).parent / "definitions"
+_HOOKS_DIR = Path(__file__).parent / "hooks" / "analyst"
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +376,40 @@ def _format_analyst_markdown(findings: dict[str, Any], analyst_def: dict[str, An
 
 
 # ---------------------------------------------------------------------------
+# Stop hook settings
+# ---------------------------------------------------------------------------
+
+def _resolve_hooks_settings() -> Path:
+    """Write a temporary settings.json with absolute path to the hook script.
+
+    Resolves the hook script path to an absolute path so the hook works
+    regardless of cwd (important inside Docker).
+    """
+    hook_script = _HOOKS_DIR / "validate_json_output.sh"
+    if not hook_script.exists():
+        raise FileNotFoundError(f"Hook script not found: {hook_script}")
+
+    settings = {
+        "hooks": {
+            "Stop": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": str(hook_script.resolve()),
+                            "timeout": 15,
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    settings_path = Path(tempfile.mktemp(suffix="_analyst_hooks_settings.json"))
+    settings_path.write_text(json.dumps(settings))
+    return settings_path
+
+
+# ---------------------------------------------------------------------------
 # Single analyst execution
 # ---------------------------------------------------------------------------
 
@@ -399,12 +435,18 @@ def _run_single_analyst(
 
     prompt = _build_analyst_prompt(analyst_def)
 
-    prompt_path = Path(f"/tmp/analyst_{number}_prompt.txt")
+    prompt_path = Path(tempfile.mktemp(suffix=f"_analyst_{number}_prompt.txt"))
+    settings_path = None
     try:
         prompt_path.write_text(prompt)
     except Exception:
         logger.warning("Failed to write prompt for %s", label, exc_info=True)
         return None
+
+    try:
+        settings_path = _resolve_hooks_settings()
+    except Exception:
+        logger.warning("Failed to resolve analyst hook settings for %s", label, exc_info=True)
 
     model = config.model
     cmd = [
@@ -416,6 +458,8 @@ def _run_single_analyst(
         "--verbose",
         "--max-turns", str(max_turns),
     ]
+    if settings_path is not None:
+        cmd.extend(["--settings", str(settings_path)])
 
     env = os.environ.copy()
     ai_env = config.ai_env()
@@ -435,6 +479,16 @@ def _run_single_analyst(
     except Exception as exc:
         logger.error("%s invocation failed: %s", label, exc)
         return None
+    finally:
+        try:
+            prompt_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        if settings_path is not None:
+            try:
+                settings_path.unlink(missing_ok=True)
+            except Exception:
+                pass
     end_time = time.monotonic()
     duration = end_time - start_time
 

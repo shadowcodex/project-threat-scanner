@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from thresher.config import ScanConfig
 logger = logging.getLogger(__name__)
 
 TARGET_DIR = "/opt/target"
+_HOOKS_DIR = Path(__file__).parent / "hooks" / "predep"
 OUTPUT_PATH = "/opt/thresher/work/deps/hidden_deps.json"
 
 PREDEP_PROMPT = """\
@@ -104,6 +106,36 @@ installs, well-known CDN URLs
 """
 
 
+def _resolve_hooks_settings() -> Path:
+    """Write a temporary settings.json with absolute path to the hook script.
+
+    Resolves the hook script path to an absolute path so the hook works
+    regardless of cwd (important inside Docker).
+    """
+    hook_script = _HOOKS_DIR / "validate_json_output.sh"
+    if not hook_script.exists():
+        raise FileNotFoundError(f"Hook script not found: {hook_script}")
+
+    settings = {
+        "hooks": {
+            "Stop": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": str(hook_script.resolve()),
+                            "timeout": 15,
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    settings_path = Path(tempfile.mktemp(suffix="_predep_hooks_settings.json"))
+    settings_path.write_text(json.dumps(settings))
+    return settings_path
+
+
 def run_predep_discovery(
     config: ScanConfig,
     target_dir: str = TARGET_DIR,
@@ -111,7 +143,8 @@ def run_predep_discovery(
     """Run the pre-dependency discovery agent locally via subprocess.
 
     Scans the cloned source for hidden dependency sources and returns
-    the results as a dict.
+    the results as a dict. A stop hook validates the output against the
+    hidden_dependencies schema before accepting it.
 
     Args:
         config: Scan configuration.
@@ -120,12 +153,20 @@ def run_predep_discovery(
     Returns:
         Dict with discovered hidden dependencies.
     """
-    prompt_path = Path("/tmp/predep_prompt.txt")
+    prompt_path = Path(tempfile.mktemp(suffix="_predep_prompt.txt"))
+    settings_path = None
     try:
         prompt_path.write_text(PREDEP_PROMPT)
     except Exception:
         logger.warning("Failed to write predep prompt", exc_info=True)
         return _empty_result("Failed to write prompt file")
+
+    try:
+        settings_path = _resolve_hooks_settings()
+    except Exception:
+        logger.warning("Failed to resolve predep hook settings", exc_info=True)
+        # Continue without the hook — output validation will still
+        # happen in _parse_predep_output, just without retry
 
     model = config.model
     max_turns = config.predep_max_turns or 15
@@ -138,6 +179,8 @@ def run_predep_discovery(
         "--verbose",
         "--max-turns", str(max_turns),
     ]
+    if settings_path is not None:
+        cmd.extend(["--settings", str(settings_path)])
 
     env = os.environ.copy()
     ai_env = config.ai_env()
@@ -156,6 +199,16 @@ def run_predep_discovery(
     except Exception as exc:
         logger.error("Pre-dep discovery agent failed: %s", exc)
         return _empty_result(f"Agent invocation failed: {exc}")
+    finally:
+        try:
+            prompt_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        if settings_path is not None:
+            try:
+                settings_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     result = _parse_predep_output(stdout)
 

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 TARGET_DIR = "/opt/target"
+_HOOKS_DIR = Path(__file__).parent / "hooks" / "adversarial"
 
 # Risk threshold: findings at or above this score go through adversarial review
 RISK_THRESHOLD = 4
@@ -496,6 +498,36 @@ def _merge_analyst_findings(analyst_findings_list: list[dict[str, Any]]) -> dict
     return {"findings": combined_findings}
 
 
+def _resolve_hooks_settings() -> Path:
+    """Write a temporary settings.json with absolute path to the hook script.
+
+    Resolves the hook script path to an absolute path so the hook works
+    regardless of cwd (important inside Docker).
+    """
+    hook_script = _HOOKS_DIR / "validate_json_output.sh"
+    if not hook_script.exists():
+        raise FileNotFoundError(f"Hook script not found: {hook_script}")
+
+    settings = {
+        "hooks": {
+            "Stop": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": str(hook_script.resolve()),
+                            "timeout": 15,
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    settings_path = Path(tempfile.mktemp(suffix="_adversarial_hooks_settings.json"))
+    settings_path.write_text(json.dumps(settings))
+    return settings_path
+
+
 def run_adversarial_verification(
     config: ScanConfig,
     analyst_findings: list[dict[str, Any]] | None = None,
@@ -547,12 +579,18 @@ def run_adversarial_verification(
 
     prompt = _build_adversarial_prompt(high_risk)
 
-    prompt_path = Path("/tmp/adversarial_prompt.txt")
+    prompt_path = Path(tempfile.mktemp(suffix="_adversarial_prompt.txt"))
+    settings_path = None
     try:
         prompt_path.write_text(prompt)
     except Exception:
         logger.warning("Failed to write adversarial prompt file", exc_info=True)
         return None
+
+    try:
+        settings_path = _resolve_hooks_settings()
+    except Exception:
+        logger.warning("Failed to resolve adversarial hook settings", exc_info=True)
 
     model = config.model
     max_turns = config.adversarial_max_turns or 20
@@ -565,6 +603,8 @@ def run_adversarial_verification(
         "--verbose",
         "--max-turns", str(max_turns),
     ]
+    if settings_path is not None:
+        cmd.extend(["--settings", str(settings_path)])
 
     env = os.environ.copy()
     ai_env = config.ai_env()
@@ -583,6 +623,16 @@ def run_adversarial_verification(
     except Exception as exc:
         logger.error("Adversarial agent invocation failed: %s", exc)
         return None
+    finally:
+        try:
+            prompt_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        if settings_path is not None:
+            try:
+                settings_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     verification = _parse_adversarial_output(raw_output)
     logger.info(
