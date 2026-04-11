@@ -64,8 +64,6 @@ def _parse_report_output(text: str) -> dict[str, Any] | None:
 def run_report_maker(
     config: ScanConfig,
     output_dir: str,
-    *,
-    target_dir: str | None = None,
 ) -> dict[str, Any] | None:
     """Run the report maker agent to format the scan into structured JSON.
 
@@ -82,20 +80,10 @@ def run_report_maker(
 
     The agent's job is to read those files and produce the structured
     JSON that the HTML template renders. A stop hook validates the
-    output against the schema before accepting it.
-
-    Args:
-        config: Scan configuration.
-        output_dir: Report output directory — used as the agent's cwd
-            so all the artifacts above are reachable via relative paths.
-        target_dir: (Deprecated) historical override; if not provided,
-            defaults to ``output_dir``.
-
-    Returns:
-        Parsed report data dict, or None on failure.
+    output against the schema before accepting it. The agent runs with
+    cwd=output_dir so the artifacts above are reachable via relative
+    paths.
     """
-    if target_dir is None:
-        target_dir = output_dir
     definition = _load_definition()
     max_turns = (
         getattr(config, "report_maker_max_turns", None) or definition["max_turns"]
@@ -113,7 +101,7 @@ def run_report_maker(
         allowed_tools=definition["tools"],
         max_turns=max_turns,
         timeout=3600,
-        cwd=target_dir,
+        cwd=output_dir,
         hooks_settings_json=hooks_json,
         # Pin the absolute schema path so the validate hook never has to
         # guess (the relative default broke when cwd != project root).

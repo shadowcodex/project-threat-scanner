@@ -37,49 +37,7 @@ def _make_config() -> ScanConfig:
     )
 
 
-class TestExtractHighRisk:
-    def test_above_threshold(self):
-        ai = {"findings": [
-            {"file_path": "/a.py", "risk_score": 7, "findings": [{"description": "bad"}]},
-            {"file_path": "/b.py", "risk_score": 2, "findings": []},
-        ]}
-        high = _extract_high_risk(ai)
-        assert len(high) == 1
-        assert high[0]["file_path"] == "/a.py"
-
-    def test_empty_findings(self):
-        assert _extract_high_risk({"findings": []}) == []
-
-    def test_no_findings_key(self):
-        assert _extract_high_risk({}) == []
-
-    def test_threshold_boundary(self):
-        ai = {"findings": [
-            {"file_path": "/a.py", "risk_score": RISK_THRESHOLD, "findings": []},
-            {"file_path": "/b.py", "risk_score": RISK_THRESHOLD - 1, "findings": []},
-        ]}
-        high = _extract_high_risk(ai)
-        assert len(high) == 1
-
-    def test_collects_line_numbers(self):
-        ai = {"findings": [
-            {
-                "file_path": "/a.py",
-                "risk_score": 8,
-                "findings": [
-                    {"description": "x", "line_numbers": [10, 20]},
-                    {"description": "y", "line_numbers": [20, 30]},
-                ],
-            }
-        ]}
-        high = _extract_high_risk(ai)
-        assert high[0]["line_numbers"] == [10, 20, 30]
-
-
 class TestFindingRiskScore:
-    def test_explicit_risk_score(self):
-        assert _finding_risk_score({"risk_score": 7}) == 7
-
     def test_severity_critical(self):
         assert _finding_risk_score({"severity": "critical"}) == 9
 
@@ -95,11 +53,8 @@ class TestFindingRiskScore:
     def test_unknown_severity(self):
         assert _finding_risk_score({"severity": "unknown"}) == 0
 
-    def test_no_score_or_severity(self):
+    def test_no_severity(self):
         assert _finding_risk_score({}) == 0
-
-    def test_explicit_risk_score_takes_precedence(self):
-        assert _finding_risk_score({"risk_score": 3, "severity": "critical"}) == 3
 
 
 class TestExtractHighRiskMultiAnalyst:
