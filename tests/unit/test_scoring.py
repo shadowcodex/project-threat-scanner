@@ -149,5 +149,5 @@ class TestFetchEPSS:
     @patch("thresher.report.scoring._fetch_epss_batch")
     def test_deduplicates(self, mock_batch):
         mock_batch.return_value = {"CVE-2024-1": 0.5}
-        result = fetch_epss_scores(["CVE-2024-1", "CVE-2024-1", "CVE-2024-1"])
+        fetch_epss_scores(["CVE-2024-1", "CVE-2024-1", "CVE-2024-1"])
         assert mock_batch.call_count == 1

@@ -84,8 +84,7 @@ def run_predep_discovery(
     deps = result.get("hidden_dependencies", [])
     high_risk = [d for d in deps if d.get("risk") == "high"]
     logger.info(
-        "Pre-dep discovery complete: %d hidden dependencies found "
-        "(%d high-risk, %s)",
+        "Pre-dep discovery complete: %d hidden dependencies found (%d high-risk, %s)",
         len(deps),
         len(high_risk),
         "will download" if config.high_risk_dep else "will skip download",
@@ -97,14 +96,16 @@ def run_predep_discovery(
 def _parse_predep_output(text: str) -> dict[str, Any]:
     """Extract the predep JSON object from the agent's result text."""
     parsed = extract_json_object(
-        text, accept=lambda d: "hidden_dependencies" in d,
+        text,
+        accept=lambda d: "hidden_dependencies" in d,
     )
     if parsed is not None:
         return parsed
 
     preview = text[:500] if text else "(empty)"
     logger.warning(
-        "Could not parse predep agent output. Result (first 500 chars): %s", preview,
+        "Could not parse predep agent output. Result (first 500 chars): %s",
+        preview,
     )
     return _empty_result("Failed to parse agent output")
 

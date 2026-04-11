@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from thresher.scanners.registry_meta import (
+    _REGISTRY_META_SCRIPT,
     parse_registry_meta_output,
     run_registry_meta,
-    _REGISTRY_META_SCRIPT,
 )
 
 
@@ -119,10 +119,20 @@ class TestParseRegistryMetaOutput:
         raw = {
             "scanner": "registry-meta",
             "findings": [
-                {"type": "maintainer_change", "package": "a", "ecosystem": "npm",
-                 "severity": "high", "description": "changed"},
-                {"type": "tarball_size_spike", "package": "b", "ecosystem": "npm",
-                 "severity": "medium", "description": "big"},
+                {
+                    "type": "maintainer_change",
+                    "package": "a",
+                    "ecosystem": "npm",
+                    "severity": "high",
+                    "description": "changed",
+                },
+                {
+                    "type": "tarball_size_spike",
+                    "package": "b",
+                    "ecosystem": "npm",
+                    "severity": "medium",
+                    "description": "big",
+                },
             ],
         }
         findings = parse_registry_meta_output(raw)
@@ -178,8 +188,7 @@ class TestRegistryMetaParseUvLock:
         parse_uv_lock = _exec_script_function("_parse_uv_lock")
         uv_lock = tmp_path / "uv.lock"
         uv_lock.write_text(
-            '[[package]]\nname = "requests"\nversion = "2.31.0"\n\n'
-            '[[package]]\nname = "flask"\nversion = "3.0.2"\n'
+            '[[package]]\nname = "requests"\nversion = "2.31.0"\n\n[[package]]\nname = "flask"\nversion = "3.0.2"\n'
         )
         result = parse_uv_lock(str(uv_lock))
         assert ("requests", "2.31.0") in result

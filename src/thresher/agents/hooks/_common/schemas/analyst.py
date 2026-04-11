@@ -5,8 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 _REQUIRED = (
-    "analyst", "analyst_number", "core_question",
-    "findings", "summary", "risk_score",
+    "analyst",
+    "analyst_number",
+    "core_question",
+    "findings",
+    "summary",
+    "risk_score",
 )
 _VALID_SEVERITIES = ("critical", "high", "medium", "low")
 
@@ -34,8 +38,7 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
     # Reject predep schema explicitly so analyst agents don't drift.
     if "hidden_dependencies" in data and "findings" not in data:
         errors.append(
-            "Output uses hidden_dependencies schema — use the analyst "
-            "findings schema instead",
+            "Output uses hidden_dependencies schema — use the analyst findings schema instead",
         )
 
     for field in _REQUIRED:
@@ -57,8 +60,7 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
                 sev = f.get("severity", "")
                 if sev not in _VALID_SEVERITIES:
                     errors.append(
-                        f"findings[{i}] invalid severity: {sev} "
-                        "(must be critical|high|medium|low)",
+                        f"findings[{i}] invalid severity: {sev} (must be critical|high|medium|low)",
                     )
 
     risk = data.get("risk_score")

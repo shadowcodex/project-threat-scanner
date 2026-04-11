@@ -31,10 +31,14 @@ _TMPFS_MOUNTS = [
 # into the image and skip runtime updates. Concurrent DB downloads
 # blow out the /home tmpfs, so this is load-bearing.
 _VULN_DB_ENV = [
-    "-e", "GRYPE_DB_CACHE_DIR=/opt/vuln-db/grype",
-    "-e", "GRYPE_DB_AUTO_UPDATE=false",
-    "-e", "TRIVY_CACHE_DIR=/opt/vuln-db/trivy",
-    "-e", "TRIVY_SKIP_DB_UPDATE=true",
+    "-e",
+    "GRYPE_DB_CACHE_DIR=/opt/vuln-db/grype",
+    "-e",
+    "GRYPE_DB_AUTO_UPDATE=false",
+    "-e",
+    "TRIVY_CACHE_DIR=/opt/vuln-db/trivy",
+    "-e",
+    "TRIVY_SKIP_DB_UPDATE=true",
 ]
 
 
@@ -60,21 +64,28 @@ def build_docker_args(
         The full argv list to hand to ``subprocess.run``.
     """
     args: list[str] = [
-        "docker", "run",
-        "-v", output_mount,
-        "-v", config_mount,
+        "docker",
+        "run",
+        "-v",
+        output_mount,
+        "-v",
+        config_mount,
         *env_flags,
         *_VULN_DB_ENV,
-        "--rm", "--read-only",
+        "--rm",
+        "--read-only",
     ]
     for mount in _TMPFS_MOUNTS:
         args += ["--tmpfs", mount]
     args += [
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
-        "--user", "thresher",
+        "--user",
+        "thresher",
         DOCKER_IMAGE,
-        "--config", "/config/config.json",
-        "--output", "/output",
+        "--config",
+        "/config/config.json",
+        "--output",
+        "/output",
     ]
     return args

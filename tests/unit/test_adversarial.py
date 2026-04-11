@@ -6,7 +6,6 @@ import json
 from unittest.mock import MagicMock, patch
 
 from thresher.agents.adversarial import (
-    RISK_THRESHOLD,
     _deduplicate_findings,
     _extract_high_risk,
     _finding_risk_score,
@@ -61,66 +60,78 @@ class TestExtractHighRiskMultiAnalyst:
     """Tests for _extract_high_risk with multi-analyst flat schema (severity-based)."""
 
     def test_critical_and_high_pass_threshold(self):
-        ai = {"findings": [
-            {"file_path": "/a.py", "severity": "critical", "title": "Bad", "description": "Very bad"},
-            {"file_path": "/b.py", "severity": "high", "title": "Risky", "description": "Risky"},
-            {"file_path": "/c.py", "severity": "low", "title": "Minor", "description": "Minor"},
-        ]}
+        ai = {
+            "findings": [
+                {"file_path": "/a.py", "severity": "critical", "title": "Bad", "description": "Very bad"},
+                {"file_path": "/b.py", "severity": "high", "title": "Risky", "description": "Risky"},
+                {"file_path": "/c.py", "severity": "low", "title": "Minor", "description": "Minor"},
+            ]
+        }
         high = _extract_high_risk(ai)
         assert len(high) == 2
         paths = {h["file_path"] for h in high}
         assert paths == {"/a.py", "/b.py"}
 
     def test_medium_at_threshold_boundary(self):
-        ai = {"findings": [
-            {"file_path": "/a.py", "severity": "medium", "title": "Med", "description": "Med"},
-        ]}
+        ai = {
+            "findings": [
+                {"file_path": "/a.py", "severity": "medium", "title": "Med", "description": "Med"},
+            ]
+        }
         high = _extract_high_risk(ai)
         # medium maps to 4, threshold is 4, so it passes
         assert len(high) == 1
 
     def test_low_below_threshold(self):
-        ai = {"findings": [
-            {"file_path": "/a.py", "severity": "low", "title": "Low", "description": "Low"},
-        ]}
+        ai = {
+            "findings": [
+                {"file_path": "/a.py", "severity": "low", "title": "Low", "description": "Low"},
+            ]
+        }
         high = _extract_high_risk(ai)
         assert len(high) == 0
 
     def test_preserves_source_analyst(self):
-        ai = {"findings": [
-            {
-                "file_path": "/a.py",
-                "severity": "critical",
-                "title": "Bad",
-                "description": "Very bad",
-                "source_analyst": "paranoid",
-                "source_analyst_number": 1,
-            },
-        ]}
+        ai = {
+            "findings": [
+                {
+                    "file_path": "/a.py",
+                    "severity": "critical",
+                    "title": "Bad",
+                    "description": "Very bad",
+                    "source_analyst": "paranoid",
+                    "source_analyst_number": 1,
+                },
+            ]
+        }
         high = _extract_high_risk(ai)
         assert high[0]["source_analyst"] == "paranoid"
         assert high[0]["source_analyst_number"] == 1
 
     def test_preserves_line_numbers(self):
-        ai = {"findings": [
-            {
-                "file_path": "/a.py",
-                "severity": "high",
-                "title": "Bad",
-                "description": "Very bad",
-                "line_numbers": [10, 5, 20],
-            },
-        ]}
+        ai = {
+            "findings": [
+                {
+                    "file_path": "/a.py",
+                    "severity": "high",
+                    "title": "Bad",
+                    "description": "Very bad",
+                    "line_numbers": [10, 5, 20],
+                },
+            ]
+        }
         high = _extract_high_risk(ai)
         assert high[0]["line_numbers"] == [5, 10, 20]
 
 
 class TestParseAdversarialOutput:
     def test_direct_json(self):
-        data = json.dumps({
-            "verification_summary": "done",
-            "results": [{"file_path": "/a.py", "verdict": "confirmed"}],
-        })
+        data = json.dumps(
+            {
+                "verification_summary": "done",
+                "results": [{"file_path": "/a.py", "verdict": "confirmed"}],
+            }
+        )
         result = _parse_adversarial_output(data)
         assert result["verification_summary"] == "done"
 
@@ -143,26 +154,30 @@ class TestParseAdversarialOutput:
 
 class TestMergeAdversarialResults:
     def test_merges_verdict(self):
-        ai = {"findings": [
-            {"file_path": "/a.py", "risk_score": 7},
-            {"file_path": "/b.py", "risk_score": 5},
-        ]}
+        ai = {
+            "findings": [
+                {"file_path": "/a.py", "risk_score": 7},
+                {"file_path": "/b.py", "risk_score": 5},
+            ]
+        }
         verification = {
             "verification_summary": "done",
             "total_reviewed": 1,
             "confirmed_count": 0,
             "downgraded_count": 1,
-            "results": [{
-                "file_path": "/a.py",
-                "verdict": "downgraded",
-                "revised_risk_score": 2,
-                "reasoning": "benign pattern",
-                "confidence": 95,
-                "benign_explanation_attempted": "it's fine",
-            }],
+            "results": [
+                {
+                    "file_path": "/a.py",
+                    "verdict": "downgraded",
+                    "revised_risk_score": 2,
+                    "reasoning": "benign pattern",
+                    "confidence": 95,
+                    "benign_explanation_attempted": "it's fine",
+                }
+            ],
         }
         result = _merge_adversarial_results(ai, verification)
-        finding_a = [f for f in result["findings"] if f["file_path"] == "/a.py"][0]
+        finding_a = next(f for f in result["findings"] if f["file_path"] == "/a.py")
         assert finding_a["adversarial_status"] == "downgraded"
         assert finding_a["risk_score"] == 2
         assert finding_a["original_risk_score"] == 7
@@ -177,10 +192,12 @@ class TestMergeAdversarialResults:
 
     def test_multiple_findings_same_path_get_correct_verdicts(self):
         """Two findings at the same file_path should each get their own verdict."""
-        ai = {"findings": [
-            {"file_path": "/main.py", "title": "Rate Limiting", "risk_score": 7},
-            {"file_path": "/main.py", "title": "CORS Misconfiguration", "risk_score": 6},
-        ]}
+        ai = {
+            "findings": [
+                {"file_path": "/main.py", "title": "Rate Limiting", "risk_score": 7},
+                {"file_path": "/main.py", "title": "CORS Misconfiguration", "risk_score": 6},
+            ]
+        }
         verification = {
             "verification_summary": "done",
             "total_reviewed": 2,
@@ -207,8 +224,8 @@ class TestMergeAdversarialResults:
             ],
         }
         result = _merge_adversarial_results(ai, verification)
-        rate_limit = [f for f in result["findings"] if f["title"] == "Rate Limiting"][0]
-        cors = [f for f in result["findings"] if f["title"] == "CORS Misconfiguration"][0]
+        rate_limit = next(f for f in result["findings"] if f["title"] == "Rate Limiting")
+        cors = next(f for f in result["findings"] if f["title"] == "CORS Misconfiguration")
         assert rate_limit["adversarial_status"] == "confirmed"
         assert rate_limit["risk_score"] == 7  # no revision
         assert cors["adversarial_status"] == "downgraded"
@@ -304,7 +321,7 @@ class TestDeduplicateFindings:
         ]
         originals = [dict(f) for f in findings]
         _deduplicate_findings(findings)
-        for orig, current in zip(originals, findings):
+        for orig, current in zip(originals, findings, strict=True):
             assert orig == current
 
     def test_confidence_breaks_ties(self):
@@ -370,14 +387,16 @@ class TestNormalizeAdversarialSchema:
 
 class TestParseAdversarialOutputSchemaDetection:
     def test_analyst_forced_schema_produces_results(self):
-        data = json.dumps({
-            "analyst": "adversarial",
-            "summary": "Reviewed findings",
-            "findings": [
-                {"file_path": "/a.py", "verdict": "confirmed", "reasoning": "bad", "confidence": 90},
-                {"file_path": "/b.py", "verdict": "downgraded", "reasoning": "ok", "confidence": 80},
-            ],
-        })
+        data = json.dumps(
+            {
+                "analyst": "adversarial",
+                "summary": "Reviewed findings",
+                "findings": [
+                    {"file_path": "/a.py", "verdict": "confirmed", "reasoning": "bad", "confidence": 90},
+                    {"file_path": "/b.py", "verdict": "downgraded", "reasoning": "ok", "confidence": 80},
+                ],
+            }
+        )
         result = _parse_adversarial_output(data)
         assert "results" in result
         assert len(result["results"]) == 2
@@ -385,13 +404,15 @@ class TestParseAdversarialOutputSchemaDetection:
         assert result["downgraded_count"] == 1
 
     def test_native_schema_direct(self):
-        data = json.dumps({
-            "verification_summary": "done",
-            "total_reviewed": 1,
-            "confirmed_count": 1,
-            "downgraded_count": 0,
-            "results": [{"file_path": "/a.py", "verdict": "confirmed", "reasoning": "bad"}],
-        })
+        data = json.dumps(
+            {
+                "verification_summary": "done",
+                "total_reviewed": 1,
+                "confirmed_count": 1,
+                "downgraded_count": 0,
+                "results": [{"file_path": "/a.py", "verdict": "confirmed", "reasoning": "bad"}],
+            }
+        )
         result = _parse_adversarial_output(data)
         assert result["total_reviewed"] == 1
         assert len(result["results"]) == 1
@@ -399,22 +420,31 @@ class TestParseAdversarialOutputSchemaDetection:
 
 class TestMergeAdversarialResultsBothSchemas:
     def test_merge_with_normalized_analyst_schema(self):
-        ai_findings = {"findings": [
-            {"file_path": "/a.py", "risk_score": 7},
-            {"file_path": "/b.py", "risk_score": 5},
-        ]}
-        verification = _normalize_adversarial_schema({
-            "summary": "Reviewed 2 findings",
+        ai_findings = {
             "findings": [
-                {"file_path": "/a.py", "verdict": "confirmed", "reasoning": "bad", "confidence": 90},
-                {"file_path": "/b.py", "verdict": "downgraded", "reasoning": "ok", "confidence": 80,
-                 "revised_risk_score": 2},
-            ],
-        })
+                {"file_path": "/a.py", "risk_score": 7},
+                {"file_path": "/b.py", "risk_score": 5},
+            ]
+        }
+        verification = _normalize_adversarial_schema(
+            {
+                "summary": "Reviewed 2 findings",
+                "findings": [
+                    {"file_path": "/a.py", "verdict": "confirmed", "reasoning": "bad", "confidence": 90},
+                    {
+                        "file_path": "/b.py",
+                        "verdict": "downgraded",
+                        "reasoning": "ok",
+                        "confidence": 80,
+                        "revised_risk_score": 2,
+                    },
+                ],
+            }
+        )
         result = _merge_adversarial_results(ai_findings, verification)
 
-        finding_a = [f for f in result["findings"] if f["file_path"] == "/a.py"][0]
-        finding_b = [f for f in result["findings"] if f["file_path"] == "/b.py"][0]
+        finding_a = next(f for f in result["findings"] if f["file_path"] == "/a.py")
+        finding_b = next(f for f in result["findings"] if f["file_path"] == "/b.py")
         assert finding_a["adversarial_status"] == "confirmed"
         assert finding_b["adversarial_status"] == "downgraded"
         assert finding_b["risk_score"] == 2
@@ -424,6 +454,7 @@ class TestMergeAdversarialResultsBothSchemas:
 
     def test_merge_logs_warning_on_unexpected_schema(self, caplog):
         import logging
+
         ai_findings = {"findings": [{"file_path": "/a.py", "risk_score": 7}]}
         verification = {"some_unexpected_key": "value", "results": []}
         with caplog.at_level(logging.WARNING):
@@ -435,25 +466,41 @@ class TestMergeNormalizedTitleMatching:
     """Tests for robust title matching in _merge_adversarial_results."""
 
     def test_matches_with_different_casing(self):
-        ai = {"findings": [
-            {"file_path": "/a.py", "title": "SQL Injection Risk", "risk_score": 7},
-        ]}
+        ai = {
+            "findings": [
+                {"file_path": "/a.py", "title": "SQL Injection Risk", "risk_score": 7},
+            ]
+        }
         verification = {
-            "results": [{"file_path": "/a.py", "title": "sql injection risk",
-                         "verdict": "confirmed", "confidence": 90}],
-            "total_reviewed": 1, "confirmed_count": 1, "downgraded_count": 0,
+            "results": [
+                {"file_path": "/a.py", "title": "sql injection risk", "verdict": "confirmed", "confidence": 90}
+            ],
+            "total_reviewed": 1,
+            "confirmed_count": 1,
+            "downgraded_count": 0,
         }
         result = _merge_adversarial_results(ai, verification)
         assert result["findings"][0]["adversarial_status"] == "confirmed"
 
     def test_matches_with_extra_whitespace(self):
-        ai = {"findings": [
-            {"file_path": "/a.py", "title": "Command  Injection", "risk_score": 8},
-        ]}
+        ai = {
+            "findings": [
+                {"file_path": "/a.py", "title": "Command  Injection", "risk_score": 8},
+            ]
+        }
         verification = {
-            "results": [{"file_path": "/a.py", "title": "Command Injection",
-                         "verdict": "downgraded", "revised_risk_score": 3, "confidence": 85}],
-            "total_reviewed": 1, "confirmed_count": 0, "downgraded_count": 1,
+            "results": [
+                {
+                    "file_path": "/a.py",
+                    "title": "Command Injection",
+                    "verdict": "downgraded",
+                    "revised_risk_score": 3,
+                    "confidence": 85,
+                }
+            ],
+            "total_reviewed": 1,
+            "confirmed_count": 0,
+            "downgraded_count": 1,
         }
         result = _merge_adversarial_results(ai, verification)
         assert result["findings"][0]["adversarial_status"] == "downgraded"
@@ -461,27 +508,37 @@ class TestMergeNormalizedTitleMatching:
     def test_fallback_single_finding_per_file(self):
         """When one finding and one result share a file_path but titles differ,
         fall back to file_path-only matching."""
-        ai = {"findings": [
-            {"file_path": "/a.py", "title": "Hardcoded credentials detected", "risk_score": 7},
-        ]}
+        ai = {
+            "findings": [
+                {"file_path": "/a.py", "title": "Hardcoded credentials detected", "risk_score": 7},
+            ]
+        }
         verification = {
-            "results": [{"file_path": "/a.py", "title": "Exposed API key in source",
-                         "verdict": "confirmed", "confidence": 92}],
-            "total_reviewed": 1, "confirmed_count": 1, "downgraded_count": 0,
+            "results": [
+                {"file_path": "/a.py", "title": "Exposed API key in source", "verdict": "confirmed", "confidence": 92}
+            ],
+            "total_reviewed": 1,
+            "confirmed_count": 1,
+            "downgraded_count": 0,
         }
         result = _merge_adversarial_results(ai, verification)
         assert result["findings"][0]["adversarial_status"] == "confirmed"
 
     def test_no_fallback_when_multiple_findings_per_file(self):
         """When multiple findings share a file_path, don't use file-only fallback."""
-        ai = {"findings": [
-            {"file_path": "/a.py", "title": "Issue A", "risk_score": 7},
-            {"file_path": "/a.py", "title": "Issue B", "risk_score": 6},
-        ]}
+        ai = {
+            "findings": [
+                {"file_path": "/a.py", "title": "Issue A", "risk_score": 7},
+                {"file_path": "/a.py", "title": "Issue B", "risk_score": 6},
+            ]
+        }
         verification = {
-            "results": [{"file_path": "/a.py", "title": "Something else entirely",
-                         "verdict": "confirmed", "confidence": 80}],
-            "total_reviewed": 1, "confirmed_count": 1, "downgraded_count": 0,
+            "results": [
+                {"file_path": "/a.py", "title": "Something else entirely", "verdict": "confirmed", "confidence": 80}
+            ],
+            "total_reviewed": 1,
+            "confirmed_count": 1,
+            "downgraded_count": 0,
         }
         result = _merge_adversarial_results(ai, verification)
         # Neither should match — ambiguous which finding the result corresponds to
@@ -490,14 +547,17 @@ class TestMergeNormalizedTitleMatching:
 
     def test_all_findings_get_adversarial_status(self):
         """Every finding should have adversarial_status after merge."""
-        ai = {"findings": [
-            {"file_path": "/a.py", "title": "Critical bug", "risk_score": 9},
-            {"file_path": "/b.py", "title": "Minor issue", "risk_score": 2},
-        ]}
+        ai = {
+            "findings": [
+                {"file_path": "/a.py", "title": "Critical bug", "risk_score": 9},
+                {"file_path": "/b.py", "title": "Minor issue", "risk_score": 2},
+            ]
+        }
         verification = {
-            "results": [{"file_path": "/a.py", "title": "Critical bug",
-                         "verdict": "confirmed", "confidence": 95}],
-            "total_reviewed": 1, "confirmed_count": 1, "downgraded_count": 0,
+            "results": [{"file_path": "/a.py", "title": "Critical bug", "verdict": "confirmed", "confidence": 95}],
+            "total_reviewed": 1,
+            "confirmed_count": 1,
+            "downgraded_count": 0,
         }
         result = _merge_adversarial_results(ai, verification)
         assert result["findings"][0]["adversarial_status"] == "confirmed"
@@ -506,21 +566,27 @@ class TestMergeNormalizedTitleMatching:
     def test_adversarial_status_survives_enrichment(self):
         """End-to-end: adversarial_status should survive through enrich_all_findings."""
         from unittest.mock import patch
+
         from thresher.harness.report import enrich_all_findings
 
-        ai = {"findings": [
-            {"file_path": "/a.py", "title": "RCE", "risk_score": 9},
-        ]}
+        ai = {
+            "findings": [
+                {"file_path": "/a.py", "title": "RCE", "risk_score": 9},
+            ]
+        }
         verification = {
-            "results": [{"file_path": "/a.py", "title": "RCE",
-                         "verdict": "confirmed", "confidence": 95}],
-            "total_reviewed": 1, "confirmed_count": 1, "downgraded_count": 0,
+            "results": [{"file_path": "/a.py", "title": "RCE", "verdict": "confirmed", "confidence": 95}],
+            "total_reviewed": 1,
+            "confirmed_count": 1,
+            "downgraded_count": 0,
         }
         merged = _merge_adversarial_results(ai, verification)
         verified_list = merged["findings"]
 
-        with patch("thresher.report.scoring.fetch_epss_scores", return_value={}), \
-             patch("thresher.report.scoring.load_kev_catalog", return_value=set()):
+        with (
+            patch("thresher.report.scoring.fetch_epss_scores", return_value={}),
+            patch("thresher.report.scoring.load_kev_catalog", return_value=set()),
+        ):
             result = enrich_all_findings([], verified_list)
 
         enriched = result["findings"]
@@ -577,13 +643,15 @@ class TestMergeAnalystFindings:
 
 class TestRunAdversarialVerification:
     def _valid_adversarial_output(self):
-        return json.dumps({
-            "verification_summary": "done",
-            "total_reviewed": 1,
-            "confirmed_count": 1,
-            "downgraded_count": 0,
-            "results": [{"file_path": "/a.py", "verdict": "confirmed", "reasoning": "bad"}],
-        }).encode()
+        return json.dumps(
+            {
+                "verification_summary": "done",
+                "total_reviewed": 1,
+                "confirmed_count": 1,
+                "downgraded_count": 0,
+                "results": [{"file_path": "/a.py", "verdict": "confirmed", "reasoning": "bad"}],
+            }
+        ).encode()
 
     def _analyst_findings_with_high_risk(self):
         return [
@@ -712,7 +780,8 @@ class TestRunAdversarialVerification:
         """When output_dir is provided, an adversarial-verification.md is
         written next to the report so the verification work is visible."""
         mock_popen.return_value = _mock_popen(
-            returncode=0, stdout=self._valid_adversarial_output(),
+            returncode=0,
+            stdout=self._valid_adversarial_output(),
         )
         run_adversarial_verification(
             _make_config(),
@@ -728,7 +797,8 @@ class TestRunAdversarialVerification:
     def test_no_markdown_when_no_output_dir(self, mock_popen, tmp_path):
         """Without output_dir, no markdown file should be written anywhere."""
         mock_popen.return_value = _mock_popen(
-            returncode=0, stdout=self._valid_adversarial_output(),
+            returncode=0,
+            stdout=self._valid_adversarial_output(),
         )
         run_adversarial_verification(
             _make_config(),

@@ -53,7 +53,7 @@ def parse_checkov_output(raw: Any) -> list[Finding]:
         for check in failed_checks:
             check_id = check.get("check_id", "unknown")
             check_type = check.get("check_type", "")
-            check_result = check.get("check_result", {}).get("result", "FAILED")
+            check.get("check_result", {}).get("result", "FAILED")
             file_path = check.get("file_path")
             line_range = check.get("file_line_range", [])
             resource = check.get("resource", "")

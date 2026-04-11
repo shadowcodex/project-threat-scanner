@@ -22,14 +22,14 @@ import sys
 # Make sibling modules importable when invoked as a plain script.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from extract_json import extract_json_object  # noqa: E402
+from extract_json import extract_json_object
 
 _VALID_SCHEMAS = {"predep", "analyst", "adversarial", "report"}
 
 
 def _usage_and_exit() -> None:
     print(
-        f"usage: {sys.argv[0]} <{ '|'.join(sorted(_VALID_SCHEMAS)) }>",
+        f"usage: {sys.argv[0]} <{'|'.join(sorted(_VALID_SCHEMAS))}>",
         file=sys.stderr,
     )
     sys.exit(2)
@@ -54,8 +54,7 @@ def main() -> None:
     data = extract_json_object(msg)
     if data is None:
         print(
-            "Response is not valid JSON. Output ONLY the raw JSON object, "
-            "no markdown or explanation.",
+            "Response is not valid JSON. Output ONLY the raw JSON object, no markdown or explanation.",
             file=sys.stderr,
         )
         sys.exit(2)

@@ -52,7 +52,7 @@ def parse_semgrep_supply_chain_output(raw: dict[str, Any]) -> list[Finding]:
         severity = _SEVERITY_MAP.get(severity_raw.upper(), "info")
 
         message = extra.get("message", "")
-        metadata = extra.get("metadata", {})
+        extra.get("metadata", {})
 
         file_path = hit.get("path")
         start_info = hit.get("start", {})

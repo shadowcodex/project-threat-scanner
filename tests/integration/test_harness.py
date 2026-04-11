@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import json
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from thresher.config import ScanConfig
 from thresher.harness.pipeline import run_pipeline
 
 
 class TestHarnessPipeline:
-
     def test_full_pipeline_skip_ai(self, tmp_path):
         """Full pipeline with skip_ai runs and returns a report path via Hamilton."""
         config = ScanConfig(

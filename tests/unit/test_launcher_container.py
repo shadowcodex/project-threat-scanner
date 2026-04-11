@@ -10,7 +10,8 @@ class TestBuildDockerArgs:
         return build_docker_args(
             output_mount=kwargs.get("output_mount", "/host/out:/output"),
             config_mount=kwargs.get(
-                "config_mount", "/host/cfg.json:/config/config.json:ro",
+                "config_mount",
+                "/host/cfg.json:/config/config.json:ro",
             ),
             env_flags=kwargs.get("env_flags", []),
         )
@@ -51,8 +52,10 @@ class TestBuildDockerArgs:
     def test_required_tmpfs_mounts_present(self):
         args = self._args()
         tmpfs_targets = [
-            arg for arg in args
-            if isinstance(arg, str) and arg.startswith(("/tmp:", "/home/thresher:", "/opt/target:", "/opt/scan-results:", "/opt/deps:"))
+            arg
+            for arg in args
+            if isinstance(arg, str)
+            and arg.startswith(("/tmp:", "/home/thresher:", "/opt/target:", "/opt/scan-results:", "/opt/deps:"))
         ]
         assert len(tmpfs_targets) == 5
         for t in tmpfs_targets:
@@ -72,7 +75,7 @@ class TestBuildDockerArgs:
     def test_image_followed_by_harness_args(self):
         args = self._args()
         idx = args.index(DOCKER_IMAGE)
-        tail = args[idx + 1:]
+        tail = args[idx + 1 :]
         assert tail == ["--config", "/config/config.json", "--output", "/output"]
 
     def test_env_flags_appear_before_image(self):

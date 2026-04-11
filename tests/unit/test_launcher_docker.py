@@ -97,7 +97,7 @@ class TestBuildDockerCmd:
         cmd = _build_docker_cmd(config, "/tmp/config.json", config.output_dir)
         tmpfs_indices = [i for i, v in enumerate(cmd) if v == "--tmpfs"]
         tmpfs_targets = [cmd[i + 1] for i in tmpfs_indices]
-        home_mount = [t for t in tmpfs_targets if "/home/thresher:" in t][0]
+        home_mount = next(t for t in tmpfs_targets if "/home/thresher:" in t)
         for part in home_mount.split(","):
             if part.startswith("size="):
                 size = int(part.split("=")[1])
@@ -193,6 +193,7 @@ class TestLaunchDocker:
             launch_docker(config)
 
         import os
+
         assert captured_path, "Should have captured config path"
         assert not os.path.exists(captured_path[0]), "Temp config file should be deleted"
 
@@ -212,11 +213,11 @@ class TestLaunchDocker:
                     captured_path.append(vol.split(":")[0])
             raise OSError("docker not found")
 
-        with patch("thresher.launcher.docker.subprocess.run", side_effect=capture_and_raise):
-            with pytest.raises(OSError):
-                launch_docker(config)
+        with patch("thresher.launcher.docker.subprocess.run", side_effect=capture_and_raise), pytest.raises(OSError):
+            launch_docker(config)
 
         import os
+
         assert captured_path, "Should have captured config path"
         assert not os.path.exists(captured_path[0]), "Temp config file should be deleted on failure"
 
@@ -237,9 +238,11 @@ class TestLaunchDockerLogging:
         mock_proc.stdout = [b"line1\n", b"line2\n"]
         mock_proc.returncode = 0
 
-        with patch("thresher.launcher.docker._resolve_log_file", return_value=str(log_file)):
-            with patch("thresher.launcher.docker.subprocess.Popen", return_value=mock_proc):
-                rc = launch_docker(config)
+        with (
+            patch("thresher.launcher.docker._resolve_log_file", return_value=str(log_file)),
+            patch("thresher.launcher.docker.subprocess.Popen", return_value=mock_proc),
+        ):
+            rc = launch_docker(config)
 
         assert rc == 0
         content = log_file.read_text()
@@ -259,9 +262,11 @@ class TestLaunchDockerLogging:
         mock_proc.stdout = []
         mock_proc.returncode = 7
 
-        with patch("thresher.launcher.docker._resolve_log_file", return_value=str(log_file)):
-            with patch("thresher.launcher.docker.subprocess.Popen", return_value=mock_proc):
-                rc = launch_docker(config)
+        with (
+            patch("thresher.launcher.docker._resolve_log_file", return_value=str(log_file)),
+            patch("thresher.launcher.docker.subprocess.Popen", return_value=mock_proc),
+        ):
+            rc = launch_docker(config)
 
         assert rc == 7
 
@@ -275,9 +280,11 @@ class TestLaunchDockerLogging:
         mock_result = MagicMock()
         mock_result.returncode = 0
 
-        with patch("thresher.launcher.docker._resolve_log_file", return_value=None):
-            with patch("thresher.launcher.docker.subprocess.run", return_value=mock_result) as mock_run:
-                rc = launch_docker(config)
+        with (
+            patch("thresher.launcher.docker._resolve_log_file", return_value=None),
+            patch("thresher.launcher.docker.subprocess.run", return_value=mock_result) as mock_run,
+        ):
+            rc = launch_docker(config)
 
         assert rc == 0
         mock_run.assert_called_once()
@@ -305,10 +312,13 @@ class TestLaunchDockerLogging:
                     captured_paths.append(vol.split(":")[0])
             return mock_proc
 
-        with patch("thresher.launcher.docker._resolve_log_file", return_value=str(log_file)):
-            with patch("thresher.launcher.docker.subprocess.Popen", side_effect=capture_popen):
-                launch_docker(config)
+        with (
+            patch("thresher.launcher.docker._resolve_log_file", return_value=str(log_file)),
+            patch("thresher.launcher.docker.subprocess.Popen", side_effect=capture_popen),
+        ):
+            launch_docker(config)
 
         import os
+
         assert captured_paths
         assert not os.path.exists(captured_paths[0])

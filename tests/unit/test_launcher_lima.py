@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -57,16 +57,17 @@ class TestEnsureVmRunning:
     def test_missing_vm_raises_runtime_error(self):
         mock_result = MagicMock()
         mock_result.stdout = b""
-        with patch("thresher.launcher.lima.subprocess.run", return_value=mock_result):
-            with pytest.raises(RuntimeError, match="not found"):
-                _ensure_vm_running()
+        with (
+            patch("thresher.launcher.lima.subprocess.run", return_value=mock_result),
+            pytest.raises(RuntimeError, match="not found"),
+        ):
+            _ensure_vm_running()
 
     def test_unknown_status_raises_runtime_error(self):
         mock_result = MagicMock()
         mock_result.stdout = b"Unknown\n"
-        with patch("thresher.launcher.lima.subprocess.run", return_value=mock_result):
-            with pytest.raises(RuntimeError):
-                _ensure_vm_running()
+        with patch("thresher.launcher.lima.subprocess.run", return_value=mock_result), pytest.raises(RuntimeError):
+            _ensure_vm_running()
 
 
 class TestApplyFirewall:
@@ -292,10 +293,7 @@ class TestLaunchLima:
             launch_lima(config)
 
         # Find limactl copy (config upload, not report download)
-        config_copy_calls = [
-            c for c in call_log
-            if "copy" in c and "-r" not in c and BASE_VM_NAME in " ".join(c)
-        ]
+        config_copy_calls = [c for c in call_log if "copy" in c and "-r" not in c and BASE_VM_NAME in " ".join(c)]
         assert config_copy_calls, "Should upload config to VM via limactl copy"
         # Destination should be /opt/config.json
         assert any("/opt/config.json" in " ".join(c) for c in config_copy_calls)
@@ -349,5 +347,6 @@ class TestLaunchLima:
             launch_lima(config)
 
         import os
+
         for path in captured_paths:
             assert not os.path.exists(path), f"Temp config {path} should be deleted"

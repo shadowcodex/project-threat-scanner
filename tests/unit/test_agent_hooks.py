@@ -192,7 +192,7 @@ def test_jsonschema_unimportable_fails_loud(tmp_path):
     fake_python = tmp_path / "python3"
     fake_python.write_text(
         "#!/usr/bin/env bash\n"
-        "exec /usr/bin/env python3 -c \""
+        'exec /usr/bin/env python3 -c "'
         "import sys; "
         "sys.modules['jsonschema'] = None; "
         "exec(open('/dev/stdin').read())\"\n"
@@ -217,8 +217,7 @@ def test_jsonschema_unimportable_fails_loud(tmp_path):
         env=env,
     )
     assert result.returncode == 2, (
-        f"hook silently exited 0 without jsonschema; "
-        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        f"hook silently exited 0 without jsonschema; stdout={result.stdout!r} stderr={result.stderr!r}"
     )
     assert b"jsonschema" in result.stderr.lower()
 
@@ -226,6 +225,7 @@ def test_jsonschema_unimportable_fails_loud(tmp_path):
 # ---------------------------------------------------------------------------
 # Helper for non-report hooks (no schema file needed)
 # ---------------------------------------------------------------------------
+
 
 def _run_agent_hook(schema_name, last_assistant_message):
     """Run the shared stop hook with the given schema dispatch arg."""
@@ -582,6 +582,7 @@ class TestBuildStopHookSettings:
     @pytest.mark.parametrize("schema", ["predep", "analyst", "adversarial", "report"])
     def test_settings_command_dispatches_to_shared_script(self, schema):
         from thresher.agents._runner import build_stop_hook_settings
+
         settings = json.loads(build_stop_hook_settings(schema))
         hook_cmd = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
         # Command is "<absolute path to script> <schema name>"
@@ -596,6 +597,7 @@ class TestSettingsPassedToCommand:
 
     def _mock_popen(self, returncode=0, stdout=b""):
         from unittest.mock import MagicMock
+
         mock = MagicMock()
         mock.stdout = iter(stdout.splitlines(keepends=True)) if stdout else iter([])
         mock.returncode = returncode
@@ -604,6 +606,7 @@ class TestSettingsPassedToCommand:
 
     def _make_config(self):
         from thresher.config import ScanConfig
+
         return ScanConfig(
             repo_url="https://github.com/x/y",
             anthropic_api_key="sk-ant-test-key",
@@ -611,13 +614,16 @@ class TestSettingsPassedToCommand:
 
     def test_predep_passes_settings_flag(self):
         from unittest.mock import patch
+
         from thresher.agents.predep import run_predep_discovery
 
-        sample = json.dumps({
-            "hidden_dependencies": [],
-            "files_scanned": 0,
-            "summary": "empty",
-        })
+        sample = json.dumps(
+            {
+                "hidden_dependencies": [],
+                "files_scanned": 0,
+                "summary": "empty",
+            }
+        )
         with patch("thresher.run._popen") as mock:
             mock.return_value = self._mock_popen(stdout=sample.encode())
             run_predep_discovery(self._make_config())
@@ -626,17 +632,20 @@ class TestSettingsPassedToCommand:
 
     def test_analyst_passes_settings_flag(self):
         from unittest.mock import patch
-        from thresher.agents.analysts import _run_single_analyst, ANALYST_DEFINITIONS
 
-        sample = json.dumps({
-            "analyst": "paranoid",
-            "analyst_number": 1,
-            "core_question": "test?",
-            "files_analyzed": 0,
-            "findings": [],
-            "summary": "clean",
-            "risk_score": 0,
-        })
+        from thresher.agents.analysts import ANALYST_DEFINITIONS, _run_single_analyst
+
+        sample = json.dumps(
+            {
+                "analyst": "paranoid",
+                "analyst_number": 1,
+                "core_question": "test?",
+                "files_analyzed": 0,
+                "findings": [],
+                "summary": "clean",
+                "risk_score": 0,
+            }
+        )
         with patch("thresher.run._popen") as mock:
             mock.return_value = self._mock_popen(stdout=sample.encode())
             _run_single_analyst(self._make_config(), ANALYST_DEFINITIONS[0])
@@ -645,22 +654,25 @@ class TestSettingsPassedToCommand:
 
     def test_adversarial_passes_settings_flag(self):
         from unittest.mock import patch
+
         from thresher.agents.adversarial import run_adversarial_verification
 
-        sample = json.dumps({
-            "results": [
-                {
-                    "file_path": "/opt/target/main.py",
-                    "verdict": "confirmed",
-                    "confidence": 90,
-                    "reasoning": "genuine risk",
-                }
-            ],
-            "verification_summary": "done",
-            "total_reviewed": 1,
-            "confirmed_count": 1,
-            "downgraded_count": 0,
-        })
+        sample = json.dumps(
+            {
+                "results": [
+                    {
+                        "file_path": "/opt/target/main.py",
+                        "verdict": "confirmed",
+                        "confidence": 90,
+                        "reasoning": "genuine risk",
+                    }
+                ],
+                "verification_summary": "done",
+                "total_reviewed": 1,
+                "confirmed_count": 1,
+                "downgraded_count": 0,
+            }
+        )
         analyst_findings = [
             {
                 "analyst": "paranoid",

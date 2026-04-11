@@ -15,9 +15,12 @@ def launch_direct(config: ScanConfig) -> int:
     with tempfile_with(config.to_json(), suffix=".json") as config_path:
         cmd = [
             sys.executable,
-            "-m", "thresher.harness",
-            "--config", str(config_path),
-            "--output", config.output_dir,
+            "-m",
+            "thresher.harness",
+            "--config",
+            str(config_path),
+            "--output",
+            config.output_dir,
         ]
         logger.info("Launching harness (direct mode): %s", " ".join(cmd))
         result = subprocess.run(cmd)

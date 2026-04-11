@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
-import os
 import textwrap
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from thresher.scanners.deps_dev import parse_deps_dev_output, run_deps_dev, _DEPS_DEV_SCRIPT
+from thresher.scanners.deps_dev import _DEPS_DEV_SCRIPT, parse_deps_dev_output, run_deps_dev
 
 
 def _mock_popen(returncode=0, stdout=b""):
@@ -85,10 +83,20 @@ class TestParseDepsDevOutput:
         raw = {
             "scanner": "deps-dev",
             "findings": [
-                {"type": "low_scorecard", "package": "a", "ecosystem": "npm",
-                 "severity": "medium", "description": "low score"},
-                {"type": "typosquatting_signal", "package": "b", "ecosystem": "npm",
-                 "severity": "high", "description": "similar name"},
+                {
+                    "type": "low_scorecard",
+                    "package": "a",
+                    "ecosystem": "npm",
+                    "severity": "medium",
+                    "description": "low score",
+                },
+                {
+                    "type": "typosquatting_signal",
+                    "package": "b",
+                    "ecosystem": "npm",
+                    "severity": "high",
+                    "description": "similar name",
+                },
             ],
         }
         findings = parse_deps_dev_output(raw)
@@ -169,7 +177,8 @@ class TestParseUvLock:
     def test_parses_basic_uv_lock(self, tmp_path):
         parse_uv_lock = _exec_script_function("_parse_uv_lock")
         uv_lock = tmp_path / "uv.lock"
-        uv_lock.write_text(textwrap.dedent("""\
+        uv_lock.write_text(
+            textwrap.dedent("""\
             version = 1
             requires-python = ">=3.12"
 
@@ -180,7 +189,8 @@ class TestParseUvLock:
             [[package]]
             name = "flask"
             version = "3.0.2"
-        """))
+        """)
+        )
         result = parse_uv_lock(str(uv_lock))
         assert ("pypi", "requests", "2.31.0") in result
         assert ("pypi", "flask", "3.0.2") in result
@@ -189,7 +199,8 @@ class TestParseUvLock:
     def test_parses_uv_lock_with_extras(self, tmp_path):
         parse_uv_lock = _exec_script_function("_parse_uv_lock")
         uv_lock = tmp_path / "uv.lock"
-        uv_lock.write_text(textwrap.dedent("""\
+        uv_lock.write_text(
+            textwrap.dedent("""\
             [[package]]
             name = "boto3"
             version = "1.34.0"
@@ -201,7 +212,8 @@ class TestParseUvLock:
             [[package]]
             name = "botocore"
             version = "1.34.0"
-        """))
+        """)
+        )
         result = parse_uv_lock(str(uv_lock))
         assert ("pypi", "boto3", "1.34.0") in result
         assert ("pypi", "botocore", "1.34.0") in result

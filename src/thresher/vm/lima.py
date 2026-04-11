@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -75,7 +76,9 @@ def _check_vz_available() -> bool:
     try:
         result = subprocess.run(
             ["limactl", "info"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             info = json.loads(result.stdout)
@@ -135,7 +138,8 @@ def create_vm(config: ScanConfig) -> str:
     create_cmd = [
         "limactl",
         "create",
-        "--name", vm_name,
+        "--name",
+        vm_name,
         f"--cpus={config.vm.cpus}",
         f"--memory={config.vm.memory}",
         f"--disk={config.vm.disk}",
@@ -194,13 +198,12 @@ def stop_vm(vm_name: str) -> None:
     """Stop a Lima VM without deleting it."""
     logger.info("Stopping VM %s", vm_name)
     # Best-effort sync before stop
-    try:
+    with contextlib.suppress(Exception):
         subprocess.run(
             ["limactl", "shell", vm_name, "sync"],
-            capture_output=True, timeout=30,
+            capture_output=True,
+            timeout=30,
         )
-    except Exception:
-        pass
     result = _run_limactl(["limactl", "stop", vm_name], timeout=120)
     if result.returncode != 0:
         raise LimaError(f"Failed to stop VM '{vm_name}': {result.stderr}")
@@ -223,8 +226,7 @@ def ensure_base_running() -> str:
     status = vm_status(BASE_VM_NAME)
     if status == "Not found":
         raise LimaError(
-            f"Base VM '{BASE_VM_NAME}' not found. "
-            "Run `thresher build` first to create the cached base image."
+            f"Base VM '{BASE_VM_NAME}' not found. Run `thresher build` first to create the cached base image."
         )
     if status != "Running":
         start_vm(BASE_VM_NAME)
@@ -242,14 +244,18 @@ def load_image(vm_name: str, image_path: str) -> None:
     remote_path = "/tmp/thresher-image.tar"
     result = subprocess.run(
         ["limactl", "copy", image_path, f"{vm_name}:{remote_path}"],
-        capture_output=True, text=True, timeout=300,
+        capture_output=True,
+        text=True,
+        timeout=300,
     )
     if result.returncode != 0:
         raise LimaError(f"Failed to copy image to VM: {result.stderr}")
 
     result = subprocess.run(
         ["limactl", "shell", vm_name, "docker", "load", "-i", remote_path],
-        capture_output=True, text=True, timeout=300,
+        capture_output=True,
+        text=True,
+        timeout=300,
     )
     if result.returncode != 0:
         raise LimaError(f"Failed to load Docker image: {result.stderr}")
@@ -283,16 +289,16 @@ def _provision_docker(vm_name: str) -> None:
     for cmd in cmds:
         result = subprocess.run(
             ["limactl", "shell", vm_name, "bash", "-c", cmd],
-            capture_output=True, text=True, timeout=300,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
         if result.returncode != 0:
             raise LimaError(f"Docker provisioning failed: {result.stderr}")
     logger.info("Docker provisioned in VM %s", vm_name)
 
 
-def _run_limactl(
-    cmd: list[str], timeout: int = 120
-) -> subprocess.CompletedProcess[str]:
+def _run_limactl(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
     """Run a limactl command synchronously."""
     try:
         return subprocess.run(
@@ -302,10 +308,6 @@ def _run_limactl(
             timeout=timeout,
         )
     except FileNotFoundError as exc:
-        raise LimaError(
-            "limactl not found. Install Lima: https://lima-vm.io"
-        ) from exc
+        raise LimaError("limactl not found. Install Lima: https://lima-vm.io") from exc
     except subprocess.TimeoutExpired as exc:
-        raise LimaError(
-            f"limactl command timed out after {timeout}s: {' '.join(cmd)}"
-        ) from exc
+        raise LimaError(f"limactl command timed out after {timeout}s: {' '.join(cmd)}") from exc

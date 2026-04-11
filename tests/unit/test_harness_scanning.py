@@ -1,10 +1,9 @@
 """Unit tests for thresher.harness.scanning."""
 
 import json
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-from thresher.harness.scanning import run_all_scanners, _populate_findings, _get_parser
+from unittest.mock import patch
+
+from thresher.harness.scanning import _get_parser, _populate_findings, run_all_scanners
 from thresher.scanners.models import Finding, ScanResults
 
 
@@ -13,9 +12,7 @@ def test_run_all_scanners_returns_results(mock_tasks):
     mock_tasks.return_value = [
         (
             "grype",
-            lambda **kw: ScanResults(
-                tool_name="grype", execution_time_seconds=1.0, exit_code=0
-            ),
+            lambda **kw: ScanResults(tool_name="grype", execution_time_seconds=1.0, exit_code=0),
         ),
     ]
     results = run_all_scanners(
@@ -38,9 +35,7 @@ def test_run_all_scanners_handles_failure(mock_tasks):
         ("broken", failing_scanner),
         (
             "working",
-            lambda **kw: ScanResults(
-                tool_name="working", execution_time_seconds=0.5, exit_code=0
-            ),
+            lambda **kw: ScanResults(tool_name="working", execution_time_seconds=0.5, exit_code=0),
         ),
     ]
     results = run_all_scanners(
@@ -51,7 +46,7 @@ def test_run_all_scanners_handles_failure(mock_tasks):
         config={},
     )
     assert len(results) == 2
-    broken = [r for r in results if r.tool_name == "broken"][0]
+    broken = next(r for r in results if r.tool_name == "broken")
     assert broken.exit_code == -1
 
 
@@ -92,9 +87,7 @@ def test_run_all_scanners_multiple_results(mock_tasks):
     mock_tasks.return_value = [
         (
             name,
-            (lambda n: lambda **kw: ScanResults(
-                tool_name=n, execution_time_seconds=0.1, exit_code=0
-            ))(name),
+            (lambda n: lambda **kw: ScanResults(tool_name=n, execution_time_seconds=0.1, exit_code=0))(name),
         )
         for name in names
     ]
@@ -113,6 +106,7 @@ def test_run_all_scanners_multiple_results(mock_tasks):
 def test_run_all_scanners_all_21_scanners():
     """Verify all 21 scanners are listed and counted."""
     from thresher.harness.scanning import _get_scanner_tasks
+
     real_tasks = _get_scanner_tasks()
     assert len(real_tasks) == 21
     # Verify all are tuples with (name, callable)
@@ -124,6 +118,7 @@ def test_run_all_scanners_all_21_scanners():
 def test_resolve_scanner_kwargs_grype():
     """Grype scanner should use sbom_path instead of target_dir."""
     from thresher.harness.scanning import _resolve_scanner_kwargs
+
     kwargs = _resolve_scanner_kwargs(
         "grype",
         sbom_path="/sbom.json",
@@ -140,6 +135,7 @@ def test_resolve_scanner_kwargs_grype():
 def test_resolve_scanner_kwargs_output_only():
     """Output-only scanners should only receive output_dir."""
     from thresher.harness.scanning import _resolve_scanner_kwargs
+
     output_only = ["entropy", "install-hooks", "guarddog-deps", "deps-dev", "registry-meta", "semgrep-sc"]
     for name in output_only:
         kwargs = _resolve_scanner_kwargs(
@@ -156,6 +152,7 @@ def test_resolve_scanner_kwargs_output_only():
 def test_resolve_scanner_kwargs_standard():
     """Standard scanners should receive target_dir and output_dir."""
     from thresher.harness.scanning import _resolve_scanner_kwargs
+
     standard = ["osv", "trivy", "semgrep", "bandit", "checkov", "guarddog"]
     for name in standard:
         kwargs = _resolve_scanner_kwargs(
@@ -176,15 +173,11 @@ def test_run_all_scanners_preserves_exit_code(mock_tasks):
     mock_tasks.return_value = [
         (
             "tool1",
-            lambda **kw: ScanResults(
-                tool_name="tool1", execution_time_seconds=1.0, exit_code=0
-            ),
+            lambda **kw: ScanResults(tool_name="tool1", execution_time_seconds=1.0, exit_code=0),
         ),
         (
             "tool2",
-            lambda **kw: ScanResults(
-                tool_name="tool2", execution_time_seconds=0.5, exit_code=1
-            ),
+            lambda **kw: ScanResults(tool_name="tool2", execution_time_seconds=0.5, exit_code=1),
         ),
     ]
     results = run_all_scanners(
@@ -202,6 +195,7 @@ def test_run_all_scanners_preserves_exit_code(mock_tasks):
 @patch("thresher.harness.scanning._get_scanner_tasks")
 def test_run_all_scanners_exception_contains_error_message(mock_tasks):
     """Exceptions should be captured in errors list."""
+
     def failing(**kwargs):
         raise ValueError("specific error message")
 
@@ -220,13 +214,12 @@ def test_run_all_scanners_exception_contains_error_message(mock_tasks):
 @patch("thresher.harness.scanning._get_scanner_tasks")
 def test_run_all_scanners_partial_failure_continues(mock_tasks):
     """If one scanner fails, others should still run."""
+
     def failing(**kwargs):
         raise RuntimeError("boom")
 
     def passing(**kwargs):
-        return ScanResults(
-            tool_name="passing", execution_time_seconds=0.1, exit_code=0
-        )
+        return ScanResults(tool_name="passing", execution_time_seconds=0.1, exit_code=0)
 
     mock_tasks.return_value = [
         ("fail1", failing),
@@ -253,10 +246,23 @@ class TestGetParser:
 
     def test_all_json_scanners_have_parser(self):
         json_scanners = [
-            "grype", "osv", "trivy", "semgrep", "bandit", "checkov",
-            "guarddog", "guarddog-deps", "gitleaks", "hadolint",
-            "cargo-audit", "scancode", "entropy", "install-hooks",
-            "deps-dev", "registry-meta", "semgrep-sc",
+            "grype",
+            "osv",
+            "trivy",
+            "semgrep",
+            "bandit",
+            "checkov",
+            "guarddog",
+            "guarddog-deps",
+            "gitleaks",
+            "hadolint",
+            "cargo-audit",
+            "scancode",
+            "entropy",
+            "install-hooks",
+            "deps-dev",
+            "registry-meta",
+            "semgrep-sc",
         ]
         for name in json_scanners:
             parser = _get_parser(name)
@@ -278,18 +284,24 @@ class TestGetParser:
 class TestPopulateFindings:
     def test_populates_from_grype_json(self, tmp_path):
         output_file = tmp_path / "grype.json"
-        output_file.write_text(json.dumps({
-            "matches": [{
-                "vulnerability": {
-                    "id": "CVE-2024-1234",
-                    "severity": "High",
-                    "description": "test vuln",
-                    "cvss": [{"metrics": {"baseScore": 8.1}}],
-                    "fix": {"versions": ["2.0.0"]},
-                },
-                "artifact": {"name": "requests", "version": "1.0.0"},
-            }]
-        }))
+        output_file.write_text(
+            json.dumps(
+                {
+                    "matches": [
+                        {
+                            "vulnerability": {
+                                "id": "CVE-2024-1234",
+                                "severity": "High",
+                                "description": "test vuln",
+                                "cvss": [{"metrics": {"baseScore": 8.1}}],
+                                "fix": {"versions": ["2.0.0"]},
+                            },
+                            "artifact": {"name": "requests", "version": "1.0.0"},
+                        }
+                    ]
+                }
+            )
+        )
         result = ScanResults(
             tool_name="grype",
             execution_time_seconds=1.0,
@@ -304,18 +316,24 @@ class TestPopulateFindings:
 
     def test_populates_from_semgrep_json(self, tmp_path):
         output_file = tmp_path / "semgrep.json"
-        output_file.write_text(json.dumps({
-            "results": [{
-                "check_id": "test-rule",
-                "path": "app.py",
-                "start": {"line": 10},
-                "extra": {
-                    "message": "Test finding",
-                    "severity": "WARNING",
-                    "metadata": {},
-                },
-            }]
-        }))
+        output_file.write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "check_id": "test-rule",
+                            "path": "app.py",
+                            "start": {"line": 10},
+                            "extra": {
+                                "message": "Test finding",
+                                "severity": "WARNING",
+                                "metadata": {},
+                            },
+                        }
+                    ]
+                }
+            )
+        )
         result = ScanResults(
             tool_name="semgrep",
             execution_time_seconds=0.5,
@@ -328,7 +346,9 @@ class TestPopulateFindings:
 
     def test_skips_when_no_output_path(self):
         result = ScanResults(
-            tool_name="grype", execution_time_seconds=1.0, exit_code=0,
+            tool_name="grype",
+            execution_time_seconds=1.0,
+            exit_code=0,
         )
         _populate_findings(result)
         assert result.findings == []
@@ -371,11 +391,20 @@ class TestPopulateFindings:
         output_file = tmp_path / "grype.json"
         output_file.write_text(json.dumps({"matches": []}))
         existing = Finding(
-            id="existing", source_tool="grype", category="sca",
-            severity="high", cvss_score=None, cve_id=None,
-            title="pre-existing", description="already here",
-            file_path=None, line_number=None, package_name=None,
-            package_version=None, fix_version=None, raw_output={},
+            id="existing",
+            source_tool="grype",
+            category="sca",
+            severity="high",
+            cvss_score=None,
+            cve_id=None,
+            title="pre-existing",
+            description="already here",
+            file_path=None,
+            line_number=None,
+            package_name=None,
+            package_version=None,
+            fix_version=None,
+            raw_output={},
         )
         result = ScanResults(
             tool_name="grype",
@@ -419,18 +448,24 @@ class TestRunAllScannersPopulatesFindings:
     def test_findings_populated_after_scan(self, mock_tasks, tmp_path):
         """Scanner output should be parsed and findings populated on ScanResults."""
         output_file = tmp_path / "grype.json"
-        output_file.write_text(json.dumps({
-            "matches": [{
-                "vulnerability": {
-                    "id": "CVE-2024-9999",
-                    "severity": "Critical",
-                    "description": "rce",
-                    "cvss": [{"metrics": {"baseScore": 9.8}}],
-                    "fix": {"versions": ["3.0.0"]},
-                },
-                "artifact": {"name": "evil-lib", "version": "0.1.0"},
-            }]
-        }))
+        output_file.write_text(
+            json.dumps(
+                {
+                    "matches": [
+                        {
+                            "vulnerability": {
+                                "id": "CVE-2024-9999",
+                                "severity": "Critical",
+                                "description": "rce",
+                                "cvss": [{"metrics": {"baseScore": 9.8}}],
+                                "fix": {"versions": ["3.0.0"]},
+                            },
+                            "artifact": {"name": "evil-lib", "version": "0.1.0"},
+                        }
+                    ]
+                }
+            )
+        )
 
         def mock_grype(**kwargs):
             return ScanResults(
@@ -442,8 +477,11 @@ class TestRunAllScannersPopulatesFindings:
 
         mock_tasks.return_value = [("grype", mock_grype)]
         results = run_all_scanners(
-            sbom_path="/x", target_dir="/x", deps_dir="/x",
-            output_dir=str(tmp_path), config={},
+            sbom_path="/x",
+            target_dir="/x",
+            deps_dir="/x",
+            output_dir=str(tmp_path),
+            config={},
         )
         assert len(results) == 1
         assert len(results[0].findings) == 1

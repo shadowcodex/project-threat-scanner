@@ -72,9 +72,7 @@ def _extract_high_risk(ai_findings: dict[str, Any]) -> list[dict[str, Any]]:
 
         line_numbers = finding.get("line_numbers", [])
         if isinstance(line_numbers, list):
-            line_numbers = sorted(
-                ln for ln in line_numbers if isinstance(ln, int)
-            )
+            line_numbers = sorted(ln for ln in line_numbers if isinstance(ln, int))
         else:
             line_numbers = []
 
@@ -130,9 +128,7 @@ def _deduplicate_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]
         # Shallow copy to avoid mutating the original dict's top-level keys
         kept = dict(best)
         kept["duplicate_count"] = len(group)
-        kept["source_analysts"] = sorted(
-            {f.get("source_analyst", "unknown") for f in group}
-        )
+        kept["source_analysts"] = sorted({f.get("source_analyst", "unknown") for f in group})
         deduped.append(kept)
 
     return deduped
@@ -210,25 +206,17 @@ def _normalize_adversarial_schema(parsed: dict[str, Any]) -> dict[str, Any]:
         return parsed
 
     # Only remap if findings items look like adversarial verdicts (have "verdict")
-    has_verdicts = any(
-        isinstance(f, dict) and "verdict" in f for f in findings
-    )
+    has_verdicts = any(isinstance(f, dict) and "verdict" in f for f in findings)
     if not has_verdicts:
         return parsed
 
     logger.info(
-        "Remapping analyst-forced schema to adversarial schema "
-        "(%d findings with verdicts)", len(findings),
+        "Remapping analyst-forced schema to adversarial schema (%d findings with verdicts)",
+        len(findings),
     )
 
-    confirmed = sum(
-        1 for f in findings
-        if isinstance(f, dict) and f.get("verdict") == "confirmed"
-    )
-    downgraded = sum(
-        1 for f in findings
-        if isinstance(f, dict) and f.get("verdict") == "downgraded"
-    )
+    confirmed = sum(1 for f in findings if isinstance(f, dict) and f.get("verdict") == "confirmed")
+    downgraded = sum(1 for f in findings if isinstance(f, dict) and f.get("verdict") == "downgraded")
 
     return {
         "results": findings,
@@ -255,7 +243,8 @@ def _parse_adversarial_output(text: str) -> dict[str, Any]:
         return _normalize_adversarial_schema(parsed)
 
     logger.warning(
-        "Could not parse adversarial output. Result (first 500 chars): %s", text[:500],
+        "Could not parse adversarial output. Result (first 500 chars): %s",
+        text[:500],
     )
     return {"results": [], "error": f"Parse failed. Result: {text[:500]}"}
 
@@ -322,9 +311,7 @@ def _merge_adversarial_results(
             finding["adversarial_status"] = verification_result.get("verdict", "unknown")
             finding["adversarial_reasoning"] = verification_result.get("reasoning", "")
             finding["adversarial_confidence"] = verification_result.get("confidence", 0)
-            finding["benign_explanation"] = verification_result.get(
-                "benign_explanation_attempted", ""
-            )
+            finding["benign_explanation"] = verification_result.get("benign_explanation_attempted", "")
             revised = verification_result.get("revised_risk_score")
             if revised is not None:
                 finding["original_risk_score"] = finding.get("risk_score", 0)
@@ -416,9 +403,7 @@ def run_adversarial_verification(
         logger.info("No high-risk findings to verify — skipping adversarial agent")
         return None
 
-    logger.info(
-        "Starting adversarial verification of %d finding(s)", len(high_risk)
-    )
+    logger.info("Starting adversarial verification of %d finding(s)", len(high_risk))
 
     try:
         hooks_json: str | None = build_stop_hook_settings("adversarial")
@@ -457,13 +442,12 @@ def run_adversarial_verification(
         try:
             md_path = Path(output_dir) / "adversarial-verification.md"
             md_path.parent.mkdir(parents=True, exist_ok=True)
-            md_path.write_text(
-                _format_adversarial_markdown(verification, merged)
-            )
+            md_path.write_text(_format_adversarial_markdown(verification, merged))
             logger.info("Adversarial verification markdown written to %s", md_path)
         except Exception:
             logger.warning(
-                "Failed to write adversarial markdown report", exc_info=True,
+                "Failed to write adversarial markdown report",
+                exc_info=True,
             )
 
     return merged

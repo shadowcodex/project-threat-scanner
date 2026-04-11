@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 # Whitelisted destinations that the VM is allowed to reach.
 WHITELISTED_DOMAINS: list[str] = [
     "api.anthropic.com",
@@ -62,24 +61,22 @@ def generate_firewall_rules(phase: str = "full") -> str:
     # Allow HTTPS (443) and HTTP (80) to whitelisted destinations
     for domain in domains:
         lines.append(f"# Allow {domain}")
-        lines.append(
-            f"iptables -A OUTPUT -p tcp --dport 443 -d {domain} -j ACCEPT"
-        )
-        lines.append(
-            f"iptables -A OUTPUT -p tcp --dport 80 -d {domain} -j ACCEPT"
-        )
+        lines.append(f"iptables -A OUTPUT -p tcp --dport 443 -d {domain} -j ACCEPT")
+        lines.append(f"iptables -A OUTPUT -p tcp --dport 80 -d {domain} -j ACCEPT")
         lines.append("")
 
     # Log and drop everything else
-    lines.extend([
-        "# Log blocked connections",
-        'iptables -A OUTPUT -j LOG --log-prefix "BLOCKED: " --log-level 4',
-        "",
-        "# Default OUTPUT policy: DROP",
-        "iptables -P OUTPUT DROP",
-        "",
-        "echo 'Firewall rules applied.'",
-    ])
+    lines.extend(
+        [
+            "# Log blocked connections",
+            'iptables -A OUTPUT -j LOG --log-prefix "BLOCKED: " --log-level 4',
+            "",
+            "# Default OUTPUT policy: DROP",
+            "iptables -P OUTPUT DROP",
+            "",
+            "echo 'Firewall rules applied.'",
+        ]
+    )
 
     return "\n".join(lines) + "\n"
 

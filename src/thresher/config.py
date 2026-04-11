@@ -51,11 +51,12 @@ class VMConfig:
 @dataclass
 class LimitsConfig:
     """Configurable size limits for host boundary hardening."""
-    max_json_size_mb: int = 10       # Max JSON payload from VM (MB)
-    max_file_size_mb: int = 50       # Max individual file in report copy (MB)
-    max_copy_size_mb: int = 500      # Max total size of report copy (MB)
-    max_stdout_mb: int = 50          # Max stdout from ssh_exec before kill (MB)
-    max_concurrent_ssh: int = 8      # Max parallel SSH sessions to VM
+
+    max_json_size_mb: int = 10  # Max JSON payload from VM (MB)
+    max_file_size_mb: int = 50  # Max individual file in report copy (MB)
+    max_copy_size_mb: int = 500  # Max total size of report copy (MB)
+    max_stdout_mb: int = 50  # Max stdout from ssh_exec before kill (MB)
+    max_concurrent_ssh: int = 8  # Max parallel SSH sessions to VM
 
     @property
     def max_json_size_bytes(self) -> int:
@@ -121,15 +122,12 @@ class ScanConfig:
             errors.append("repo_url is required")
         if not self.skip_ai and not self.has_ai_credentials:
             errors.append(
-                "No AI credentials found. Set ANTHROPIC_API_KEY, "
-                "log in with `claude login`, or use --skip-ai"
+                "No AI credentials found. Set ANTHROPIC_API_KEY, log in with `claude login`, or use --skip-ai"
             )
         if self.depth < 1:
             errors.append("depth must be >= 1")
         if self.launch_mode not in ("lima", "docker", "direct"):
-            errors.append(
-                f"launch_mode must be one of 'lima', 'docker', 'direct'; got {self.launch_mode!r}"
-            )
+            errors.append(f"launch_mode must be one of 'lima', 'docker', 'direct'; got {self.launch_mode!r}")
         return errors
 
     def to_json(self) -> str:
@@ -168,7 +166,7 @@ class ScanConfig:
         return json.dumps(data)
 
     @classmethod
-    def from_json(cls, json_str: str) -> "ScanConfig":
+    def from_json(cls, json_str: str) -> ScanConfig:
         """Deserialize config from JSON."""
         data = json.loads(json_str)
         vm_data = data.pop("vm", {})
@@ -177,12 +175,25 @@ class ScanConfig:
         limits = LimitsConfig(**limits_data) if limits_data else LimitsConfig()
         # Remove keys that aren't ScanConfig fields
         known_fields = {
-            "repo_url", "depth", "skip_ai", "verbose", "output_dir",
-            "anthropic_api_key", "oauth_token", "model", "log_dir", "tmux",
-            "high_risk_dep", "branch", "analyst_max_turns",
-            "analyst_max_turns_by_name", "adversarial_max_turns",
-            "predep_max_turns", "report_maker_max_turns",
-            "synthesize_max_turns", "launch_mode",
+            "repo_url",
+            "depth",
+            "skip_ai",
+            "verbose",
+            "output_dir",
+            "anthropic_api_key",
+            "oauth_token",
+            "model",
+            "log_dir",
+            "tmux",
+            "high_risk_dep",
+            "branch",
+            "analyst_max_turns",
+            "analyst_max_turns_by_name",
+            "adversarial_max_turns",
+            "predep_max_turns",
+            "report_maker_max_turns",
+            "synthesize_max_turns",
+            "launch_mode",
         }
         filtered = {k: v for k, v in data.items() if k in known_fields}
         return cls(vm=vm, limits=limits, **filtered)

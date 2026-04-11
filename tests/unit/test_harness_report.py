@@ -1,14 +1,15 @@
 """Unit tests for thresher.harness.report."""
 
 import json
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import pytest
 
 from thresher.harness.report import (
-    validate_report_output,
-    enrich_all_findings,
     ALLOWED_EXTENSIONS,
+    enrich_all_findings,
+    validate_report_output,
 )
 from thresher.scanners.models import Finding, ScanResults
 
@@ -203,7 +204,9 @@ class TestEnrichAllFindings:
             raw_output={},
         )
         sr = ScanResults(
-            tool_name="grype", execution_time_seconds=5.0, exit_code=0,
+            tool_name="grype",
+            execution_time_seconds=5.0,
+            exit_code=0,
             findings=[scanner_finding],
         )
         ai_findings = [{"title": "AI finding", "source_tool": "ai_analysis"}]
@@ -254,13 +257,15 @@ class TestEnrichAllFindings:
     def test_derives_ai_confidence_from_sub_findings(self, mock_enrich):
         """ai_confidence should be derived from max sub-finding confidence."""
         mock_enrich.return_value = []
-        findings = [{
-            "risk_score": 7,
-            "findings": [
-                {"confidence": 85, "severity": "high"},
-                {"confidence": 92, "severity": "medium"},
-            ],
-        }]
+        findings = [
+            {
+                "risk_score": 7,
+                "findings": [
+                    {"confidence": 85, "severity": "high"},
+                    {"confidence": 92, "severity": "medium"},
+                ],
+            }
+        ]
         enrich_all_findings([], findings)
         passed = mock_enrich.call_args[0][0]
         assert passed[0]["ai_confidence"] == 92
@@ -269,14 +274,16 @@ class TestEnrichAllFindings:
     def test_derives_severity_from_worst_sub_finding(self, mock_enrich):
         """Severity should be derived from worst sub-finding severity."""
         mock_enrich.return_value = []
-        findings = [{
-            "risk_score": 7,
-            "findings": [
-                {"severity": "medium", "confidence": 80},
-                {"severity": "high", "confidence": 70},
-                {"severity": "low", "confidence": 90},
-            ],
-        }]
+        findings = [
+            {
+                "risk_score": 7,
+                "findings": [
+                    {"severity": "medium", "confidence": 80},
+                    {"severity": "high", "confidence": 70},
+                    {"severity": "low", "confidence": 90},
+                ],
+            }
+        ]
         enrich_all_findings([], findings)
         passed = mock_enrich.call_args[0][0]
         assert passed[0]["severity"] == "high"
@@ -293,8 +300,10 @@ class TestEnrichAllFindings:
     def test_composite_priority_reflects_ai_risk_score(self):
         """End-to-end: high risk_score AI finding should NOT get 'low' composite_priority."""
         findings = [{"risk_score": 8, "title": "backdoor detected"}]
-        with patch("thresher.report.scoring.fetch_epss_scores", return_value={}), \
-             patch("thresher.report.scoring.load_kev_catalog", return_value=set()):
+        with (
+            patch("thresher.report.scoring.fetch_epss_scores", return_value={}),
+            patch("thresher.report.scoring.load_kev_catalog", return_value=set()),
+        ):
             result = enrich_all_findings([], findings)
         enriched = result["findings"]
         assert len(enriched) == 1
@@ -303,15 +312,20 @@ class TestEnrichAllFindings:
 
     def test_composite_priority_critical_for_confirmed_high_risk(self):
         """End-to-end: risk_score 9 + confirmed should yield 'critical'."""
-        findings = [{
-            "risk_score": 9,
-            "adversarial_status": "confirmed",
-            "title": "data exfiltration",
-        }]
-        with patch("thresher.report.scoring.fetch_epss_scores", return_value={}), \
-             patch("thresher.report.scoring.load_kev_catalog", return_value=set()):
+        findings = [
+            {
+                "risk_score": 9,
+                "adversarial_status": "confirmed",
+                "title": "data exfiltration",
+            }
+        ]
+        with (
+            patch("thresher.report.scoring.fetch_epss_scores", return_value={}),
+            patch("thresher.report.scoring.load_kev_catalog", return_value=set()),
+        ):
             result = enrich_all_findings([], findings)
         assert result["findings"][0]["composite_priority"] == "critical"
+
 
 class TestStageArtifacts:
     """stage_artifacts writes per-analyst markdown + JSON, copies scanner
@@ -319,8 +333,8 @@ class TestStageArtifacts:
     the report-maker runs."""
 
     def test_writes_per_analyst_markdown(self, tmp_path):
-        from thresher.harness.report import stage_artifacts
         from thresher.config import ScanConfig
+        from thresher.harness.report import stage_artifacts
 
         config = ScanConfig(output_dir=str(tmp_path), skip_ai=True)
         analyst_data = [
@@ -347,7 +361,8 @@ class TestStageArtifacts:
             },
         ]
         stage_artifacts(
-            {"findings": []}, config,
+            {"findings": []},
+            config,
             analyst_findings=analyst_data,
             scan_results_source=str(tmp_path / "missing_scan_src"),
             deps_source=str(tmp_path / "missing_deps_src"),
@@ -360,12 +375,13 @@ class TestStageArtifacts:
         assert "app.py" in body
 
     def test_no_markdown_when_no_analysts(self, tmp_path):
-        from thresher.harness.report import stage_artifacts
         from thresher.config import ScanConfig
+        from thresher.harness.report import stage_artifacts
 
         config = ScanConfig(output_dir=str(tmp_path), skip_ai=True)
         stage_artifacts(
-            {"findings": []}, config,
+            {"findings": []},
+            config,
             analyst_findings=None,
             scan_results_source=str(tmp_path / "missing"),
             deps_source=str(tmp_path / "missing2"),
@@ -377,18 +393,23 @@ class TestStageArtifacts:
     def test_copies_dep_resolution_json(self, tmp_path):
         """The dep_resolution.json status file must end up alongside the
         scanner outputs so the report-maker can read it from one place."""
-        from thresher.harness.report import stage_artifacts
         from thresher.config import ScanConfig
+        from thresher.harness.report import stage_artifacts
 
         deps_src = tmp_path / "deps"
         deps_src.mkdir()
-        (deps_src / "dep_resolution.json").write_text(json.dumps({
-            "ecosystems": {"python": {"status": "failed", "reason": "x"}},
-        }))
+        (deps_src / "dep_resolution.json").write_text(
+            json.dumps(
+                {
+                    "ecosystems": {"python": {"status": "failed", "reason": "x"}},
+                }
+            )
+        )
 
         config = ScanConfig(output_dir=str(tmp_path / "out"), skip_ai=True)
         stage_artifacts(
-            {"findings": []}, config,
+            {"findings": []},
+            config,
             analyst_findings=None,
             scan_results_source=str(tmp_path / "missing_scan"),
             deps_source=str(deps_src),
@@ -399,8 +420,8 @@ class TestStageArtifacts:
         assert loaded["ecosystems"]["python"]["status"] == "failed"
 
     def test_writes_findings_json(self, tmp_path):
-        from thresher.harness.report import stage_artifacts
         from thresher.config import ScanConfig
+        from thresher.harness.report import stage_artifacts
 
         config = ScanConfig(output_dir=str(tmp_path), skip_ai=True)
         stage_artifacts(
@@ -421,6 +442,7 @@ class TestValidateReportData:
 
     def test_complete_report_returns_empty_set(self):
         from thresher.harness.report import validate_report_data
+
         report = {
             "meta": {},
             "verdict": {},
@@ -434,6 +456,7 @@ class TestValidateReportData:
 
     def test_missing_keys_returned(self):
         from thresher.harness.report import validate_report_data
+
         report = {"executive_summary": "x", "ai_findings": []}
         missing = validate_report_data(report)
         assert "meta" in missing
@@ -447,8 +470,10 @@ class TestValidateReportData:
 
     def test_non_dict_input_returns_all_keys(self):
         from thresher.harness.report import (
-            validate_report_data, _REQUIRED_REPORT_DATA_KEYS,
+            _REQUIRED_REPORT_DATA_KEYS,
+            validate_report_data,
         )
+
         assert validate_report_data(None) == set(_REQUIRED_REPORT_DATA_KEYS)
         assert validate_report_data("not a dict") == set(_REQUIRED_REPORT_DATA_KEYS)
         assert validate_report_data([]) == set(_REQUIRED_REPORT_DATA_KEYS)
@@ -457,8 +482,8 @@ class TestValidateReportData:
         """Regression for the inspection report C1: report_maker hits
         error_max_turns and returns a dict missing required keys. The
         pipeline must reject it and use build_fallback_report_data."""
-        from thresher.harness import pipeline
         from thresher.config import ScanConfig
+        from thresher.harness import pipeline
 
         config = ScanConfig(
             repo_url="https://github.com/x/y",
@@ -474,8 +499,7 @@ class TestValidateReportData:
             "scanner_findings": [],
             "ai_findings": [],
         }
-        with patch("thresher.agents.report_maker.run_report_maker",
-                   return_value=partial):
+        with patch("thresher.agents.report_maker.run_report_maker", return_value=partial):
             result = pipeline.report_data(
                 staged_artifacts=str(tmp_path),
                 enriched_findings={"findings": [], "scanner_results": {}},
@@ -486,6 +510,7 @@ class TestValidateReportData:
             )
         # Fallback report has every required key
         from thresher.harness.report import validate_report_data
+
         assert validate_report_data(result) == set()
         # And it must NOT be the partial dict
         assert "verdict" in result
@@ -494,8 +519,8 @@ class TestValidateReportData:
 
     def test_pipeline_uses_report_maker_when_complete(self, tmp_path):
         """When report_maker returns a complete dict, pipeline passes it through."""
-        from thresher.harness import pipeline
         from thresher.config import ScanConfig
+        from thresher.harness import pipeline
 
         config = ScanConfig(
             repo_url="https://github.com/x/y",
@@ -511,8 +536,7 @@ class TestValidateReportData:
             "ai_findings": [],
             "pipeline": {"scanners": [], "analysts": [], "notes": ""},
         }
-        with patch("thresher.agents.report_maker.run_report_maker",
-                   return_value=complete):
+        with patch("thresher.agents.report_maker.run_report_maker", return_value=complete):
             result = pipeline.report_data(
                 staged_artifacts=str(tmp_path),
                 enriched_findings={"findings": [], "scanner_results": {}},
@@ -530,16 +554,22 @@ class TestDepResolutionNotes:
 
     def test_returns_empty_string_when_file_missing(self, tmp_path):
         from thresher.harness.report import summarize_dep_resolution
+
         assert summarize_dep_resolution(str(tmp_path)) == ""
 
     def test_summarizes_failures(self, tmp_path):
         from thresher.harness.report import summarize_dep_resolution
-        (tmp_path / "dep_resolution.json").write_text(json.dumps({
-            "ecosystems": {
-                "python": {"status": "failed", "reason": "pip3 download exited 1"},
-                "node": {"status": "ok", "reason": ""},
-            },
-        }))
+
+        (tmp_path / "dep_resolution.json").write_text(
+            json.dumps(
+                {
+                    "ecosystems": {
+                        "python": {"status": "failed", "reason": "pip3 download exited 1"},
+                        "node": {"status": "ok", "reason": ""},
+                    },
+                }
+            )
+        )
         notes = summarize_dep_resolution(str(tmp_path))
         assert "python" in notes
         assert "failed" in notes
@@ -548,25 +578,34 @@ class TestDepResolutionNotes:
 
     def test_no_notes_when_all_ok(self, tmp_path):
         from thresher.harness.report import summarize_dep_resolution
-        (tmp_path / "dep_resolution.json").write_text(json.dumps({
-            "ecosystems": {"python": {"status": "ok", "reason": ""}},
-        }))
+
+        (tmp_path / "dep_resolution.json").write_text(
+            json.dumps(
+                {
+                    "ecosystems": {"python": {"status": "ok", "reason": ""}},
+                }
+            )
+        )
         assert summarize_dep_resolution(str(tmp_path)) == ""
 
     def test_pipeline_inserts_notes_into_report_data(self, tmp_path):
         """The report_data DAG node must surface dep failures in
         pipeline.notes when they exist."""
-        from thresher.harness import pipeline
         from thresher.config import ScanConfig
+        from thresher.harness import pipeline
 
         # Stand up a fake deps dir with a failure status file
         deps_dir = tmp_path / "deps"
         deps_dir.mkdir()
-        (deps_dir / "dep_resolution.json").write_text(json.dumps({
-            "ecosystems": {
-                "python": {"status": "failed", "reason": "Multiple top-level packages"},
-            },
-        }))
+        (deps_dir / "dep_resolution.json").write_text(
+            json.dumps(
+                {
+                    "ecosystems": {
+                        "python": {"status": "failed", "reason": "Multiple top-level packages"},
+                    },
+                }
+            )
+        )
 
         config = ScanConfig(
             repo_url="https://github.com/x/y",
@@ -583,10 +622,10 @@ class TestDepResolutionNotes:
             "pipeline": {"scanners": [], "analysts": [], "notes": ""},
         }
 
-        with patch("thresher.agents.report_maker.run_report_maker",
-                   return_value=complete), \
-             patch("thresher.harness.report._dep_resolution_dir",
-                   return_value=str(deps_dir)):
+        with (
+            patch("thresher.agents.report_maker.run_report_maker", return_value=complete),
+            patch("thresher.harness.report._dep_resolution_dir", return_value=str(deps_dir)),
+        ):
             result = pipeline.report_data(
                 staged_artifacts=str(tmp_path),
                 enriched_findings={"findings": [], "scanner_results": {}},
@@ -618,9 +657,7 @@ class TestRenderReportPersistsJson:
 
         # Use the real render_report but with an explicit template_dir that
         # points at the project's actual template.
-        templates = (
-            Path(__file__).parent.parent.parent / "templates" / "report"
-        )
+        templates = Path(__file__).parent.parent.parent / "templates" / "report"
         if not (templates / "template_report.html").exists():
             pytest.skip("template_report.html not found in repo")
 

@@ -24,11 +24,7 @@ def run_hadolint(target_dir: str, output_dir: str) -> ScanResults:
 
     Skips quietly when no Dockerfiles are found.
     """
-    dockerfiles = [
-        str(p)
-        for p in Path(target_dir).rglob("Dockerfile*")
-        if ".git" not in p.parts
-    ]
+    dockerfiles = [str(p) for p in Path(target_dir).rglob("Dockerfile*") if ".git" not in p.parts]
     if not dockerfiles:
         logger.info("No Dockerfiles found, skipping Hadolint")
         return ScanResults(
@@ -41,7 +37,7 @@ def run_hadolint(target_dir: str, output_dir: str) -> ScanResults:
     return run_scanner(
         ScanSpec(
             name="hadolint",
-            cmd=["hadolint", "--format", "json"] + dockerfiles,
+            cmd=["hadolint", "--format", "json", *dockerfiles],
         ),
         output_dir=output_dir,
     )

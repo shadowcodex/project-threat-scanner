@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 import tempfile
@@ -356,9 +357,7 @@ def run_entropy(output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, prefix="entropy_scanner_"
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="entropy_scanner_") as f:
             f.write(_ENTROPY_SCRIPT)
             script_path = f.name
 
@@ -396,10 +395,8 @@ def run_entropy(output_dir: str) -> ScanResults:
             errors=[f"Entropy scanner execution error: {exc}"],
         )
     finally:
-        try:
+        with contextlib.suppress(Exception):
             Path(script_path).unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def parse_entropy_output(raw: dict[str, Any]) -> list[Finding]:

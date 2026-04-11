@@ -8,19 +8,19 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import shutil
-import sys
 import tempfile
 import tomllib
 from pathlib import Path
 
-from thresher.run import run as run_cmd, retry
+from thresher.run import retry
+from thresher.run import run as run_cmd
 
 log = logging.getLogger(__name__)
 
 
 # ── Status accumulator (Task 7: surface dep resolution failures) ──────────────
+
 
 class DepResolutionStatus:
     """Tracks per-ecosystem download status so the report pipeline can
@@ -44,9 +44,7 @@ class DepResolutionStatus:
 
     @property
     def has_failures(self) -> bool:
-        return any(
-            entry.get("status") == "failed" for entry in self._ecosystems.values()
-        )
+        return any(entry.get("status") == "failed" for entry in self._ecosystems.values())
 
 
 # Module-level current status — set by resolve_deps so download_python /
@@ -58,6 +56,7 @@ _current_status: DepResolutionStatus | None = None
 def _record_status(ecosystem: str, status: str, reason: str = "") -> None:
     if _current_status is not None:
         _current_status.record(ecosystem, status, reason)
+
 
 # ── Ecosystem Detection ────────────────────────────────────────────────────────
 
@@ -102,6 +101,7 @@ def _log_download_summary(ecosystem: str, output_dir: Path) -> None:
 
 
 # ── Download: Python ──────────────────────────────────────────────────────────
+
 
 def _is_workspace_pyproject(pyproject: Path) -> bool:
     """True if the given pyproject.toml is a multi-package workspace
@@ -207,8 +207,7 @@ def _build_workspace_requirements(root: Path, output_dir: Path) -> Path | None:
     req_path = output_dir / "_workspace_reqs.txt"
     req_path.write_text("\n".join(ordered) + "\n")
     log.info(
-        "Workspace pyproject detected — synthesized %d unique deps from "
-        "%d pyproject.toml files",
+        "Workspace pyproject detected — synthesized %d unique deps from %d pyproject.toml files",
         len(ordered),
         len(pyprojects),
     )
@@ -240,12 +239,10 @@ def download_python(target_dir: str, deps_dir: str) -> None:
             if ws_req is not None:
                 req_args = ["-r", str(ws_req)]
             else:
-                log.warning(
-                    "Workspace pyproject has no extractable PEP 621 "
-                    "dependencies; skipping pip download"
-                )
+                log.warning("Workspace pyproject has no extractable PEP 621 dependencies; skipping pip download")
                 _record_status(
-                    "python", "skipped",
+                    "python",
+                    "skipped",
                     "workspace pyproject with no PEP 621 dependencies",
                 )
                 return
@@ -265,12 +262,13 @@ def download_python(target_dir: str, deps_dir: str) -> None:
         return
 
     log.info("Downloading Python dependencies (source-only)...")
-    cmd = ["pip3", "download", "--no-binary", ":all:", "-d", str(output_dir)] + req_args
+    cmd = ["pip3", "download", "--no-binary", ":all:", "-d", str(output_dir), *req_args]
     result = retry(cmd, label="pip3-download", attempts=3)
     if result.returncode != 0:
         log.warning("Some Python packages failed to download")
         _record_status(
-            "python", "failed",
+            "python",
+            "failed",
             f"pip3 download exited {result.returncode}",
         )
     else:
@@ -296,6 +294,7 @@ def _extract_pipfile_reqs(pipfile: Path, out: Path) -> None:
 
 
 # ── Download: Node ────────────────────────────────────────────────────────────
+
 
 def download_node(target_dir: str, deps_dir: str) -> None:
     """Download Node.js dependencies using npm pack."""
@@ -335,6 +334,7 @@ def download_node(target_dir: str, deps_dir: str) -> None:
 
 
 # ── Download: Rust ────────────────────────────────────────────────────────────
+
 
 def download_rust(target_dir: str, deps_dir: str) -> None:
     """Download Rust dependencies using cargo vendor."""
@@ -376,6 +376,7 @@ def download_rust(target_dir: str, deps_dir: str) -> None:
 
 
 # ── Download: Go ──────────────────────────────────────────────────────────────
+
 
 def download_go(target_dir: str, deps_dir: str) -> None:
     """Download Go dependencies using go mod vendor."""
@@ -419,6 +420,7 @@ def download_go(target_dir: str, deps_dir: str) -> None:
 
 # ── Download: Hidden deps ─────────────────────────────────────────────────────
 
+
 def download_hidden(hidden_deps: dict, deps_dir: str, config) -> None:
     """Download hidden dependencies discovered by the pre-dep AI agent.
 
@@ -428,7 +430,9 @@ def download_hidden(hidden_deps: dict, deps_dir: str, config) -> None:
     output_dir = Path(deps_dir) / "hidden"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    high_risk_dep: bool = bool(config.high_risk_dep if not isinstance(config, dict) else config.get("high_risk_dep", False))
+    high_risk_dep: bool = bool(
+        config.high_risk_dep if not isinstance(config, dict) else config.get("high_risk_dep", False)
+    )
     deps_list: list[dict] = hidden_deps.get("hidden_dependencies", [])
 
     if not deps_list:
@@ -445,7 +449,7 @@ def download_hidden(hidden_deps: dict, deps_dir: str, config) -> None:
         risk = dep.get("risk", "medium")
         found_in = dep.get("found_in", "unknown")
 
-        tag = f"[{i+1}/{len(deps_list)}]"
+        tag = f"[{i + 1}/{len(deps_list)}]"
 
         if not source:
             log.info("%s SKIP: no source URL", tag)
@@ -456,9 +460,7 @@ def download_hidden(hidden_deps: dict, deps_dir: str, config) -> None:
             continue
 
         if risk == "high" and not high_risk_dep:
-            log.warning(
-                "%s SKIP (high-risk, use --high-risk-dep to download): %s", tag, source
-            )
+            log.warning("%s SKIP (high-risk, use --high-risk-dep to download): %s", tag, source)
             skipped_high_risk.append(dep)
             continue
 
@@ -467,7 +469,7 @@ def download_hidden(hidden_deps: dict, deps_dir: str, config) -> None:
 
         try:
             _fetch_hidden_dep(dep_type, source, i, output_dir)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.error("%s ERROR: %s", tag, exc)
 
     if skipped_high_risk:
@@ -484,22 +486,35 @@ def _fetch_hidden_dep(dep_type: str, source: str, idx: int, output_dir: Path) ->
     if dep_type in ("git", "submodule"):
         dest = output_dir / f"{dep_type}-{idx}"
         clone_cmd = [
-            "git", "clone",
-            "--no-checkout", "--depth=1", "--single-branch",
-            "-c", "core.hooksPath=/dev/null",
-            "-c", "core.fsmonitor=false",
-            "-c", "protocol.file.allow=never",
-            "-c", "protocol.ext.allow=never",
-            source, str(dest),
+            "git",
+            "clone",
+            "--no-checkout",
+            "--depth=1",
+            "--single-branch",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "protocol.file.allow=never",
+            "-c",
+            "protocol.ext.allow=never",
+            source,
+            str(dest),
         ]
         if dep_type == "submodule":
             # Drop file/ext restrictions for local submodule paths
             clone_cmd = [
-                "git", "clone",
-                "--no-checkout", "--depth=1",
-                "-c", "core.hooksPath=/dev/null",
-                "-c", "core.fsmonitor=false",
-                source, str(dest),
+                "git",
+                "clone",
+                "--no-checkout",
+                "--depth=1",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "core.fsmonitor=false",
+                source,
+                str(dest),
             ]
         run_cmd(clone_cmd, label=f"git-clone-hidden-{idx}", timeout=120)
         env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1", "GIT_TERMINAL_PROMPT": "0"}
@@ -533,11 +548,16 @@ def _fetch_hidden_dep(dep_type: str, source: str, idx: int, output_dir: Path) ->
         dest_dir.mkdir(parents=True, exist_ok=True)
         run_cmd(
             [
-                "curl", "-fsSL",
-                "--max-time", "60",
-                "--max-filesize", str(50 * 1024 * 1024),
-                "-o", str(dest_dir / "download"),
-                "--proto", "=https,http",
+                "curl",
+                "-fsSL",
+                "--max-time",
+                "60",
+                "--max-filesize",
+                str(50 * 1024 * 1024),
+                "-o",
+                str(dest_dir / "download"),
+                "--proto",
+                "=https,http",
                 source,
             ],
             label=f"curl-hidden-{idx}",
@@ -553,6 +573,7 @@ def _fetch_hidden_dep(dep_type: str, source: str, idx: int, output_dir: Path) ->
 
 
 # ── Build Manifest ────────────────────────────────────────────────────────────
+
 
 def _parse_package_name(filename: str, ecosystem: str) -> tuple[str, str]:
     """Extract (name, version) from a downloaded artifact filename."""
@@ -637,6 +658,7 @@ def build_manifest(deps_dir: str) -> None:
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
+
 def resolve_deps(
     target_dir: str,
     ecosystems: list[str],
@@ -652,7 +674,7 @@ def resolve_deps(
     # thresher.harness.deps.download_* in tests works correctly.
     import thresher.harness.deps as _self
 
-    _DOWNLOADERS = {
+    _downloaders = {
         "python": _self.download_python,
         "node": _self.download_node,
         "rust": _self.download_rust,
@@ -668,7 +690,7 @@ def resolve_deps(
     _current_status = DepResolutionStatus()
     try:
         for eco in ecosystems:
-            downloader = _DOWNLOADERS.get(eco)
+            downloader = _downloaders.get(eco)
             if downloader is None:
                 log.warning("No downloader for ecosystem: %s", eco)
                 _current_status.record(eco, "unknown", "no downloader")

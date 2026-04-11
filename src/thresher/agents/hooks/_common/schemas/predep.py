@@ -43,8 +43,7 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
                 )
             if dep.get("confidence") not in _VALID_LEVELS:
                 errors.append(
-                    f"hidden_dependencies[{i}] invalid confidence: "
-                    f"{dep.get('confidence')}",
+                    f"hidden_dependencies[{i}] invalid confidence: {dep.get('confidence')}",
                 )
             if dep.get("risk") not in _VALID_LEVELS:
                 errors.append(

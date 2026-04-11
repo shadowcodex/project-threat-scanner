@@ -56,7 +56,8 @@ def _parse_report_output(text: str) -> dict[str, Any] | None:
         return parsed
 
     logger.warning(
-        "Could not parse report maker output. Result (first 500 chars): %s", text[:500],
+        "Could not parse report maker output. Result (first 500 chars): %s",
+        text[:500],
     )
     return None
 
@@ -85,9 +86,7 @@ def run_report_maker(
     paths.
     """
     definition = _load_definition()
-    max_turns = (
-        getattr(config, "report_maker_max_turns", None) or definition["max_turns"]
-    )
+    max_turns = getattr(config, "report_maker_max_turns", None) or definition["max_turns"]
 
     try:
         hooks_json = build_stop_hook_settings("report")

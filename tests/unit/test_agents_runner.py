@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from thresher.agents._runner import AgentResult, AgentSpec, run_agent
 from thresher.config import ScanConfig
 
@@ -29,10 +27,16 @@ def _mock_popen(returncode=0, stdout=b""):
 
 def _stream_json(result_text="ok", num_turns=1):
     return (
-        json.dumps({"type": "system", "subtype": "init"}).encode() + b"\n"
-        + json.dumps({
-            "type": "result", "result": result_text, "num_turns": num_turns,
-        }).encode() + b"\n"
+        json.dumps({"type": "system", "subtype": "init"}).encode()
+        + b"\n"
+        + json.dumps(
+            {
+                "type": "result",
+                "result": result_text,
+                "num_turns": num_turns,
+            }
+        ).encode()
+        + b"\n"
     )
 
 

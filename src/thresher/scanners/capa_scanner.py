@@ -55,7 +55,7 @@ def run_capa(target_dir: str, output_dir: str) -> ScanResults:
         binaries: list[str] = []
         if candidates:
             file_result = run_cmd(
-                ["file", "--brief"] + candidates,
+                ["file", "--brief", *candidates],
                 label="file",
                 timeout=60,
                 ok_codes=(0,),
@@ -70,7 +70,7 @@ def run_capa(target_dir: str, output_dir: str) -> ScanResults:
                 )
                 binaries = candidates  # Fall back to scanning all candidates
             else:
-                for candidate, file_type in zip(candidates, file_lines):
+                for candidate, file_type in zip(candidates, file_lines, strict=True):
                     file_type_lower = file_type.strip().lower()
                     if any(sig in file_type_lower for sig in _BINARY_SIGS):
                         # Exclude text/script files that `file` might tag as
@@ -120,8 +120,7 @@ def run_capa(target_dir: str, output_dir: str) -> ScanResults:
                 # Exit code 2 means capa doesn't support this file format.
                 # This shouldn't happen after our filtering, but log it.
                 logger.warning(
-                    "capa exit code 2 (unsupported format) for %s — "
-                    "file should have been filtered out",
+                    "capa exit code 2 (unsupported format) for %s — file should have been filtered out",
                     binary_path,
                 )
             elif result.returncode != 0:

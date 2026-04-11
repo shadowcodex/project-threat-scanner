@@ -31,9 +31,7 @@ from thresher.run import run as run_cmd
 
 logger = logging.getLogger(__name__)
 
-_SHARED_HOOK = (
-    Path(__file__).parent / "hooks" / "_common" / "validate_json_output.sh"
-)
+_SHARED_HOOK = Path(__file__).parent / "hooks" / "_common" / "validate_json_output.sh"
 
 
 def build_stop_hook_settings(schema_name: str) -> str:
@@ -109,12 +107,17 @@ def run_agent(spec: AgentSpec, config: ScanConfig) -> AgentResult:
             )
             cmd: list[str] = [
                 "claude",
-                "-p", str(prompt_path),
-                "--model", config.model,
-                "--allowedTools", ",".join(spec.allowed_tools),
-                "--output-format", "stream-json",
+                "-p",
+                str(prompt_path),
+                "--model",
+                config.model,
+                "--allowedTools",
+                ",".join(spec.allowed_tools),
+                "--output-format",
+                "stream-json",
                 "--verbose",
-                "--max-turns", str(spec.max_turns),
+                "--max-turns",
+                str(spec.max_turns),
             ]
             if spec.hooks_settings_json is not None:
                 settings_path = stack.enter_context(

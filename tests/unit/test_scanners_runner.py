@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from thresher.scanners._runner import ScanSpec, run_scanner
 
 
@@ -55,7 +53,7 @@ class TestRunScannerStdoutMode:
 
     @patch("thresher.run._popen")
     def test_records_execution_time(self, mock_popen, tmp_path):
-        mock_popen.return_value = _mock_popen(stdout=b'{}')
+        mock_popen.return_value = _mock_popen(stdout=b"{}")
         spec = ScanSpec(name="trivy", cmd=["trivy"])
         result = run_scanner(spec, output_dir=str(tmp_path))
         assert result.execution_time_seconds >= 0
@@ -89,7 +87,7 @@ class TestRunScannerStdoutMode:
 
     @patch("thresher.run._popen")
     def test_passes_cwd_to_subprocess(self, mock_popen, tmp_path):
-        mock_popen.return_value = _mock_popen(stdout=b'{}')
+        mock_popen.return_value = _mock_popen(stdout=b"{}")
         spec = ScanSpec(name="cargo-audit", cmd=["cargo-audit"], cwd="/proj")
         run_scanner(spec, output_dir=str(tmp_path))
         kwargs = mock_popen.call_args[1]
@@ -97,7 +95,7 @@ class TestRunScannerStdoutMode:
 
     @patch("thresher.run._popen")
     def test_passes_timeout_and_ok_codes(self, mock_popen, tmp_path):
-        mock_popen.return_value = _mock_popen(stdout=b'{}')
+        mock_popen.return_value = _mock_popen(stdout=b"{}")
         spec = ScanSpec(
             name="semgrep",
             cmd=["semgrep"],

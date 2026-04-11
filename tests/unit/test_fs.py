@@ -25,10 +25,9 @@ class TestTempfileWith:
 
     def test_unlinks_on_exception(self):
         saved = None
-        with pytest.raises(RuntimeError, match="boom"):
-            with tempfile_with("x") as path:
-                saved = path
-                raise RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"), tempfile_with("x") as path:
+            saved = path
+            raise RuntimeError("boom")
         assert saved is not None
         assert not saved.exists()
 

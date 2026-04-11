@@ -5,12 +5,9 @@ from __future__ import annotations
 import json
 import textwrap
 from pathlib import Path
-
-import pytest
-
 from unittest.mock import patch
 
-from thresher.config import ScanConfig, VMConfig, load_config
+from thresher.config import ScanConfig, load_config
 
 
 class TestScanConfigValidate:
@@ -79,7 +76,8 @@ class TestLoadConfig:
 
     def test_config_file(self, tmp_path: Path):
         config_file = tmp_path / "thresher.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             depth = 4
             model = "opus"
             output_dir = "/tmp/reports"
@@ -88,7 +86,8 @@ class TestLoadConfig:
             cpus = 8
             memory = 16
             disk = 100
-        """))
+        """)
+        )
         cfg = load_config(
             repo_url="https://github.com/x/y",
             config_path=config_file,
@@ -102,7 +101,7 @@ class TestLoadConfig:
 
     def test_cli_overrides_config_file(self, tmp_path: Path):
         config_file = tmp_path / "thresher.toml"
-        config_file.write_text('depth = 4\n')
+        config_file.write_text("depth = 4\n")
         cfg = load_config(
             repo_url="https://github.com/x/y",
             depth=7,
@@ -117,13 +116,15 @@ class TestLoadConfig:
 
     def test_limits_from_config(self, tmp_path: Path):
         config_file = tmp_path / "thresher.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [limits]
             max_json_size_mb = 20
             max_file_size_mb = 100
             max_copy_size_mb = 1000
             max_stdout_mb = 75
-        """))
+        """)
+        )
         cfg = load_config(
             repo_url="https://github.com/x/y",
             config_path=config_file,
@@ -144,10 +145,12 @@ class TestLoadConfig:
 
     def test_analyst_max_turns_from_config(self, tmp_path: Path):
         config_file = tmp_path / "thresher.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [analysts]
             max_turns = 50
-        """))
+        """)
+        )
         cfg = load_config(
             repo_url="https://github.com/x/y",
             config_path=config_file,
@@ -163,14 +166,16 @@ class TestLoadConfig:
 
     def test_analyst_max_turns_by_name(self, tmp_path: Path):
         config_file = tmp_path / "thresher.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [analysts]
             max_turns = 50
 
             [analysts.max_turns_by_name]
             paranoid = 60
             shadowcatcher = 80
-        """))
+        """)
+        )
         cfg = load_config(
             repo_url="https://github.com/x/y",
             config_path=config_file,
@@ -187,10 +192,12 @@ class TestLoadConfig:
 
     def test_adversarial_max_turns_from_config(self, tmp_path: Path):
         config_file = tmp_path / "thresher.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [adversarial]
             max_turns = 30
-        """))
+        """)
+        )
         cfg = load_config(
             repo_url="https://github.com/x/y",
             config_path=config_file,
@@ -206,10 +213,12 @@ class TestLoadConfig:
 
     def test_predep_max_turns_from_config(self, tmp_path: Path):
         config_file = tmp_path / "thresher.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [predep]
             max_turns = 20
-        """))
+        """)
+        )
         cfg = load_config(
             repo_url="https://github.com/x/y",
             config_path=config_file,
@@ -231,10 +240,12 @@ class TestLoadConfig:
 
     def test_report_maker_max_turns_from_config(self, tmp_path: Path):
         config_file = tmp_path / "thresher.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [report_maker]
             max_turns = 20
-        """))
+        """)
+        )
         cfg = load_config(
             repo_url="https://github.com/x/y",
             config_path=config_file,
@@ -256,10 +267,12 @@ class TestLoadConfig:
 
     def test_synthesize_max_turns_from_config(self, tmp_path: Path):
         config_file = tmp_path / "thresher.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [synthesize]
             max_turns = 90
-        """))
+        """)
+        )
         cfg = load_config(
             repo_url="https://github.com/x/y",
             config_path=config_file,
@@ -275,7 +288,8 @@ class TestLoadConfig:
 
     def test_synthesize_max_turns_roundtrip_json(self):
         config = ScanConfig(
-            repo_url="https://github.com/test/repo", synthesize_max_turns=42,
+            repo_url="https://github.com/test/repo",
+            synthesize_max_turns=42,
         )
         restored = ScanConfig.from_json(config.to_json())
         assert restored.synthesize_max_turns == 42
@@ -285,10 +299,12 @@ class TestLoadConfig:
     def test_predep_falls_back_to_analysts_max_turns(self, tmp_path: Path):
         """When [predep] is missing but [analysts] is set, predep uses the analysts value."""
         config_file = tmp_path / "thresher.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [analysts]
             max_turns = 75
-        """))
+        """)
+        )
         cfg = load_config(
             repo_url="https://github.com/x/y",
             config_path=config_file,
@@ -302,7 +318,8 @@ class TestLoadConfig:
     def test_named_section_overrides_analysts_max_turns(self, tmp_path: Path):
         """An explicit [predep] / [report_maker] section beats the [analysts] fallback."""
         config_file = tmp_path / "thresher.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [analysts]
             max_turns = 75
 
@@ -311,16 +328,17 @@ class TestLoadConfig:
 
             [report_maker]
             max_turns = 150
-        """))
+        """)
+        )
         cfg = load_config(
             repo_url="https://github.com/x/y",
             config_path=config_file,
         )
         assert cfg.analyst_max_turns == 75
         assert cfg.predep_max_turns == 20
-        assert cfg.adversarial_max_turns == 75   # falls back
+        assert cfg.adversarial_max_turns == 75  # falls back
         assert cfg.report_maker_max_turns == 150
-        assert cfg.synthesize_max_turns == 75    # falls back
+        assert cfg.synthesize_max_turns == 75  # falls back
 
     def test_no_max_turns_anywhere_yields_none(self, tmp_path: Path):
         """If neither named nor [analysts] is set, all per-agent fields stay None."""
@@ -422,8 +440,9 @@ class TestLaunchMode:
 
     def test_scan_config_from_json(self):
         """ScanConfig.from_json handles all fields."""
-        data = json.dumps({"repo_url": "https://example.com/repo", "launch_mode": "direct",
-                           "skip_ai": True, "model": "opus"})
+        data = json.dumps(
+            {"repo_url": "https://example.com/repo", "launch_mode": "direct", "skip_ai": True, "model": "opus"}
+        )
         config = ScanConfig.from_json(data)
         assert config.launch_mode == "direct"
         assert config.skip_ai is True

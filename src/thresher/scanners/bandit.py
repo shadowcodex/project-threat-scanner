@@ -29,8 +29,14 @@ def run_bandit(target_dir: str, output_dir: str) -> ScanResults:
         ScanSpec(
             name="bandit",
             cmd=[
-                "bandit", "-r", target_dir, "-f", "json", "-q",
-                "-x", _BANDIT_EXCLUDE_DIRS,
+                "bandit",
+                "-r",
+                target_dir,
+                "-f",
+                "json",
+                "-q",
+                "-x",
+                _BANDIT_EXCLUDE_DIRS,
             ],
         ),
         output_dir=output_dir,

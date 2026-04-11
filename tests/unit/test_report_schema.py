@@ -1,6 +1,5 @@
 """Tests for the Thresher report JSON schema."""
 
-import copy
 import json
 from pathlib import Path
 

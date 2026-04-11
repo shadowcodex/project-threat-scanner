@@ -5,9 +5,7 @@ from __future__ import annotations
 import subprocess
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from thresher.run import run, set_max_stdout, set_verbose
+from thresher.run import run, set_max_stdout
 
 
 def _mock_popen(returncode=0, stdout=b"", stderr=b""):
@@ -25,6 +23,7 @@ class TestSetMaxStdout:
     def test_set_max_stdout_changes_limit(self):
         """set_max_stdout should update the module-level limit."""
         import thresher.run as run_module
+
         original = run_module._max_stdout_bytes
         try:
             set_max_stdout(1024)
@@ -41,6 +40,7 @@ class TestStdoutLimit:
         mock_popen.return_value = _mock_popen(returncode=0, stdout=output)
 
         import thresher.run as run_module
+
         original = run_module._max_stdout_bytes
         try:
             set_max_stdout(1024)  # 1KB — plenty of room
@@ -58,10 +58,11 @@ class TestStdoutLimit:
         mock_popen.return_value = _mock_popen(returncode=0, stdout=output)
 
         import thresher.run as run_module
+
         original = run_module._max_stdout_bytes
         try:
             set_max_stdout(50)
-            result = run(["echo", "test"], label="test")
+            run(["echo", "test"], label="test")
             # Process should have been killed
             mock_popen.return_value.kill.assert_called_once()
         finally:
@@ -74,6 +75,7 @@ class TestStdoutLimit:
         mock_popen.return_value = _mock_popen(returncode=0, stdout=output)
 
         import thresher.run as run_module
+
         original = run_module._max_stdout_bytes
         try:
             set_max_stdout(0)
@@ -87,10 +89,12 @@ class TestStdoutLimit:
     def test_stdout_limit_logs_warning(self, mock_popen, caplog):
         """When stdout is killed for exceeding limit, a warning should be logged."""
         import logging
+
         output = b"x" * 100 + b"\n"
         mock_popen.return_value = _mock_popen(returncode=0, stdout=output)
 
         import thresher.run as run_module
+
         original = run_module._max_stdout_bytes
         try:
             set_max_stdout(50)

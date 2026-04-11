@@ -11,6 +11,7 @@ Runs as a self-contained Python script via subprocess.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 import tempfile
@@ -489,9 +490,7 @@ def run_deps_dev(output_dir: str) -> ScanResults:
 
     start = time.monotonic()
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, prefix="deps_dev_scanner_"
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="deps_dev_scanner_") as f:
             f.write(_DEPS_DEV_SCRIPT)
             script_path = f.name
 
@@ -530,10 +529,8 @@ def run_deps_dev(output_dir: str) -> ScanResults:
         )
     finally:
         if script_path:
-            try:
+            with contextlib.suppress(Exception):
                 Path(script_path).unlink(missing_ok=True)
-            except Exception:
-                pass
 
 
 def parse_deps_dev_output(raw: dict[str, Any]) -> list[Finding]:
@@ -545,7 +542,7 @@ def parse_deps_dev_output(raw: dict[str, Any]) -> list[Finding]:
         severity = item.get("severity", "low")
         description = item.get("description", "")
         package = item.get("package", "unknown")
-        ecosystem = item.get("ecosystem", "unknown")
+        item.get("ecosystem", "unknown")
 
         findings.append(
             Finding(

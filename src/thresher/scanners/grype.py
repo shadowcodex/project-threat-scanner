@@ -100,7 +100,6 @@ def _extract_cvss_score(vulnerability: dict[str, Any]) -> float | None:
     for cvss_entry in vulnerability.get("cvss", []):
         metrics = cvss_entry.get("metrics", {})
         score = metrics.get("baseScore")
-        if score is not None:
-            if best is None or score > best:
-                best = score
+        if score is not None and (best is None or score > best):
+            best = score
     return best

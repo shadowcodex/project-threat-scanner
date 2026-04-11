@@ -1,6 +1,8 @@
 import json
-import pytest
 import tempfile
+
+import pytest
+
 from thresher.harness.__main__ import parse_args
 
 

@@ -6,7 +6,6 @@ Usage:
 """
 
 import argparse
-import json
 import logging
 import os
 import sys
@@ -42,21 +41,25 @@ def main(argv: list[str] | None = None) -> None:
         stream=sys.stderr,
     )
 
-    from thresher.run import set_verbose, set_max_stdout
+    from thresher.run import set_max_stdout, set_verbose
+
     set_verbose(config.verbose)
     set_max_stdout(config.limits.max_stdout_bytes)
 
     logger.info("Harness starting — repo=%s output=%s", config.repo_url, config.output_dir)
     logger.info(
-        "Agent limits — analyst=%s predep=%s adversarial=%s "
-        "report_maker=%s synthesize=%s max_stdout_mb=%s",
-        config.analyst_max_turns, config.predep_max_turns,
-        config.adversarial_max_turns, config.report_maker_max_turns,
-        config.synthesize_max_turns, config.limits.max_stdout_mb,
+        "Agent limits — analyst=%s predep=%s adversarial=%s report_maker=%s synthesize=%s max_stdout_mb=%s",
+        config.analyst_max_turns,
+        config.predep_max_turns,
+        config.adversarial_max_turns,
+        config.report_maker_max_turns,
+        config.synthesize_max_turns,
+        config.limits.max_stdout_mb,
     )
 
     # Pipeline execution will be wired in Task 3
     from thresher.harness.pipeline import run_pipeline
+
     run_pipeline(config)
 
 

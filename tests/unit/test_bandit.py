@@ -26,15 +26,11 @@ class TestRunBandit:
 
         cmd = mock_popen.call_args[0][0]
         # bandit -x / --exclude takes a comma-separated list of paths
-        assert "-x" in cmd or "--exclude" in cmd, (
-            f"bandit invoked without exclude flag: {cmd}"
-        )
+        assert "-x" in cmd or "--exclude" in cmd, f"bandit invoked without exclude flag: {cmd}"
         flag_idx = cmd.index("-x") if "-x" in cmd else cmd.index("--exclude")
         excludes = cmd[flag_idx + 1]
         for needle in ("tests", "test", "e2e", "examples"):
-            assert needle in excludes, (
-                f"missing exclude {needle!r} in {excludes!r}"
-            )
+            assert needle in excludes, f"missing exclude {needle!r} in {excludes!r}"
 
     @patch("thresher.run._popen")
     def test_writes_output_file(self, mock_popen, tmp_path):
@@ -73,7 +69,5 @@ class TestParseBanditOutput:
 
     def test_severity_mapping(self):
         for raw_sev, expected in [("HIGH", "high"), ("MEDIUM", "medium"), ("LOW", "low")]:
-            findings = parse_bandit_output({
-                "results": [{"test_id": "B1", "issue_severity": raw_sev}]
-            })
+            findings = parse_bandit_output({"results": [{"test_id": "B1", "issue_severity": raw_sev}]})
             assert findings[0].severity == expected

@@ -41,6 +41,7 @@ def launch_docker(config: ScanConfig) -> int:
 def _resolve_log_file(config: ScanConfig) -> str | None:
     """Find the active log file path from the CLI logging setup."""
     import logging as _logging
+
     for handler in _logging.getLogger("thresher").handlers:
         if isinstance(handler, _logging.FileHandler):
             return handler.baseFilename

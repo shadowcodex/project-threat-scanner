@@ -41,7 +41,9 @@ def _write_file(path: str, content: str) -> None:
 
 
 def _build_synthesis_prompt(
-    definition: dict[str, Any], report_dir: str, input_path: str,
+    definition: dict[str, Any],
+    report_dir: str,
+    input_path: str,
 ) -> str:
     """Format the YAML prompt template with runtime paths."""
     return definition["prompt"].format(
@@ -95,9 +97,7 @@ def build_synthesis_input(
     lines.append("")
 
     # Top risks
-    top_risks = [
-        f for f in enriched if f.get("composite_priority") in ("P0", "critical")
-    ]
+    top_risks = [f for f in enriched if f.get("composite_priority") in ("P0", "critical")]
     if top_risks:
         lines.append("## Top Risks")
         for risk in top_risks[:20]:
@@ -111,12 +111,8 @@ def build_synthesis_input(
     if ai_findings:
         lines.append("## AI Analysis Summary")
         ai_list = ai_findings.get("findings", [])
-        confirmed = sum(
-            1 for f in ai_list if f.get("adversarial_status") == "confirmed"
-        )
-        downgraded = sum(
-            1 for f in ai_list if f.get("adversarial_status") == "downgraded"
-        )
+        confirmed = sum(1 for f in ai_list if f.get("adversarial_status") == "confirmed")
+        downgraded = sum(1 for f in ai_list if f.get("adversarial_status") == "downgraded")
         lines.append(f"- AI findings: {len(ai_list)}")
         lines.append(f"- Adversarially confirmed: {confirmed}")
         lines.append(f"- Adversarially downgraded: {downgraded}")
@@ -124,29 +120,23 @@ def build_synthesis_input(
 
     # Important findings in full
     important = [
-        f for f in enriched
+        f
+        for f in enriched
         if f.get("composite_priority") in ("P0", "critical", "high")
         or f.get("source_tool") == "ai_analysis"
         or f.get("in_kev") is True
     ]
     low_medium = [f for f in enriched if f not in important]
 
-    lines.append(
-        f"## Important Findings ({len(important)} of {len(enriched)} total)"
-    )
-    lines.append(
-        "These are all P0/Critical/High findings, AI analysis findings, "
-        "and CISA KEV entries."
-    )
+    lines.append(f"## Important Findings ({len(important)} of {len(enriched)} total)")
+    lines.append("These are all P0/Critical/High findings, AI analysis findings, and CISA KEV entries.")
     lines.append("```json")
     lines.append(json.dumps(important, indent=2, default=str))
     lines.append("```")
     lines.append("")
 
     if low_medium:
-        lines.append(
-            f"## Remaining Findings Summary ({len(low_medium)} low/medium)"
-        )
+        lines.append(f"## Remaining Findings Summary ({len(low_medium)} low/medium)")
         tool_summary: dict[str, dict[str, int]] = {}
         for f in low_medium:
             tool = f.get("source_tool", "unknown")
@@ -180,9 +170,7 @@ def run_synthesize_agent(
         True if the agent produced the expected output files.
     """
     definition = _load_definition()
-    max_turns = (
-        getattr(config, "synthesize_max_turns", None) or definition["max_turns"]
-    )
+    max_turns = getattr(config, "synthesize_max_turns", None) or definition["max_turns"]
 
     # Write synthesis input to report directory
     input_path = f"{report_dir}/synthesis_input.md"
@@ -200,12 +188,12 @@ def run_synthesize_agent(
     logger.info("Invoking synthesis agent (max_turns=%d)", max_turns)
     agent_result = run_agent(spec, config)
     logger.info(
-        "Synthesis agent completed: exit_code=%d", agent_result.returncode,
+        "Synthesis agent completed: exit_code=%d",
+        agent_result.returncode,
     )
 
-    agent_succeeded = (
-        os.path.isfile(f"{report_dir}/executive-summary.md")
-        and os.path.isfile(f"{report_dir}/detailed-report.md")
+    agent_succeeded = os.path.isfile(f"{report_dir}/executive-summary.md") and os.path.isfile(
+        f"{report_dir}/detailed-report.md"
     )
 
     if agent_succeeded:

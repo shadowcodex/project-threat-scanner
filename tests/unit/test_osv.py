@@ -30,7 +30,7 @@ class TestParseOSVOutput:
 
     def test_fix_version_extracted(self, osv_fixture):
         findings = parse_osv_output(osv_fixture)
-        cve = [f for f in findings if f.cve_id == "CVE-2024-1234"][0]
+        cve = next(f for f in findings if f.cve_id == "CVE-2024-1234")
         assert cve.fix_version == "1.2.4"
 
     def test_from_fixture(self, osv_fixture):
@@ -73,15 +73,7 @@ class TestExtractFixVersion:
         assert _extract_fix_version(vuln) == "2.0.0"
 
     def test_not_found(self):
-        vuln = {
-            "affected": [
-                {
-                    "ranges": [
-                        {"events": [{"introduced": "0"}]}
-                    ]
-                }
-            ]
-        }
+        vuln = {"affected": [{"ranges": [{"events": [{"introduced": "0"}]}]}]}
         assert _extract_fix_version(vuln) is None
 
     def test_empty(self):

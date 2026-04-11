@@ -11,10 +11,26 @@ from thresher.scanners.models import Finding, ScanResults
 logger = logging.getLogger(__name__)
 
 # Copyleft license families that warrant a medium-severity finding.
-_COPYLEFT_PREFIXES = frozenset({
-    "GPL", "AGPL", "LGPL", "SSPL", "EUPL", "MPL", "CPAL", "OSL",
-    "gpl", "agpl", "lgpl", "sspl", "eupl", "mpl", "cpal", "osl",
-})
+_COPYLEFT_PREFIXES = frozenset(
+    {
+        "GPL",
+        "AGPL",
+        "LGPL",
+        "SSPL",
+        "EUPL",
+        "MPL",
+        "CPAL",
+        "OSL",
+        "gpl",
+        "agpl",
+        "lgpl",
+        "sspl",
+        "eupl",
+        "mpl",
+        "cpal",
+        "osl",
+    }
+)
 
 
 def run_scancode(target_dir: str, output_dir: str) -> ScanResults:
@@ -30,11 +46,15 @@ def run_scancode(target_dir: str, output_dir: str) -> ScanResults:
         ScanSpec(
             name="scancode",
             cmd=[
-                "scancode", "--license",
-                "--json-pp", output_path,
+                "scancode",
+                "--license",
+                "--json-pp",
+                output_path,
                 target_dir,
-                "-n", "4",
-                "--timeout", "120",
+                "-n",
+                "4",
+                "--timeout",
+                "120",
             ],
             timeout=600,
             output_mode="self",
@@ -138,7 +158,4 @@ def parse_scancode_output(raw: dict[str, Any]) -> list[Finding]:
 
 def _is_copyleft(license_text: str) -> bool:
     """Check if a license string contains a copyleft license identifier."""
-    for prefix in _COPYLEFT_PREFIXES:
-        if prefix in license_text:
-            return True
-    return False
+    return any(prefix in license_text for prefix in _COPYLEFT_PREFIXES)

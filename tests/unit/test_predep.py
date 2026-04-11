@@ -6,11 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from unittest.mock import MagicMock
-
 from thresher.agents.predep import (
-    _parse_predep_output,
     _empty_result,
+    _parse_predep_output,
     run_predep_discovery,
 )
 from thresher.config import ScanConfig, VMConfig
@@ -35,7 +33,7 @@ def config():
     )
 
 
-SAMPLE_OUTPUT = '''{
+SAMPLE_OUTPUT = """{
   "hidden_dependencies": [
     {
       "type": "git",
@@ -54,7 +52,7 @@ SAMPLE_OUTPUT = '''{
   ],
   "files_scanned": 15,
   "summary": "Found 2 hidden dependencies"
-}'''
+}"""
 
 
 class TestParsePredepOutput:
@@ -66,10 +64,13 @@ class TestParsePredepOutput:
 
     def test_stream_json_result(self):
         import json
-        stream_line = json.dumps({
-            "type": "result",
-            "result": SAMPLE_OUTPUT,
-        })
+
+        stream_line = json.dumps(
+            {
+                "type": "result",
+                "result": SAMPLE_OUTPUT,
+            }
+        )
         result = _parse_predep_output(stream_line)
         assert len(result["hidden_dependencies"]) == 2
 
@@ -82,13 +83,16 @@ class TestParsePredepOutput:
         """Regression: Claude wraps result JSON in ```json fences. The parser
         must strip them before parsing the inner string."""
         import json
+
         fenced_inner = "```json\n" + SAMPLE_OUTPUT + "\n```"
-        stream_line = json.dumps({
-            "type": "result",
-            "subtype": "success",
-            "is_error": False,
-            "result": fenced_inner,
-        })
+        stream_line = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": fenced_inner,
+            }
+        )
         result = _parse_predep_output(stream_line)
         assert len(result["hidden_dependencies"]) == 2
         assert result["files_scanned"] == 15
@@ -96,11 +100,14 @@ class TestParsePredepOutput:
     def test_stream_json_result_with_bare_fences(self):
         """Same regression but with bare ``` (no json language tag)."""
         import json
+
         fenced_inner = "```\n" + SAMPLE_OUTPUT + "\n```"
-        stream_line = json.dumps({
-            "type": "result",
-            "result": fenced_inner,
-        })
+        stream_line = json.dumps(
+            {
+                "type": "result",
+                "result": fenced_inner,
+            }
+        )
         result = _parse_predep_output(stream_line)
         assert len(result["hidden_dependencies"]) == 2
 
@@ -134,6 +141,7 @@ class TestParsePredepOutput:
     def test_logs_raw_output_on_failure(self, caplog):
         """When parsing fails, the raw output should be logged for diagnosis."""
         import logging
+
         with caplog.at_level(logging.WARNING):
             _parse_predep_output("agent said something unhelpful")
         assert "agent said something unhelpful" in caplog.text

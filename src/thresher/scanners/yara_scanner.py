@@ -6,7 +6,6 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any
 
 from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
@@ -51,8 +50,7 @@ def run_yara(target_dir: str, output_dir: str) -> ScanResults:
         if not Path(rules_dir).is_dir():
             elapsed = time.monotonic() - start
             logger.info(
-                "YARA rules dir %r not found — skipping YARA scan. "
-                "Set YARA_RULES_DIR to enable.",
+                "YARA rules dir %r not found — skipping YARA scan. Set YARA_RULES_DIR to enable.",
                 rules_dir,
             )
             return ScanResults(

@@ -18,10 +18,14 @@ def run_gitleaks(target_dir: str, output_dir: str) -> ScanResults:
         ScanSpec(
             name="gitleaks",
             cmd=[
-                "gitleaks", "detect",
-                "--source", target_dir,
-                "--report-format", "json",
-                "--report-path", output_path,
+                "gitleaks",
+                "detect",
+                "--source",
+                target_dir,
+                "--report-format",
+                "json",
+                "--report-path",
+                output_path,
                 "--no-banner",
             ],
             output_mode="self",

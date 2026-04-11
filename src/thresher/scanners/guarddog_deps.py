@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import glob
 import json
 import logging
 import tempfile
@@ -45,8 +44,8 @@ def run_guarddog_deps(output_dir: str) -> ScanResults:
         all_results: list[Any] = []
         last_exit_code = 0
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            for idx, subdir in enumerate(sorted(subdirs)):
+        with tempfile.TemporaryDirectory():
+            for _idx, subdir in enumerate(sorted(subdirs)):
                 result = run_cmd(
                     ["guarddog", "scan", subdir, "--output-format", "json"],
                     label="guarddog-deps",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from thresher.agents.analysts import (
     ANALYST_DEFINITIONS,
@@ -68,7 +68,7 @@ class TestAnalystDefinitions:
             assert not missing, f"Analyst {a.get('name', '?')} missing: {missing}"
 
     def test_shadowcatcher_gets_40_turns(self):
-        shadowcatcher = [a for a in ANALYST_DEFINITIONS if a["name"] == "shadowcatcher"][0]
+        shadowcatcher = next(a for a in ANALYST_DEFINITIONS if a["name"] == "shadowcatcher")
         assert shadowcatcher["max_turns"] == 40
 
     def test_others_get_30_turns(self):
@@ -107,12 +107,14 @@ class TestParseAnalystJsonOutput:
         assert result["analyst"] == "paranoid"
 
     def test_direct_json(self):
-        data = json.dumps({
-            "analyst": "paranoid",
-            "findings": [{"title": "test", "severity": "high"}],
-            "summary": "Found issues",
-            "risk_score": 5,
-        })
+        data = json.dumps(
+            {
+                "analyst": "paranoid",
+                "findings": [{"title": "test", "severity": "high"}],
+                "summary": "Found issues",
+                "risk_score": 5,
+            }
+        )
         result = _parse_analyst_json_output(data, self._analyst())
         assert len(result["findings"]) == 1
         assert result["risk_score"] == 5
@@ -124,11 +126,13 @@ class TestParseAnalystJsonOutput:
 
     def test_rejects_predep_schema(self):
         """Output with hidden_dependencies but no findings should be rejected."""
-        data = json.dumps({
-            "hidden_dependencies": [{"type": "npm", "source": "foo"}],
-            "files_scanned": 100,
-            "summary": "Found deps",
-        })
+        data = json.dumps(
+            {
+                "hidden_dependencies": [{"type": "npm", "source": "foo"}],
+                "files_scanned": 100,
+                "summary": "Found deps",
+            }
+        )
         result = _parse_analyst_json_output(data, self._analyst())
         assert "error" in result
         assert result["findings"] == []
@@ -265,7 +269,7 @@ class TestRunSingleAnalyst:
         config.analyst_max_turns = 15
         config.analyst_max_turns_by_name = {"investigator": 30}
 
-        investigator = [a for a in ANALYST_DEFINITIONS if a["name"] == "investigator"][0]
+        investigator = next(a for a in ANALYST_DEFINITIONS if a["name"] == "investigator")
         _run_single_analyst(config, investigator)
 
         cmd = mock_popen.call_args[0][0]
@@ -390,9 +394,7 @@ class TestRunAllAnalysts:
 
         run_all_analysts(_make_config())
 
-        called_numbers = sorted(
-            c[0][1]["number"] for c in mock_run.call_args_list
-        )
+        called_numbers = sorted(c[0][1]["number"] for c in mock_run.call_args_list)
         assert called_numbers == list(range(1, 9))
 
     @patch("thresher.agents.analysts._run_single_analyst")
@@ -417,10 +419,7 @@ class TestRunAllAnalysts:
             "risk_score": 0,
             "_timing": {"name": "behaviorist", "duration": 0.5, "turns": 1},
         }
-        mock_run.side_effect = [
-            findings_a if i == 0 else (findings_b if i == 1 else None)
-            for i in range(8)
-        ]
+        mock_run.side_effect = [findings_a if i == 0 else (findings_b if i == 1 else None) for i in range(8)]
 
         result = run_all_analysts(_make_config())
         # At least the non-None returns are included
@@ -464,6 +463,7 @@ class TestRunAllAnalysts:
 class TestLogTimingSummary:
     def test_logs_summary_table(self, caplog):
         import logging
+
         timings = [
             {"name": "paranoid", "duration": 301.2, "turns": 10},
             {"name": "behaviorist", "duration": 572.4, "turns": 15},
@@ -480,6 +480,7 @@ class TestLogTimingSummary:
 
     def test_warns_when_analyst_exceeds_2x_median(self, caplog):
         import logging
+
         timings = [
             {"name": "fast1", "duration": 100.0, "turns": 5},
             {"name": "fast2", "duration": 110.0, "turns": 6},
@@ -493,6 +494,7 @@ class TestLogTimingSummary:
 
     def test_no_warning_when_all_similar(self, caplog):
         import logging
+
         timings = [
             {"name": "a", "duration": 100.0, "turns": 5},
             {"name": "b", "duration": 110.0, "turns": 6},
@@ -505,12 +507,14 @@ class TestLogTimingSummary:
 
     def test_empty_timings(self, caplog):
         import logging
+
         with caplog.at_level(logging.INFO, logger="thresher.agents.analysts"):
             _log_timing_summary([])
         assert "timing summary" not in caplog.text
 
     def test_single_analyst_no_slowest_tag(self, caplog):
         import logging
+
         timings = [{"name": "paranoid", "duration": 300.0, "turns": 10}]
         with caplog.at_level(logging.INFO, logger="thresher.agents.analysts"):
             _log_timing_summary(timings)

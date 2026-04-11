@@ -8,19 +8,20 @@ from __future__ import annotations
 
 import sys
 import threading
+from typing import ClassVar
 
 # ── ANSI color constants ──────────────────────────────────────────
 
-RESET = '\033[0m'
-BOLD = '\033[1m'
-DIM = '\033[2m'
-VIOLET = '\033[38;5;141m'
-ARCTIC = '\033[38;5;195m'
-GRAY = '\033[38;5;245m'
-GREEN = '\033[38;5;114m'
-RED = '\033[38;5;203m'
-AMBER = '\033[38;5;214m'
-WHITE = '\033[38;5;255m'
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+VIOLET = "\033[38;5;141m"
+ARCTIC = "\033[38;5;195m"
+GRAY = "\033[38;5;245m"
+GREEN = "\033[38;5;114m"
+RED = "\033[38;5;203m"
+AMBER = "\033[38;5;214m"
+WHITE = "\033[38;5;255m"
 
 # ── ASCII art ─────────────────────────────────────────────────────
 
@@ -62,6 +63,7 @@ ANALYST_DISPLAY_NAMES: dict[str, str] = {
 
 # ── Print functions ───────────────────────────────────────────────
 
+
 def print_splash(version: str, url: str) -> None:
     """Print the full splash art with version and URL in violet."""
     lines = SPLASH_ART.split("\n")
@@ -98,9 +100,7 @@ def print_stage_fail(label: str) -> None:
     print(f"  {RED}[!!]{RESET} {label}")
 
 
-def print_findings_summary(
-    p0: int, critical: int, high: int, medium: int, low: int
-) -> None:
+def print_findings_summary(p0: int, critical: int, high: int, medium: int, low: int) -> None:
     """Print formatted findings summary table."""
     print()
     print(f"  {BOLD}{ARCTIC}FINDINGS{RESET}")
@@ -134,7 +134,7 @@ class FinSpinner:
         # Automatically shows [OK] when done, [!!] on exception
     """
 
-    _FRAMES = ["_/|", "_//", "__/", "\\__", "\\_/", "/\\_", "|/_", "|\\_"]
+    _FRAMES: ClassVar[list[str]] = ["_/|", "_//", "__/", "\\__", "\\_/", "/\\_", "|/_", "|\\_"]
 
     def __init__(self, label: str) -> None:
         self.label = label
@@ -142,7 +142,7 @@ class FinSpinner:
         self._stop_event = threading.Event()
         self._failed = False
 
-    def __enter__(self) -> "FinSpinner":
+    def __enter__(self) -> FinSpinner:
         self._stop_event.clear()
         self._failed = False
         self._thread = threading.Thread(target=self._animate, daemon=True)
@@ -155,7 +155,7 @@ class FinSpinner:
         if self._thread:
             self._thread.join(timeout=2)
         # Clear the spinner line and print final status
-        sys.stdout.write(f"\r\033[K")
+        sys.stdout.write("\r\033[K")
         sys.stdout.flush()
         if self._failed:
             print_stage_fail(self.label)
@@ -167,9 +167,7 @@ class FinSpinner:
         i = 0
         while not self._stop_event.is_set():
             frame = self._FRAMES[i % len(self._FRAMES)]
-            sys.stdout.write(
-                f"\r  {VIOLET}{frame}{RESET} {GRAY}{self.label}{RESET}  "
-            )
+            sys.stdout.write(f"\r  {VIOLET}{frame}{RESET} {GRAY}{self.label}{RESET}  ")
             sys.stdout.flush()
             i += 1
             self._stop_event.wait(0.12)
@@ -204,17 +202,13 @@ class FinProgressBar:
         filled = int(self.width * pct)
         fin = "_/|"
 
-        if filled < self.width - 3:
-            bar = "=" * filled + fin + " " * (self.width - filled - 3)
-        else:
-            bar = "=" * self.width
+        bar = "=" * filled + fin + " " * (self.width - filled - 3) if filled < self.width - 3 else "=" * self.width
 
         pct_str = f"{int(pct * 100)}%"
         status = self._status[:30] if self._status else ""
 
         sys.stdout.write(
-            f"\r  {GRAY}{self.label} [{VIOLET}{bar}{GRAY}] "
-            f"{WHITE}{pct_str}{RESET} {DIM}{status}{RESET}\033[K"
+            f"\r  {GRAY}{self.label} [{VIOLET}{bar}{GRAY}] {WHITE}{pct_str}{RESET} {DIM}{status}{RESET}\033[K"
         )
         sys.stdout.flush()
 
@@ -222,10 +216,7 @@ class FinProgressBar:
         """Complete the progress bar."""
         self._current = self.total
         filled = "=" * self.width
-        sys.stdout.write(
-            f"\r  {GRAY}{self.label} [{GREEN}{filled}{GRAY}] "
-            f"{GREEN}done{RESET}\033[K\n"
-        )
+        sys.stdout.write(f"\r  {GRAY}{self.label} [{GREEN}{filled}{GRAY}] {GREEN}done{RESET}\033[K\n")
         sys.stdout.flush()
 
 

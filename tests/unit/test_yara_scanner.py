@@ -33,7 +33,11 @@ class TestResolveYaraRulesDir:
 class TestRunYara:
     @patch("thresher.run._popen")
     def test_skips_cleanly_when_rules_dir_missing(
-        self, mock_popen, tmp_path, caplog, monkeypatch,
+        self,
+        mock_popen,
+        tmp_path,
+        caplog,
+        monkeypatch,
     ):
         """When the rules dir is absent, the scanner returns clean results
         with a single explanatory INFO log — not a WARNING that scares

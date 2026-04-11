@@ -1,7 +1,7 @@
 """Tests for the report-maker agent runner."""
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from thresher.config import ScanConfig
 
@@ -26,14 +26,23 @@ def _stream_bytes(report_data: dict) -> bytes:
 def _valid_report_data():
     return {
         "meta": {
-            "scan_date": "2026-04-02", "thresher_version": "v0.2.2",
-            "scanner_count": "22", "analyst_count": "8",
-            "repo_name": "owner/repo", "repo_url": "https://github.com/owner/repo",
+            "scan_date": "2026-04-02",
+            "thresher_version": "v0.2.2",
+            "scanner_count": "22",
+            "analyst_count": "8",
+            "repo_name": "owner/repo",
+            "repo_url": "https://github.com/owner/repo",
         },
         "verdict": {"label": "LOW RISK", "severity": "low", "callout": "No issues."},
         "counts": {
-            "total_scanner": "0", "total_ai": "0", "p0": "0", "critical": "0",
-            "high_scanner": "0", "high_ai": "0", "medium": "0", "low": "0",
+            "total_scanner": "0",
+            "total_ai": "0",
+            "p0": "0",
+            "critical": "0",
+            "high_scanner": "0",
+            "high_ai": "0",
+            "medium": "0",
+            "low": "0",
         },
         "executive_summary": "<p>Clean.</p>",
         "mitigations": [],
@@ -118,6 +127,4 @@ def test_cwd_defaults_to_output_dir(mock_popen, tmp_path):
     run_report_maker(config, str(tmp_path))
 
     kwargs = mock_popen.call_args[1]
-    assert kwargs.get("cwd") == str(tmp_path), (
-        f"report-maker cwd should be output_dir, got {kwargs.get('cwd')!r}"
-    )
+    assert kwargs.get("cwd") == str(tmp_path), f"report-maker cwd should be output_dir, got {kwargs.get('cwd')!r}"

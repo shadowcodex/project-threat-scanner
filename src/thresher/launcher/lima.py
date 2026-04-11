@@ -22,7 +22,7 @@ def launch_lima(config: ScanConfig) -> int:
             check=True,
         )
         docker_cmd = _build_lima_docker_cmd(config)
-        result = subprocess.run(["limactl", "shell", BASE_VM_NAME, "--"] + docker_cmd)
+        result = subprocess.run(["limactl", "shell", BASE_VM_NAME, "--", *docker_cmd])
         if result.returncode == 0:
             _copy_report_to_host(config.output_dir)
         return result.returncode
@@ -40,14 +40,13 @@ def _ensure_vm_running() -> None:
     elif status == "Stopped":
         subprocess.run(["limactl", "start", BASE_VM_NAME], check=True)
     else:
-        raise RuntimeError(
-            f"Lima VM '{BASE_VM_NAME}' not found. Run 'thresher build' first."
-        )
+        raise RuntimeError(f"Lima VM '{BASE_VM_NAME}' not found. Run 'thresher build' first.")
 
 
 def _apply_firewall() -> None:
     """Apply iptables firewall rules inside the Lima VM."""
     from thresher.vm.firewall import generate_firewall_rules
+
     rules = generate_firewall_rules()
     subprocess.run(
         ["limactl", "shell", BASE_VM_NAME, "--", "sudo", "bash", "-c", rules],
@@ -61,8 +60,10 @@ def _build_lima_docker_cmd(config: ScanConfig) -> list[str]:
         config_mount="/opt/config.json:/config/config.json:ro",
         # Forward host env vars by name through limactl shell.
         env_flags=[
-            "-e", "ANTHROPIC_API_KEY",
-            "-e", "CLAUDE_CODE_OAUTH_TOKEN",
+            "-e",
+            "ANTHROPIC_API_KEY",
+            "-e",
+            "CLAUDE_CODE_OAUTH_TOKEN",
         ],
     )
 

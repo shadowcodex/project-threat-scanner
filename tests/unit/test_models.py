@@ -9,9 +9,20 @@ class TestFinding:
     def test_to_dict_keys(self, sample_finding: Finding):
         d = sample_finding.to_dict()
         expected_keys = {
-            "id", "source_tool", "category", "severity", "cvss_score",
-            "cve_id", "title", "description", "file_path", "line_number",
-            "package_name", "package_version", "fix_version", "raw_output",
+            "id",
+            "source_tool",
+            "category",
+            "severity",
+            "cvss_score",
+            "cve_id",
+            "title",
+            "description",
+            "file_path",
+            "line_number",
+            "package_name",
+            "package_version",
+            "fix_version",
+            "raw_output",
         }
         assert set(d.keys()) == expected_keys
 
@@ -99,9 +110,9 @@ class TestSanitizeJsonBytes:
 
     def test_multiline_progress_bar(self):
         data = (
-            b'\r[                    ] 0%\r'
-            b'[##########          ] 50%\r'
-            b'[####################] 100%\n'
+            b"\r[                    ] 0%\r"
+            b"[##########          ] 50%\r"
+            b"[####################] 100%\n"
             b'{"results": [1, 2, 3]}'
         )
         result = sanitize_json_bytes(data, "bandit")
@@ -111,7 +122,8 @@ class TestSanitizeJsonBytes:
 class TestBanditQuietFlag:
     def test_bandit_command_includes_quiet_flag(self):
         """Bandit must use -q to suppress progress bar contamination."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from thresher.scanners.bandit import run_bandit
 
         mock_proc = MagicMock()

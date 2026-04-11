@@ -1,9 +1,20 @@
 """Unit tests for thresher.harness.deps."""
 
+from __future__ import annotations
+
 import json
-import pytest
-from unittest.mock import patch, MagicMock
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from thresher.harness.deps import (
+    build_manifest,
+    detect_ecosystems,
+    download_go,
+    download_node,
+    download_python,
+    download_rust,
+    resolve_deps,
+)
 
 
 def _mock_popen(returncode=0, stdout=b""):
@@ -13,17 +24,6 @@ def _mock_popen(returncode=0, stdout=b""):
     mock.returncode = returncode
     mock.wait.return_value = returncode
     return mock
-
-
-from thresher.harness.deps import (
-    detect_ecosystems,
-    download_python,
-    download_node,
-    download_rust,
-    download_go,
-    resolve_deps,
-    build_manifest,
-)
 
 
 class TestDetectEcosystems:
@@ -115,7 +115,9 @@ class TestDownloadPython:
 
     @patch("thresher.run._popen")
     def test_workspace_pyproject_uses_synthetic_requirements(
-        self, mock_run, tmp_path,
+        self,
+        mock_run,
+        tmp_path,
     ):
         """Regression for H3: aegra has [tool.uv.workspace] members and a
         flat layout. ``pip3 download .`` fails with 'Multiple top-level
@@ -128,30 +130,24 @@ class TestDownloadPython:
 
         # Workspace root pyproject
         (src / "pyproject.toml").write_text(
-            '[project]\n'
+            "[project]\n"
             'name = "aegra-workspace"\n'
             'version = "0.0.0"\n'
             'dependencies = ["fastapi>=0.100", "pydantic>=2.0"]\n'
-            '\n'
-            '[tool.uv.workspace]\n'
+            "\n"
+            "[tool.uv.workspace]\n"
             'members = ["libs/*", "deployments/*"]\n'
         )
         # Two flat-layout member packages
         (src / "libs").mkdir()
         (src / "libs" / "core").mkdir()
         (src / "libs" / "core" / "pyproject.toml").write_text(
-            '[project]\n'
-            'name = "aegra-core"\n'
-            'version = "0.1.0"\n'
-            'dependencies = ["httpx>=0.24"]\n'
+            '[project]\nname = "aegra-core"\nversion = "0.1.0"\ndependencies = ["httpx>=0.24"]\n'
         )
         (src / "deployments").mkdir()
         (src / "deployments" / "api").mkdir()
         (src / "deployments" / "api" / "pyproject.toml").write_text(
-            '[project]\n'
-            'name = "aegra-api"\n'
-            'version = "0.1.0"\n'
-            'dependencies = ["uvicorn>=0.20"]\n'
+            '[project]\nname = "aegra-api"\nversion = "0.1.0"\ndependencies = ["uvicorn>=0.20"]\n'
         )
 
         deps = tmp_path / "deps"
@@ -162,9 +158,7 @@ class TestDownloadPython:
         # NOT pass the workspace root as a path (which would explode).
         cmd = mock_run.call_args[0][0]
         assert "pip3" in cmd
-        assert str(src) not in cmd, (
-            f"workspace root passed as positional arg: {cmd}"
-        )
+        assert str(src) not in cmd, f"workspace root passed as positional arg: {cmd}"
         assert "-r" in cmd
         req_idx = cmd.index("-r")
         req_path = Path(cmd[req_idx + 1])
@@ -181,7 +175,10 @@ class TestResolveDepsStatusFile:
     @patch("thresher.harness.deps.download_python")
     @patch("thresher.harness.deps.build_manifest")
     def test_writes_dep_resolution_json(
-        self, mock_manifest, mock_python, tmp_path,
+        self,
+        mock_manifest,
+        mock_python,
+        tmp_path,
     ):
         deps_dir = tmp_path / "deps"
         resolve_deps(
@@ -200,7 +197,10 @@ class TestResolveDepsStatusFile:
     @patch("thresher.harness.deps.build_manifest")
     @patch("thresher.run._popen")
     def test_records_python_failure(
-        self, mock_run, mock_manifest, tmp_path,
+        self,
+        mock_run,
+        mock_manifest,
+        tmp_path,
     ):
         """When pip3 download exits non-zero, dep_resolution.json must
         record the failure for the Python ecosystem."""
@@ -226,9 +226,7 @@ class TestDownloadNode:
         mock_run.return_value = MagicMock(returncode=0, stdout=b"")
         src = tmp_path / "src"
         src.mkdir()
-        (src / "package.json").write_text(
-            json.dumps({"dependencies": {"express": "4.18.0"}})
-        )
+        (src / "package.json").write_text(json.dumps({"dependencies": {"express": "4.18.0"}}))
         deps = tmp_path / "deps"
         deps.mkdir()
         download_node(str(src), str(deps))
@@ -249,9 +247,7 @@ class TestDownloadNode:
         mock_run.return_value = MagicMock(returncode=0, stdout=b"")
         src = tmp_path / "src"
         src.mkdir()
-        (src / "package.json").write_text(
-            json.dumps({"devDependencies": {"jest": "29.0.0"}})
-        )
+        (src / "package.json").write_text(json.dumps({"devDependencies": {"jest": "29.0.0"}}))
         deps = tmp_path / "deps"
         deps.mkdir()
         download_node(str(src), str(deps))
@@ -362,9 +358,7 @@ class TestResolveDeps:
     @patch("thresher.harness.deps.download_python")
     @patch("thresher.harness.deps.download_node")
     @patch("thresher.harness.deps.build_manifest")
-    def test_calls_downloaders_for_detected_ecosystems(
-        self, mock_manifest, mock_node, mock_python, tmp_path
-    ):
+    def test_calls_downloaders_for_detected_ecosystems(self, mock_manifest, mock_node, mock_python, tmp_path):
         deps_dir = str(tmp_path / "deps")
         resolve_deps(
             target_dir="/opt/target",
@@ -392,11 +386,13 @@ class TestResolveDeps:
 
     @patch("thresher.harness.deps.download_hidden")
     @patch("thresher.harness.deps.build_manifest")
-    def test_calls_download_hidden_when_provided(
-        self, mock_manifest, mock_hidden, tmp_path
-    ):
+    def test_calls_download_hidden_when_provided(self, mock_manifest, mock_hidden, tmp_path):
         deps_dir = str(tmp_path / "deps")
-        hidden = {"hidden_dependencies": [{"type": "git", "source": "https://github.com/x/y", "confidence": "high", "risk": "low"}]}
+        hidden = {
+            "hidden_dependencies": [
+                {"type": "git", "source": "https://github.com/x/y", "confidence": "high", "risk": "low"}
+            ]
+        }
         resolve_deps(
             target_dir="/opt/target",
             ecosystems=[],

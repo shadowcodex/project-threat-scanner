@@ -8,14 +8,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-from thresher.scanners.models import ScanResults
 from thresher.report.scoring import enrich_findings
+from thresher.scanners.models import ScanResults
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_EXTENSIONS = frozenset({
-    ".json", ".md", ".txt", ".csv", ".log", ".sarif", ".html"
-})
+ALLOWED_EXTENSIONS = frozenset({".json", ".md", ".txt", ".csv", ".log", ".sarif", ".html"})
 DEFAULT_MAX_FILE_BYTES = 50 * 1024 * 1024
 DEFAULT_MAX_JSON_BYTES = 10 * 1024 * 1024
 
@@ -43,9 +41,7 @@ def validate_report_output(
         if not path.is_file():
             continue
         if path.suffix.lower() not in ALLOWED_EXTENSIONS:
-            logger.warning(
-                "Removing file with disallowed extension: %s", path
-            )
+            logger.warning("Removing file with disallowed extension: %s", path)
             path.unlink()
             continue
         if path.stat().st_size > max_file_bytes:
@@ -100,8 +96,7 @@ def enrich_all_findings(
         sub_findings = mapped.get("findings", [])
         if isinstance(sub_findings, list) and sub_findings:
             max_conf = max(
-                (sf.get("confidence", 0) for sf in sub_findings
-                 if isinstance(sf, dict)),
+                (sf.get("confidence", 0) for sf in sub_findings if isinstance(sf, dict)),
                 default=0,
             )
             if max_conf and "ai_confidence" not in mapped:
@@ -122,7 +117,7 @@ def enrich_all_findings(
         all_findings.append(mapped)
 
     # Merge scanner findings into the combined list
-    for sr in (scan_results or []):
+    for sr in scan_results or []:
         for finding in sr.findings:
             all_findings.append(finding.to_dict())
 
@@ -168,9 +163,7 @@ def stage_artifacts(
 
     # Machine-readable enriched findings — used by both downstream agents
     # and any humans poking at the report tree.
-    (out_path / "findings.json").write_text(
-        json.dumps(findings, indent=2, default=str)
-    )
+    (out_path / "findings.json").write_text(json.dumps(findings, indent=2, default=str))
 
     # Per-analyst output: JSON for the formatter, markdown for humans.
     if analyst_findings:
@@ -184,9 +177,7 @@ def stage_artifacts(
             number = af.get("analyst_number", 0)
             name = af.get("analyst", "unknown")
             base = f"analyst-{number:02d}-{name}"
-            (scan_results_dir / f"{base}.json").write_text(
-                json.dumps(af, indent=2, default=str)
-            )
+            (scan_results_dir / f"{base}.json").write_text(json.dumps(af, indent=2, default=str))
             analyst_def = analyst_def_by_name.get(name)
             if analyst_def is not None:
                 try:
@@ -195,7 +186,8 @@ def stage_artifacts(
                 except Exception:
                     logger.warning(
                         "Failed to format analyst markdown for %s",
-                        name, exc_info=True,
+                        name,
+                        exc_info=True,
                     )
             logger.info("Staged per-analyst output: %s.json/.md", base)
 
@@ -203,6 +195,7 @@ def stage_artifacts(
     source_dir = Path(scan_results_source)
     if source_dir.exists():
         import shutil
+
         for f in source_dir.iterdir():
             if f.is_file():
                 shutil.copy2(f, scan_results_dir / f.name)
@@ -212,6 +205,7 @@ def stage_artifacts(
     dep_status = Path(deps_source) / "dep_resolution.json"
     if dep_status.is_file():
         import shutil
+
         shutil.copy2(dep_status, scan_results_dir / "dep_resolution.json")
 
     return str(out_path)
@@ -230,9 +224,7 @@ def finalize_output(
     rejects symlinks, oversized files, and disallowed extensions.
     """
     output_dir = staged_dir or (
-        config.output_dir
-        if not isinstance(config, dict)
-        else config.get("output_dir", "/output")
+        config.output_dir if not isinstance(config, dict) else config.get("output_dir", "/output")
     )
     validate_report_output(output_dir)
 
@@ -241,15 +233,17 @@ def finalize_output(
 # expect on the report_data dict. Missing keys cause "undefined" cells in
 # the rendered page, so we treat their absence as a hard validation
 # failure and fall back to build_fallback_report_data().
-_REQUIRED_REPORT_DATA_KEYS = frozenset({
-    "meta",
-    "verdict",
-    "counts",
-    "executive_summary",
-    "scanner_findings",
-    "ai_findings",
-    "pipeline",
-})
+_REQUIRED_REPORT_DATA_KEYS = frozenset(
+    {
+        "meta",
+        "verdict",
+        "counts",
+        "executive_summary",
+        "scanner_findings",
+        "ai_findings",
+        "pipeline",
+    }
+)
 
 
 def _dep_resolution_dir() -> str:
@@ -328,6 +322,7 @@ def render_report(
     Returns the path to the generated report.html.
     """
     import json as _json
+
     from jinja2 import Environment, FileSystemLoader
 
     if template_dir is None:
@@ -340,10 +335,7 @@ def render_report(
                 template_dir = str(candidate)
                 break
         if template_dir is None:
-            raise FileNotFoundError(
-                "template_report.html not found. Checked: "
-                + ", ".join(str(c) for c in candidates)
-            )
+            raise FileNotFoundError("template_report.html not found. Checked: " + ", ".join(str(c) for c in candidates))
 
     env = Environment(
         loader=FileSystemLoader(template_dir),
@@ -399,14 +391,16 @@ def build_fallback_report_data(config, enriched_findings: list) -> dict:
     for i, f in enumerate(scanner[:10], 1):
         pkg = f.get("package_name", "unknown")
         ver = f.get("package_version", "")
-        scanner_top.append({
-            "rank": str(i),
-            "severity": (f.get("composite_priority") or f.get("severity", "low")).lower(),
-            "package": f"{pkg}@{ver}" if ver else pkg,
-            "title": f.get("title", ""),
-            "cve": f.get("cve_id", ""),
-            "cvss": str(f.get("cvss_score", "")),
-        })
+        scanner_top.append(
+            {
+                "rank": str(i),
+                "severity": (f.get("composite_priority") or f.get("severity", "low")).lower(),
+                "package": f"{pkg}@{ver}" if ver else pkg,
+                "title": f.get("title", ""),
+                "cve": f.get("cve_id", ""),
+                "cvss": str(f.get("cvss_score", "")),
+            }
+        )
 
     mitigations = []
     for f in enriched_findings:
@@ -414,9 +408,7 @@ def build_fallback_report_data(config, enriched_findings: list) -> dict:
         if sev in ("critical", "high"):
             cve = f.get("cve_id", "")
             pkg = f.get("package_name", "unknown")
-            mitigations.append(
-                f"Resolve {cve} in {pkg}" if cve else f"Remediate {pkg}: {f.get('title', '')}"
-            )
+            mitigations.append(f"Resolve {cve} in {pkg}" if cve else f"Remediate {pkg}: {f.get('title', '')}")
 
     return {
         "meta": {
@@ -454,15 +446,21 @@ def build_fallback_report_data(config, enriched_findings: list) -> dict:
         "remediation": None,
         "pipeline": {
             "scanners": [
-                "grype", "trivy", "osv-scanner", "semgrep", "gitleaks",
-                "checkov", "bandit", "clamav", "guarddog", "yara",
-                "entropy", "install-hooks",
+                "grype",
+                "trivy",
+                "osv-scanner",
+                "semgrep",
+                "gitleaks",
+                "checkov",
+                "bandit",
+                "clamav",
+                "guarddog",
+                "yara",
+                "entropy",
+                "install-hooks",
             ],
             "analysts": [],
-            "notes": (
-                "AI analysts were not run." if config.skip_ai
-                else "AI agent failed; using fallback report."
-            ),
+            "notes": ("AI analysts were not run." if config.skip_ai else "AI agent failed; using fallback report."),
         },
         "config": {
             "show_cta": "true",

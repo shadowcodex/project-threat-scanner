@@ -65,7 +65,8 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
         )
 
     try:
-        schema = json.loads(open(schema_path).read())
+        with open(schema_path) as f:
+            schema = json.loads(f.read())
         jsonschema.validate(instance=data, schema=schema)
     except jsonschema.ValidationError as e:
         path = " -> ".join(str(p) for p in e.absolute_path) or "(root)"

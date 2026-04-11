@@ -35,6 +35,7 @@ _DEFINITIONS_DIR = Path(__file__).parent / "definitions"
 # Load analyst definitions from individual YAML files
 # ---------------------------------------------------------------------------
 
+
 def _load_definitions() -> list[dict[str, Any]]:
     """Load analyst definitions from agents/definitions/NN-*.yaml.
 
@@ -130,7 +131,8 @@ def _validate_analyst_schema(parsed: dict[str, Any], analyst_def: dict[str, Any]
         missing = _REQUIRED_ANALYST_KEYS - parsed.keys()
         logger.warning(
             "Analyst %s output missing required keys: %s",
-            analyst_def["name"], missing,
+            analyst_def["name"],
+            missing,
         )
         return None
     return parsed
@@ -150,7 +152,8 @@ def _parse_analyst_json_output(text: str, analyst_def: dict[str, Any]) -> dict[s
         return parsed
 
     logger.warning(
-        "Could not parse valid analyst JSON from %s output", analyst_def["name"],
+        "Could not parse valid analyst JSON from %s output",
+        analyst_def["name"],
     )
     return _empty_findings(analyst_def, f"Failed to parse output. Raw: {text[:500]}")
 
@@ -172,6 +175,7 @@ def _empty_findings(analyst_def: dict[str, Any], reason: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Markdown formatting
 # ---------------------------------------------------------------------------
+
 
 def _format_analyst_markdown(findings: dict[str, Any], analyst_def: dict[str, Any]) -> str:
     """Format analyst findings as a readable markdown report."""
@@ -245,6 +249,7 @@ def _format_analyst_markdown(findings: dict[str, Any], analyst_def: dict[str, An
 # Single analyst execution
 # ---------------------------------------------------------------------------
 
+
 def _run_single_analyst(
     config: ScanConfig,
     analyst_def: dict[str, Any],
@@ -257,11 +262,7 @@ def _run_single_analyst(
     number = analyst_def["number"]
     name = analyst_def["name"]
     # Priority: per-analyst toml > global toml > YAML default
-    max_turns = (
-        config.analyst_max_turns_by_name.get(name)
-        or config.analyst_max_turns
-        or analyst_def["max_turns"]
-    )
+    max_turns = config.analyst_max_turns_by_name.get(name) or config.analyst_max_turns or analyst_def["max_turns"]
     label = f"analyst-{number}-{name}"
     logger.info("%s using max_turns=%d", label, max_turns)
 
@@ -269,7 +270,9 @@ def _run_single_analyst(
         hooks_json: str | None = build_stop_hook_settings("analyst")
     except Exception:
         logger.warning(
-            "Failed to resolve analyst hook settings for %s", label, exc_info=True,
+            "Failed to resolve analyst hook settings for %s",
+            label,
+            exc_info=True,
         )
         hooks_json = None
 
@@ -313,6 +316,7 @@ def _run_single_analyst(
 # Timing summary
 # ---------------------------------------------------------------------------
 
+
 def _log_timing_summary(timings: list[dict[str, Any]]) -> None:
     """Log a summary table of analyst runtimes with slowest-analyst warning."""
     if not timings:
@@ -321,12 +325,14 @@ def _log_timing_summary(timings: list[dict[str, Any]]) -> None:
     durations = [t["duration"] for t in timings]
     median_duration = statistics.median(durations)
     max_duration = max(durations)
-    slowest_name = next(t["name"] for t in timings if t["duration"] == max_duration)
+    next(t["name"] for t in timings if t["duration"] == max_duration)
 
     lines = ["Analyst timing summary:"]
     for t in sorted(timings, key=lambda x: x["name"]):
         tag = "  [SLOWEST]" if t["duration"] == max_duration and len(timings) > 1 else ""
-        lines.append(f"  analyst-{t['name']}:{' ' * max(1, 30 - len(t['name']))} {t['duration']:>7.1f}s  (turns={t['turns']}){tag}")
+        lines.append(
+            f"  analyst-{t['name']}:{' ' * max(1, 30 - len(t['name']))} {t['duration']:>7.1f}s  (turns={t['turns']}){tag}"
+        )
 
     logger.info("\n".join(lines))
 
@@ -335,8 +341,7 @@ def _log_timing_summary(timings: list[dict[str, Any]]) -> None:
         for t in timings:
             if t["duration"] > 2 * median_duration:
                 logger.warning(
-                    "Analyst %s took %.1fs (%.1fx median of %.1fs) — "
-                    "consider reducing prompt scope",
+                    "Analyst %s took %.1fs (%.1fx median of %.1fs) — consider reducing prompt scope",
                     t["name"],
                     t["duration"],
                     t["duration"] / median_duration,
@@ -347,6 +352,7 @@ def _log_timing_summary(timings: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 # Main entry point — run all 8 analysts in parallel
 # ---------------------------------------------------------------------------
+
 
 def run_all_analysts(config: ScanConfig, target_dir: str = TARGET_DIR) -> list[dict[str, Any]]:
     """Run all 8 analyst agents in parallel.

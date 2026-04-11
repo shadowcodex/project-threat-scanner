@@ -102,7 +102,9 @@ def run(
                 proc.wait()
                 logger.warning(
                     "[%s] killed — stdout limit exceeded (%d bytes > %d byte limit)",
-                    label, stdout_size, _max_stdout_bytes,
+                    label,
+                    stdout_size,
+                    _max_stdout_bytes,
                 )
                 break
             line = raw_line.decode(errors="replace").rstrip()

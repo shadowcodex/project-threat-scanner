@@ -97,6 +97,7 @@ class TestLaunchDirect:
             launch_direct(config)
 
         import os
+
         assert not os.path.exists(captured_path[0]), "Temp config file should be deleted"
 
     def test_config_file_cleaned_up_on_failure(self, tmp_path):
@@ -112,11 +113,14 @@ class TestLaunchDirect:
             captured_path.append(cmd[idx + 1])
             raise RuntimeError("subprocess failed")
 
-        with patch("thresher.launcher.direct.subprocess.run", side_effect=capture_and_raise):
-            with pytest.raises(RuntimeError):
-                launch_direct(config)
+        with (
+            patch("thresher.launcher.direct.subprocess.run", side_effect=capture_and_raise),
+            pytest.raises(RuntimeError),
+        ):
+            launch_direct(config)
 
         import os
+
         assert not os.path.exists(captured_path[0]), "Temp config file should be deleted even on failure"
 
     def test_config_serialized_to_temp_file(self):
@@ -124,12 +128,11 @@ class TestLaunchDirect:
         config = _make_config()
         written_content = []
 
-        original_run = __import__("subprocess").run
-
         def fake_run(cmd, **kwargs):
             idx = cmd.index("--config")
             path = cmd[idx + 1]
             import os
+
             if os.path.exists(path):
                 with open(path) as f:
                     written_content.append(f.read())
@@ -142,5 +145,6 @@ class TestLaunchDirect:
 
         assert len(written_content) == 1
         import json
+
         data = json.loads(written_content[0])
         assert data["repo_url"] == config.repo_url

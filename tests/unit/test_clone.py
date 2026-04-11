@@ -1,8 +1,8 @@
-import os
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, call
-from pathlib import Path
-from thresher.harness.clone import safe_clone, _sanitize_git_config, _post_checkout_validate
+
+from thresher.harness.clone import _post_checkout_validate, _sanitize_git_config, safe_clone
 
 
 def _mock_popen(returncode=0, stdout=b""):
@@ -24,8 +24,10 @@ class TestSafeClone:
 
     def _make_safe_clone_call(self, mock_run, *args, **kwargs):
         """Helper: call safe_clone with phases 2/4 patched to no-ops."""
-        with patch("thresher.harness.clone._sanitize_git_config"), \
-             patch("thresher.harness.clone._post_checkout_validate"):
+        with (
+            patch("thresher.harness.clone._sanitize_git_config"),
+            patch("thresher.harness.clone._post_checkout_validate"),
+        ):
             return safe_clone(*args, **kwargs)
 
     @patch("thresher.run._popen")
@@ -47,7 +49,7 @@ class TestSafeClone:
         clone_call = mock_run.call_args_list[0]
         args = clone_call[0][0]
         assert "-c" in args
-        config_args = [args[i+1] for i, v in enumerate(args) if v == "-c"]
+        config_args = [args[i + 1] for i, v in enumerate(args) if v == "-c"]
         assert "core.hooksPath=/dev/null" in config_args
         assert "core.fsmonitor=false" in config_args
 
@@ -75,7 +77,7 @@ class TestSafeClone:
         self._make_safe_clone_call(mock_run, "https://github.com/test/repo", "/opt/target")
         clone_call = mock_run.call_args_list[0]
         args = clone_call[0][0]
-        config_args = [args[i+1] for i, v in enumerate(args) if v == "-c"]
+        config_args = [args[i + 1] for i, v in enumerate(args) if v == "-c"]
         assert "core.hooksPath=/dev/null" in config_args
         assert "core.fsmonitor=false" in config_args
         assert "core.fsmonitorHookVersion=0" in config_args
@@ -120,7 +122,6 @@ class TestSafeClone:
 
 
 class TestSanitizeGitConfig:
-
     def test_writes_minimal_config(self, tmp_path):
         """Phase 2: .git/config rewritten with safe settings."""
         git_dir = tmp_path / ".git"
@@ -183,7 +184,6 @@ class TestSanitizeGitConfig:
 
 
 class TestPostCheckoutValidate:
-
     def test_removes_symlinks(self, tmp_path):
         """Phase 4: symlinks are removed."""
         target = tmp_path / "real_file"
@@ -241,6 +241,6 @@ class TestPostCheckoutValidate:
         # Create a file with .. in name
         bad_file = tmp_path / "foo..bar"
         bad_file.write_text("suspicious")
-        with patch("thresher.harness.clone.logger") as mock_log:
+        with patch("thresher.harness.clone.logger"):
             _post_checkout_validate(str(tmp_path))
             # warning may or may not fire depending on implementation — just ensure no crash

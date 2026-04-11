@@ -126,12 +126,12 @@ class TestStartVmDiagnostics:
     @patch("thresher.vm.lima.subprocess.Popen")
     def test_includes_ha_log_on_failure(self, mock_popen, mock_log):
         proc = MagicMock()
-        proc.stdout = iter(["level=fatal msg=\"exiting\"\n"])
+        proc.stdout = iter(['level=fatal msg="exiting"\n'])
         proc.wait.return_value = None
         proc.returncode = 1
         mock_popen.return_value = proc
 
-        with pytest.raises(LimaError, match="ha.stderr.log"):
+        with pytest.raises(LimaError, match=r"ha\.stderr\.log"):
             start_vm("test-vm")
 
     @patch("thresher.vm.lima._read_ha_stderr_log", return_value="")

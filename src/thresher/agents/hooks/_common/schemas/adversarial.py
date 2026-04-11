@@ -43,8 +43,7 @@ def validate(data: Any) -> tuple[list[str], list[str]]:
             verdict = r.get("verdict", "")
             if verdict not in ("confirmed", "downgraded"):
                 errors.append(
-                    f'results[{i}] verdict must be "confirmed" or '
-                    f'"downgraded", got: {verdict}',
+                    f'results[{i}] verdict must be "confirmed" or "downgraded", got: {verdict}',
                 )
 
     return errors, _HINTS

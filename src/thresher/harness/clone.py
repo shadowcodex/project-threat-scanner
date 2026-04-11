@@ -16,17 +16,28 @@ logger = logging.getLogger(__name__)
 
 # All -c flags required to neutralize git code execution vectors.
 _SAFE_CLONE_FLAGS = [
-    "-c", "core.hooksPath=/dev/null",
-    "-c", "core.fsmonitor=false",
-    "-c", "core.fsmonitorHookVersion=0",
-    "-c", "receive.fsckObjects=true",
-    "-c", "fetch.fsckObjects=true",
-    "-c", "transfer.fsckObjects=true",
-    "-c", "protocol.file.allow=never",
-    "-c", "protocol.ext.allow=never",
-    "-c", "submodule.recurse=false",
-    "-c", "diff.external=",
-    "-c", "merge.renormalize=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.fsmonitorHookVersion=0",
+    "-c",
+    "receive.fsckObjects=true",
+    "-c",
+    "fetch.fsckObjects=true",
+    "-c",
+    "transfer.fsckObjects=true",
+    "-c",
+    "protocol.file.allow=never",
+    "-c",
+    "protocol.ext.allow=never",
+    "-c",
+    "submodule.recurse=false",
+    "-c",
+    "diff.external=",
+    "-c",
+    "merge.renormalize=false",
 ]
 
 # Env vars that prevent code execution during clone/checkout.
@@ -62,7 +73,8 @@ def safe_clone(repo_url: str, target_dir: str, branch: str = "") -> str:
     logger.info("[safe_clone] Fetching repository (no checkout): %s", repo_url)
 
     clone_cmd = [
-        "git", "clone",
+        "git",
+        "clone",
         "--no-checkout",
         "--depth=1",
         "--single-branch",
@@ -75,12 +87,11 @@ def safe_clone(repo_url: str, target_dir: str, branch: str = "") -> str:
     clone_cmd += [repo_url, target_dir]
 
     from thresher.run import run as run_cmd
+
     result = run_cmd(clone_cmd, label="git-clone", env=_safe_env())
     if result.returncode != 0:
         stderr = result.stdout.decode(errors="replace") if isinstance(result.stdout, bytes) else ""
-        raise RuntimeError(
-            f"[safe_clone] git clone failed (exit {result.returncode}): {stderr}"
-        )
+        raise RuntimeError(f"[safe_clone] git clone failed (exit {result.returncode}): {stderr}")
 
     # ── Phase 2: Sanitize .git/config ───────────────────────────────────
     logger.info("[safe_clone] Locking down repo config...")
@@ -96,9 +107,7 @@ def safe_clone(repo_url: str, target_dir: str, branch: str = "") -> str:
     )
     if checkout_result.returncode != 0:
         stderr = checkout_result.stdout.decode(errors="replace") if isinstance(checkout_result.stdout, bytes) else ""
-        raise RuntimeError(
-            f"[safe_clone] git checkout failed (exit {checkout_result.returncode}): {stderr}"
-        )
+        raise RuntimeError(f"[safe_clone] git checkout failed (exit {checkout_result.returncode}): {stderr}")
 
     # ── Phase 4: Post-checkout validation ────────────────────────────────
     logger.info("[safe_clone] Validating working tree...")
@@ -184,18 +193,14 @@ def _post_checkout_validate(target_dir: str) -> None:
 
     # 4c. Warn on .gitmodules ─────────────────────────────────────────────
     if (root / ".gitmodules").exists():
-        logger.warning(
-            "[safe_clone] Repository contains .gitmodules (submodules not initialized)"
-        )
+        logger.warning("[safe_clone] Repository contains .gitmodules (submodules not initialized)")
 
     # 4d. Detect path traversal indicators ────────────────────────────────
     escaped = []
     for path in root.rglob("*"):
         name = path.name
-        if ".." in name or name.startswith(".") and ".." in str(path.relative_to(root)):
+        if ".." in name or (name.startswith(".") and ".." in str(path.relative_to(root))):
             escaped.append(str(path))
 
     if escaped:
-        logger.warning(
-            "[safe_clone] Suspicious paths detected: %s", ", ".join(escaped)
-        )
+        logger.warning("[safe_clone] Suspicious paths detected: %s", ", ".join(escaped))

@@ -58,10 +58,7 @@ def parse_semgrep_output(raw: dict[str, Any]) -> list[Finding]:
         # Some Semgrep rules include CWE or CVE references in metadata.
         cve_id = metadata.get("cve") or None
         cwe = metadata.get("cwe", [])
-        if isinstance(cwe, list):
-            cwe_str = ", ".join(cwe) if cwe else ""
-        else:
-            cwe_str = str(cwe)
+        cwe_str = (", ".join(cwe) if cwe else "") if isinstance(cwe, list) else str(cwe)
 
         title = f"{check_id}"
         if cwe_str:

@@ -6,14 +6,14 @@ These tests are slow (~10 min) and require Lima installed.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 
 import pytest
 
-from thresher.vm.lima import create_vm, destroy_vm, vm_status, LimaError
 from thresher.config import ScanConfig, VMConfig
-
+from thresher.vm.lima import LimaError, create_vm, destroy_vm, vm_status
 
 pytestmark = [
     pytest.mark.e2e,
@@ -38,15 +38,13 @@ def ephemeral_vm():
         yield vm_name, config
     finally:
         if vm_name:
-            try:
+            with contextlib.suppress(LimaError):
                 destroy_vm(vm_name)
-            except LimaError:
-                pass
 
 
 class TestVMLifecycle:
     def test_create_destroy(self, ephemeral_vm):
-        vm_name, config = ephemeral_vm
+        vm_name, _config = ephemeral_vm
         status = vm_status(vm_name)
         assert status == "Running"
 
@@ -62,6 +60,8 @@ class TestDockerInVM:
         vm_name, _ = ephemeral_vm
         result = subprocess.run(
             ["limactl", "shell", vm_name, "docker", "version"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert result.returncode == 0, f"docker not available: {result.stderr}"

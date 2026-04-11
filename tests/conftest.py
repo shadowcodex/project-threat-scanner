@@ -12,7 +12,6 @@ import pytest
 from thresher.config import ScanConfig, VMConfig
 from thresher.scanners.models import Finding, ScanResults
 
-
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 SCANNER_FIXTURES_DIR = FIXTURES_DIR / "sample_scanner_output"
 AGENT_FIXTURES_DIR = FIXTURES_DIR / "sample_agent_output"
@@ -175,8 +174,6 @@ def analyst_envelope_fixture() -> dict:
 @pytest.fixture
 def adversarial_fixture() -> dict:
     return load_fixture("adversarial.json", AGENT_FIXTURES_DIR)
-
-
 
 
 @pytest.fixture

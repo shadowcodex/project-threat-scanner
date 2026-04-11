@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from thresher.agents.analysts import run_all_analysts, ANALYST_DEFINITIONS
 from thresher.agents.adversarial import run_adversarial_verification
-from thresher.config import ScanConfig, VMConfig
+from thresher.agents.analysts import run_all_analysts
+from thresher.config import ScanConfig
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
@@ -58,15 +58,17 @@ class TestAnalystsPipeline:
 
     @patch("thresher.run._popen")
     def test_all_use_bash_in_allowed_tools(self, mock_popen):
-        valid_output = json.dumps({
-            "analyst": "test",
-            "analyst_number": 1,
-            "core_question": "test?",
-            "files_analyzed": 5,
-            "findings": [],
-            "summary": "clean",
-            "risk_score": 0,
-        }).encode()
+        valid_output = json.dumps(
+            {
+                "analyst": "test",
+                "analyst_number": 1,
+                "core_question": "test?",
+                "files_analyzed": 5,
+                "findings": [],
+                "summary": "clean",
+                "risk_score": 0,
+            }
+        ).encode()
         mock_popen.side_effect = lambda cmd, **kw: _make_proc(valid_output)
 
         run_all_analysts(_make_config())
@@ -78,15 +80,17 @@ class TestAnalystsPipeline:
 
     @patch("thresher.run._popen")
     def test_all_analysts_get_api_key_in_env(self, mock_popen):
-        valid_output = json.dumps({
-            "analyst": "test",
-            "analyst_number": 1,
-            "core_question": "test?",
-            "files_analyzed": 5,
-            "findings": [],
-            "summary": "clean",
-            "risk_score": 0,
-        }).encode()
+        valid_output = json.dumps(
+            {
+                "analyst": "test",
+                "analyst_number": 1,
+                "core_question": "test?",
+                "files_analyzed": 5,
+                "findings": [],
+                "summary": "clean",
+                "risk_score": 0,
+            }
+        ).encode()
         mock_popen.side_effect = lambda cmd, **kw: _make_proc(valid_output)
 
         run_all_analysts(_make_config())
@@ -126,22 +130,25 @@ class TestAnalystsPipeline:
 class TestAdversarialPipeline:
     def _high_risk_analyst_findings(self):
         return [
-            _make_analyst_output(1, "paranoid", [
-                {
-                    "file_path": "/opt/target/setup.py",
-                    "severity": "high",
-                    "title": "base64 exec",
-                    "description": "bad",
-                    "line_numbers": [1],
-                }
-            ], risk_score=7)
+            _make_analyst_output(
+                1,
+                "paranoid",
+                [
+                    {
+                        "file_path": "/opt/target/setup.py",
+                        "severity": "high",
+                        "title": "base64 exec",
+                        "description": "bad",
+                        "line_numbers": [1],
+                    }
+                ],
+                risk_score=7,
+            )
         ]
 
     def _low_risk_analyst_findings(self):
         return [
-            _make_analyst_output(1, "paranoid", [
-                {"file_path": "/a.py", "risk_score": 2, "findings": []}
-            ], risk_score=2)
+            _make_analyst_output(1, "paranoid", [{"file_path": "/a.py", "risk_score": 2, "findings": []}], risk_score=2)
         ]
 
     @patch("thresher.run._popen")
@@ -228,24 +235,34 @@ class TestAdversarialPipeline:
         mock_popen.return_value = _make_proc(_load_agent_fixture("adversarial.json"))
 
         analyst_findings = [
-            _make_analyst_output(1, "paranoid", [
-                {
-                    "file_path": "/opt/target/setup.py",
-                    "severity": "high",
-                    "title": "base64 exec",
-                    "description": "bad",
-                    "line_numbers": [1],
-                }
-            ], risk_score=7),
-            _make_analyst_output(2, "behaviorist", [
-                {
-                    "file_path": "/opt/target/utils.py",
-                    "severity": "medium",
-                    "title": "unsafe deserialization",
-                    "description": "pickle load",
-                    "line_numbers": [10],
-                }
-            ], risk_score=5),
+            _make_analyst_output(
+                1,
+                "paranoid",
+                [
+                    {
+                        "file_path": "/opt/target/setup.py",
+                        "severity": "high",
+                        "title": "base64 exec",
+                        "description": "bad",
+                        "line_numbers": [1],
+                    }
+                ],
+                risk_score=7,
+            ),
+            _make_analyst_output(
+                2,
+                "behaviorist",
+                [
+                    {
+                        "file_path": "/opt/target/utils.py",
+                        "severity": "medium",
+                        "title": "unsafe deserialization",
+                        "description": "pickle load",
+                        "line_numbers": [10],
+                    }
+                ],
+                risk_score=5,
+            ),
         ]
 
         result = run_adversarial_verification(

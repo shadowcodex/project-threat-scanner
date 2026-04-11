@@ -45,16 +45,24 @@ class TestCLI:
         runner = CliRunner()
         with patch("thresher.cli.launch_lima") as mock_launcher:
             mock_launcher.return_value = 0
-            result = runner.invoke(cli, [
-                "scan",
-                "https://github.com/x/y",
-                "--cpus", "16",
-                "--memory", "32",
-                "--disk", "200",
-                "--depth", "5",
-                "--output", "/tmp/out",
-                "--verbose",
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "scan",
+                    "https://github.com/x/y",
+                    "--cpus",
+                    "16",
+                    "--memory",
+                    "32",
+                    "--disk",
+                    "200",
+                    "--depth",
+                    "5",
+                    "--output",
+                    "/tmp/out",
+                    "--verbose",
+                ],
+            )
         assert result.exit_code == 0
         config = mock_launcher.call_args[0][0]
         assert config.vm.cpus == 16
@@ -85,7 +93,7 @@ class TestScanCommandRefactored:
     def test_scan_no_vm_uses_direct_launcher(self, mock_launch):
         mock_launch.return_value = 0
         runner = CliRunner()
-        result = runner.invoke(cli, ["scan", "https://github.com/test/repo", "--no-vm", "--skip-ai"])
+        runner.invoke(cli, ["scan", "https://github.com/test/repo", "--no-vm", "--skip-ai"])
         mock_launch.assert_called_once()
         config = mock_launch.call_args[0][0]
         assert config.launch_mode == "direct"
@@ -94,7 +102,7 @@ class TestScanCommandRefactored:
     def test_scan_docker_uses_docker_launcher(self, mock_launch):
         mock_launch.return_value = 0
         runner = CliRunner()
-        result = runner.invoke(cli, ["scan", "https://github.com/test/repo", "--docker", "--skip-ai"])
+        runner.invoke(cli, ["scan", "https://github.com/test/repo", "--docker", "--skip-ai"])
         mock_launch.assert_called_once()
         config = mock_launch.call_args[0][0]
         assert config.launch_mode == "docker"
@@ -103,7 +111,7 @@ class TestScanCommandRefactored:
     def test_scan_default_uses_lima_launcher(self, mock_launch):
         mock_launch.return_value = 0
         runner = CliRunner()
-        result = runner.invoke(cli, ["scan", "https://github.com/test/repo", "--skip-ai"])
+        runner.invoke(cli, ["scan", "https://github.com/test/repo", "--skip-ai"])
         mock_launch.assert_called_once()
         config = mock_launch.call_args[0][0]
         assert config.launch_mode == "lima"
@@ -114,7 +122,7 @@ class TestBuildCommand:
     def test_build_runs_docker_build(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
         runner = CliRunner()
-        result = runner.invoke(cli, ["build"])
+        runner.invoke(cli, ["build"])
         assert mock_run.called
         cmd = mock_run.call_args[0][0]
         assert "docker" in cmd
