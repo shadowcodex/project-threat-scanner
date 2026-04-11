@@ -8,8 +8,9 @@ from unittest.mock import patch, MagicMock
 from thresher.agents.analysts import (
     ANALYST_DEFINITIONS,
     _build_analyst_prompt,
-    _count_turns_from_stream,
+    _count_assistant_tool_uses,
     _empty_findings,
+    _extract_num_turns_from_stream,
     _extract_result_from_stream,
     _format_analyst_markdown,
     _log_timing_summary,
@@ -524,9 +525,14 @@ class TestRunAllAnalysts:
             assert "_timing" not in item
 
 
-class TestCountTurnsFromStream:
-    def test_counts_only_tool_use_turns(self):
-        """Only assistant messages with tool_use blocks count as turns."""
+class TestCountAssistantToolUses:
+    """Counts assistant messages containing tool_use blocks. This is NOT
+    the same as Claude Code's authoritative ``num_turns`` — see
+    TestExtractNumTurnsFromStream for that. The two values diverge a lot
+    in practice (a single agent turn can issue many tool_use blocks via
+    parallel tool calls)."""
+
+    def test_counts_only_tool_use_messages(self):
         stream = (
             '{"type":"system","subtype":"init"}\n'
             '{"type":"assistant","message":{"content":[{"type":"text","text":"Let me check..."}]}}\n'
@@ -535,25 +541,23 @@ class TestCountTurnsFromStream:
             '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Grep","input":{}}]}}\n'
             '{"type":"result","result":"done"}\n'
         )
-        # 2 tool-using turns, 2 text-only (not counted)
-        assert _count_turns_from_stream(stream) == 2
+        assert _count_assistant_tool_uses(stream) == 2
 
     def test_text_only_responses_not_counted(self):
-        """Text-only assistant messages should not count as turns."""
         stream = (
             '{"type":"system","subtype":"init"}\n'
             '{"type":"assistant","message":{"content":[{"type":"text","text":"turn 1"}]}}\n'
             '{"type":"assistant","message":{"content":[{"type":"text","text":"turn 2"}]}}\n'
             '{"type":"result","result":"done"}\n'
         )
-        assert _count_turns_from_stream(stream) == 0
+        assert _count_assistant_tool_uses(stream) == 0
 
     def test_empty_stream(self):
-        assert _count_turns_from_stream("") == 0
+        assert _count_assistant_tool_uses("") == 0
 
     def test_no_assistant_messages(self):
         stream = '{"type":"system","subtype":"init"}\n{"type":"result","result":"done"}\n'
-        assert _count_turns_from_stream(stream) == 0
+        assert _count_assistant_tool_uses(stream) == 0
 
     def test_ignores_invalid_json(self):
         stream = (
@@ -561,11 +565,50 @@ class TestCountTurnsFromStream:
             '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}\n'
             'also not json\n'
         )
-        assert _count_turns_from_stream(stream) == 1
+        assert _count_assistant_tool_uses(stream) == 1
 
     def test_empty_content_not_counted(self):
         stream = '{"type":"assistant","message":{"content":[]}}\n'
-        assert _count_turns_from_stream(stream) == 0
+        assert _count_assistant_tool_uses(stream) == 0
+
+
+class TestExtractNumTurnsFromStream:
+    """Reads Claude Code's authoritative ``num_turns`` from the result line.
+
+    Regression for M1b: the previous local counter reported values like
+    117 / 151 — much larger than the SDK's ``num_turns`` (3-55) on the
+    same runs — and was being misread as the value Claude Code's
+    ``--max-turns`` flag enforces against."""
+
+    def test_reads_num_turns_from_result_line(self):
+        stream = (
+            '{"type":"system","subtype":"init"}\n'
+            '{"type":"assistant","message":{"content":[]}}\n'
+            '{"type":"result","subtype":"success","num_turns":42,"result":"ok"}\n'
+        )
+        assert _extract_num_turns_from_stream(stream) == 42
+
+    def test_returns_zero_when_no_result_line(self):
+        stream = '{"type":"system","subtype":"init"}\n'
+        assert _extract_num_turns_from_stream(stream) == 0
+
+    def test_returns_zero_on_empty_stream(self):
+        assert _extract_num_turns_from_stream("") == 0
+
+    def test_handles_error_max_turns_subtype(self):
+        """When Claude Code terminates on the turn cap, num_turns is still
+        present and should be returned (it equals max_turns + 1)."""
+        stream = (
+            '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":16}\n'
+        )
+        assert _extract_num_turns_from_stream(stream) == 16
+
+    def test_ignores_invalid_json_lines(self):
+        stream = (
+            'not json\n'
+            '{"type":"result","num_turns":7}\n'
+        )
+        assert _extract_num_turns_from_stream(stream) == 7
 
 
 class TestLogTimingSummary:

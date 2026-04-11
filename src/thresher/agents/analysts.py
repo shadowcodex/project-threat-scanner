@@ -170,12 +170,14 @@ def _extract_result_from_stream(raw_output: str) -> str:
     return raw_output
 
 
-def _count_turns_from_stream(raw_output: str) -> int:
-    """Count agentic turns in stream-json output.
+def _count_assistant_tool_uses(raw_output: str) -> int:
+    """Count assistant messages that contained tool_use blocks.
 
-    Only counts assistant messages that contain tool_use blocks, matching
-    how Claude Code's --max-turns flag counts turns.  Text-only responses
-    do not count toward the turn limit.
+    Note: this is NOT the same as Claude Code's authoritative
+    ``num_turns``. A single agent turn can issue many tool_use blocks via
+    parallel tool calls, so this counter inflates relative to the SDK's
+    own metric. For the value enforced by ``--max-turns``, use
+    :func:`_extract_num_turns_from_stream`.
     """
     turns = 0
     for line in raw_output.strip().splitlines():
@@ -195,6 +197,31 @@ def _count_turns_from_stream(raw_output: str) -> int:
         except json.JSONDecodeError:
             continue
     return turns
+
+
+def _extract_num_turns_from_stream(raw_output: str) -> int:
+    """Read Claude Code's authoritative ``num_turns`` from the result line.
+
+    The result line in stream-json output carries the SDK's own turn
+    counter — this is what ``--max-turns`` enforces against, so it's the
+    only value that matters for cap-tuning decisions. Returns 0 if no
+    result line is present.
+    """
+    for line in raw_output.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("type") == "result":
+            num = obj.get("num_turns")
+            if isinstance(num, int):
+                return num
+    return 0
 
 
 _REQUIRED_ANALYST_KEYS = {"analyst", "findings", "summary", "risk_score"}
@@ -492,10 +519,10 @@ def _run_single_analyst(
     end_time = time.monotonic()
     duration = end_time - start_time
 
-    turns = _count_turns_from_stream(raw_output)
+    turns = _extract_num_turns_from_stream(raw_output)
     findings = _parse_analyst_json_output(raw_output, analyst_def)
     logger.info(
-        "Analyst %s completed in %.1fs (turns=%d): %d findings, risk_score=%s",
+        "Analyst %s completed in %.1fs (num_turns=%d): %d findings, risk_score=%s",
         name,
         duration,
         turns,
