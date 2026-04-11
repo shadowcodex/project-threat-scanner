@@ -1,6 +1,6 @@
 # Benchmarks
 
-Simple stats on each node in the graph.
+Simple stats on each node in the graph. Main thing is we want to know how much its actually costing to run a scan and build up stats over time.
 
 ## Non-agentic
 
@@ -34,3 +34,5 @@ Report is:
 4. Total stats for entire pipeline
 
 Report is saved as json and markdown.
+
+Reason for both is json allows us to collect over time and then build a script to show changes, totals etc... Prepares us to save to a database later if we want.
