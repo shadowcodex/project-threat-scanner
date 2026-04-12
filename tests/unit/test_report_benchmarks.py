@@ -1,9 +1,12 @@
 """Tests for thresher.report.benchmarks — cost calculation and report generation."""
 
 import json
+from pathlib import Path
+from unittest.mock import patch
 
 from thresher.harness.benchmarks import BenchmarkCollector, StageStats
 from thresher.report.benchmarks import (
+    _load_costs,
     build_markdown,
     build_report_data,
     compute_stage_cost,
@@ -210,3 +213,115 @@ class TestCreateReport:
         c.add(StageStats(name="clone", runtime_seconds=1.0))
         create_report(c, str(out), model="sonnet")
         assert (out / "benchmark.json").exists()
+
+
+class TestLoadCostsGracefulDegradation:
+    def test_missing_costs_file_returns_empty(self):
+        with patch("thresher.report.benchmarks._COSTS_PATH", Path("/nonexistent/costs_claude.json")):
+            costs = _load_costs()
+            assert costs == {}
+
+    def test_missing_costs_file_does_not_crash_build_report_data(self):
+        c = BenchmarkCollector()
+        c.add(
+            StageStats(
+                name="predep",
+                runtime_seconds=1.0,
+                token_usage={"input_tokens": 100, "output_tokens": 50},
+            )
+        )
+        with patch("thresher.report.benchmarks._COSTS_PATH", Path("/nonexistent/costs_claude.json")):
+            data = build_report_data(c, model="sonnet")
+            assert data["stages"][0]["cost"]["total_cost"] == 0.0
+            assert data["totals"]["cost"]["total_cost"] == 0.0
+
+    def test_missing_costs_file_does_not_crash_create_report(self, tmp_path):
+        c = BenchmarkCollector()
+        c.add(
+            StageStats(
+                name="predep",
+                runtime_seconds=1.0,
+                token_usage={"input_tokens": 100, "output_tokens": 50},
+            )
+        )
+        with patch("thresher.report.benchmarks._COSTS_PATH", Path("/nonexistent/costs_claude.json")):
+            create_report(c, str(tmp_path), model="sonnet")
+            assert (tmp_path / "benchmark.json").exists()
+            assert (tmp_path / "benchmark.md").exists()
+            data = json.loads((tmp_path / "benchmark.json").read_text())
+            assert data["totals"]["cost"]["total_cost"] == 0.0
+
+
+class TestCostsFilePackaged:
+    def test_costs_file_exists_in_source(self):
+        from thresher.report.benchmarks import _COSTS_PATH
+
+        assert _COSTS_PATH.exists(), f"costs_claude.json missing at {_COSTS_PATH}"
+
+    def test_costs_file_valid_json(self):
+        from thresher.report.benchmarks import _COSTS_PATH
+
+        data = json.loads(_COSTS_PATH.read_text())
+        assert "models" in data
+        assert len(data["models"]) > 0
+
+
+class TestCreateReportWithExistingDir:
+    def test_writes_benchmark_into_existing_report_dir(self, tmp_path):
+        existing_files = [
+            "report_data.json",
+            "report.html",
+            "findings.json",
+            "executive-summary.md",
+            "detailed-report.md",
+        ]
+        for name in existing_files:
+            (tmp_path / name).write_text("{}" if name.endswith(".json") else "# placeholder")
+        (tmp_path / "scan-results").mkdir()
+
+        c = BenchmarkCollector()
+        c.start()
+        c.add(StageStats(name="clone", runtime_seconds=2.0))
+        c.add(
+            StageStats(
+                name="scanners",
+                runtime_seconds=30.0,
+                findings_count=248,
+            )
+        )
+        c.add(
+            StageStats(
+                name="analyst-paranoid",
+                runtime_seconds=270.0,
+                findings_count=2,
+                token_usage={"input_tokens": 50000, "output_tokens": 10000},
+            )
+        )
+        c.add(
+            StageStats(
+                name="adversarial",
+                runtime_seconds=120.0,
+                findings_count=18,
+                token_usage={"input_tokens": 80000, "output_tokens": 20000},
+            )
+        )
+        c.add(
+            StageStats(
+                name="synthesize",
+                runtime_seconds=45.0,
+                token_usage={"input_tokens": 200000, "output_tokens": 30000},
+            )
+        )
+
+        create_report(c, str(tmp_path), model="sonnet")
+
+        assert (tmp_path / "benchmark.json").exists()
+        assert (tmp_path / "benchmark.md").exists()
+        for name in existing_files:
+            assert (tmp_path / name).exists(), f"{name} was overwritten or removed"
+
+        data = json.loads((tmp_path / "benchmark.json").read_text())
+        assert data["model"] == "sonnet"
+        assert len(data["stages"]) == 5
+        assert data["totals"]["findings_count"] == 268
+        assert data["analyst_totals"]["findings_count"] == 2

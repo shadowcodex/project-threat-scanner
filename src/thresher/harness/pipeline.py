@@ -398,12 +398,16 @@ def benchmark_report(
     """Write benchmark.json and benchmark.md to the output directory.
 
     This is the last node in the DAG so it captures timing for every
-    preceding stage including report_html.
+    preceding stage including report_html. Failures are logged but do
+    not propagate — benchmark reporting is non-critical.
     """
     from thresher.report.benchmarks import create_report
 
     output_dir = config.output_dir or staged_artifacts
-    create_report(benchmark, output_dir, model=config.model)
+    try:
+        create_report(benchmark, output_dir, model=config.model)
+    except Exception:
+        logger.exception("Benchmark report generation failed — continuing without it")
 
 
 # ── Pipeline Runner ─────────────────────────────────────────────────

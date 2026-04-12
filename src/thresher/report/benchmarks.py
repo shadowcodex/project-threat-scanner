@@ -23,8 +23,17 @@ _COSTS_PATH = Path(__file__).parent / "data" / "costs_claude.json"
 
 
 def _load_costs() -> dict[str, Any]:
-    """Load the Claude cost table (model -> pricing)."""
-    return json.loads(_COSTS_PATH.read_text())
+    """Load the Claude cost table (model -> pricing).
+
+    Returns an empty dict if the file is missing (e.g. not packaged
+    in the installed distribution) so that cost calculation degrades
+    to zero-cost rather than crashing the pipeline.
+    """
+    try:
+        return json.loads(_COSTS_PATH.read_text())
+    except FileNotFoundError:
+        logger.warning("Costs file not found at %s — cost data will be zero", _COSTS_PATH)
+        return {}
 
 
 def _resolve_model_pricing(model: str, costs: dict[str, Any]) -> dict[str, float]:

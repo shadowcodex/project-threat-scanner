@@ -181,3 +181,18 @@ def test_dag_orders_stage_artifacts_before_report_data():
     assert "staged_artifacts" in sig.parameters, (
         "report_data must depend on staged_artifacts so the DAG enforces ordering"
     )
+
+
+def test_benchmark_report_does_not_raise_on_failure(tmp_path):
+    """benchmark_report is a non-critical reporting step. If it fails
+    (e.g. missing costs file), it must not crash the entire DAG."""
+    config = ScanConfig(output_dir=str(tmp_path))
+    collector = _collector()
+    with patch("thresher.report.benchmarks.create_report", side_effect=FileNotFoundError("costs_claude.json")):
+        result = pipeline.benchmark_report(
+            report_html=str(tmp_path / "report.html"),
+            staged_artifacts=str(tmp_path),
+            config=config,
+            benchmark=collector,
+        )
+    assert result is None

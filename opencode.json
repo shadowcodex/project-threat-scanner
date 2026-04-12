@@ -12,7 +12,8 @@
         "git push *": "deny",
         "npm *": "allow",
         "rm *": "deny",
-        "grep *": "allow"
+        "grep *": "allow",
+        "ruff *": "allow"
       },
       "webfetch": "ask",
       "websearch": "ask",
