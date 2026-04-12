@@ -55,7 +55,8 @@ def extract_stream_result(raw_output: str) -> StreamResult:
     """Pull result from Claude Code stream-json output.
 
     Returns a StreamResult with the final result text, turn count,
-    and token usage from the ``usage`` field on the result line.
+    and token usage. Checks both the ``usage`` and ``modelUsage``
+    fields on the result line and prefers whichever reports more tokens.
 
     On error results (e.g. ``max_turns``), falls back to the last
     assistant text block so callers still get *something* parseable.
@@ -97,6 +98,18 @@ def extract_stream_result(raw_output: str) -> StreamResult:
                     "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
                     "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
                 }
+            # Also check modelUsage which often has more complete token counts
+            model_usage = obj.get("modelUsage")
+            if isinstance(model_usage, dict):
+                mu_tokens = {
+                    "input_tokens": model_usage.get("input_tokens", 0),
+                    "output_tokens": model_usage.get("output_tokens", 0),
+                    "cache_creation_input_tokens": model_usage.get("cache_creation_input_tokens", 0),
+                    "cache_read_input_tokens": model_usage.get("cache_read_input_tokens", 0),
+                }
+                # Prefer modelUsage if it has more tokens than usage
+                if sum(mu_tokens.values()) > sum(token_usage.values()):
+                    token_usage = mu_tokens
         elif obj_type == "assistant":
             content = obj.get("message", {}).get("content", [])
             for block in content:

@@ -444,20 +444,22 @@ class TestRunAllAnalysts:
         assert call_count == 8
 
     @patch("thresher.agents.analysts._run_single_analyst")
-    def test_strips_timing_from_returned_findings(self, mock_run):
-        """_timing key should be stripped from findings returned to caller."""
+    def test_preserves_timing_in_returned_findings(self, mock_run):
+        """_timing key should be preserved in findings for pipeline aggregation."""
         findings = {
             "analyst": "paranoid",
             "findings": [],
             "summary": "clean",
             "risk_score": 0,
-            "_timing": {"name": "paranoid", "duration": 1.0, "turns": 2},
+            "_timing": {"name": "paranoid", "duration": 1.0, "turns": 2, "token_usage": {"input_tokens": 100}},
         }
         mock_run.return_value = findings
 
         result = run_all_analysts(_make_config())
         for item in result:
-            assert "_timing" not in item
+            # _timing should be preserved for pipeline/benchmark aggregation
+            assert "_timing" in item
+            assert item["_timing"]["token_usage"]["input_tokens"] == 100
 
 
 class TestLogTimingSummary:

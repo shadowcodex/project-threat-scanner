@@ -381,7 +381,7 @@ def run_all_analysts(config: ScanConfig, target_dir: str = TARGET_DIR) -> list[d
             try:
                 findings = future.result()
                 if findings is not None:
-                    timing = findings.pop("_timing", None)
+                    timing = findings.get("_timing")  # Keep _timing in findings for pipeline aggregation
                     if timing:
                         timings.append(timing)
                     all_findings.append(findings)

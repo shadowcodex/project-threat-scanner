@@ -172,6 +172,9 @@ def analyst_findings(
             for key, val in timing.get("token_usage", {}).items():
                 combined_tokens[key] = combined_tokens.get(key, 0) + val
         t.record(findings_count=total_findings, token_usage=combined_tokens)
+    # Strip internal timing metadata now that benchmarks have consumed it
+    for f in all_findings:
+        f.pop("_timing", None)
     return all_findings
 
 

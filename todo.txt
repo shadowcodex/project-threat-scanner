@@ -7,11 +7,12 @@ v3 Todos
 [x] Fix claude code development context with better docs and CLAUDE.md
 [x] validate tools available to claude code agents
 [x] fix reporting
-[ ] fix undefined in html reports
+[x] fix undefined in html reports
 [ ] Give agents proper tools edit/write/webfetch/websearch.
 [ ] Update agent prompts to tell them to explicity return json in an expected format...
 [ ] Define true jsonschema's for agent returns
 [ ] add local folder and local git support
+[ ] fix benchmark ouputs for tokens
 [x] add benchmarking to every pipeline dag call. Total time ran, Token Usage by model, etc...
 [x] Review codebase for DO-NOT-REPEAT-YOURSELF opportunities
 [x] Review agent configs and prompts
@@ -22,6 +23,7 @@ Deferred to v4
 [ ] run without --skip-ai and validate outputs
 [ ] move from hamilton to langgraph or airflow or something that is more explicit nodes and edges.
 [ ] update pipeline to be more explicit (Lots of parallel calls hidden behind run_all commands vs pipeline orchestration of the dag for hamilton)
+[ ] agents use MCP instead of stop hook validation
 [ ] each pipeline item once finishes writes results to disk, no waiting. (Useful for checkpointing)
 [ ] start from pipeline stage xyz from exisitng report run (rapid debugging, pick up from failures)
 [ ] add additional ecosystems to dependency resolution
@@ -31,9 +33,10 @@ Deferred to v4
 [ ] Incorporate https://axi.md/ notes (TOON)
 
 Deferred to v5
+[ ] thin thresher-agent harness ???
 [ ] add gitlab support
-[ ] looser agent harness
-[ ] always on agent
+[ ] looser agent harness ???
+[ ] always on agent ???
 [ ] ...
 
 

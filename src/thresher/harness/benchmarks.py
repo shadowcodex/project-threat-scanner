@@ -67,7 +67,8 @@ class BenchmarkCollector:
         return totals
 
     def analyst_stages(self) -> list[StageStats]:
-        return [s for s in self.stages if s.name.startswith("analyst-")]
+        # Match both individual "analyst-*" stages and the aggregate "analysts" stage
+        return [s for s in self.stages if s.name.startswith("analyst-") or s.name == "analysts"]
 
 
 def record_stage(

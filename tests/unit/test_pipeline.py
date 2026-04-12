@@ -196,3 +196,31 @@ def test_benchmark_report_does_not_raise_on_failure(tmp_path):
             benchmark=collector,
         )
     assert result is None
+
+
+def test_analyst_findings_strips_timing_metadata():
+    """_timing should be stripped from findings after benchmark aggregation.
+
+    Regression test: _timing was leaking into user-facing report JSON because
+    analysts.py changed from .pop() to .get(). The pipeline should strip it.
+    """
+    config = ScanConfig(skip_ai=False)
+    mock_findings = [
+        {
+            "analyst": "paranoid",
+            "findings": [{"title": "test"}],
+            "summary": "test",
+            "risk_score": 5,
+            "_timing": {"name": "paranoid", "duration": 1.0, "turns": 2, "token_usage": {"input_tokens": 100}},
+        }
+    ]
+    with patch("thresher.agents.analysts.run_all_analysts", return_value=mock_findings):
+        result = pipeline.analyst_findings(
+            cloned_path="/opt/target",
+            deps_path="/opt/deps",
+            scan_results=[],
+            config=config,
+            benchmark=_collector(),
+        )
+    assert len(result) == 1
+    assert "_timing" not in result[0], "_timing should be stripped after benchmark aggregation"

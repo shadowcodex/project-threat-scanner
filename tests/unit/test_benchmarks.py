@@ -45,6 +45,30 @@ class TestBenchmarkCollector:
         c.add(StageStats(name="analyst-behaviorist", runtime_seconds=3.0))
         assert len(c.analyst_stages()) == 2
 
+    def test_analyst_stages_includes_aggregate_analysts_stage(self):
+        """Pipeline records aggregate 'analysts' stage, not individual analyst-* stages."""
+        c = BenchmarkCollector()
+        c.add(StageStats(name="clone", runtime_seconds=1.0))
+        c.add(StageStats(name="analysts", runtime_seconds=45.0, findings_count=10))
+        c.add(StageStats(name="synthesize", runtime_seconds=5.0))
+        analyst_stages = c.analyst_stages()
+        assert len(analyst_stages) == 1
+        assert analyst_stages[0].name == "analysts"
+        assert analyst_stages[0].runtime_seconds == 45.0
+        assert analyst_stages[0].findings_count == 10
+
+    def test_analyst_stages_includes_both_prefix_and_aggregate(self):
+        """Should include both analyst-* prefix matches and aggregate analysts stage."""
+        c = BenchmarkCollector()
+        c.add(StageStats(name="analyst-paranoid", runtime_seconds=5.0))
+        c.add(StageStats(name="analyst-behaviorist", runtime_seconds=3.0))
+        c.add(StageStats(name="analysts", runtime_seconds=45.0))
+        c.add(StageStats(name="synthesize", runtime_seconds=5.0))
+        analyst_stages = c.analyst_stages()
+        assert len(analyst_stages) == 3
+        names = {s.name for s in analyst_stages}
+        assert names == {"analyst-paranoid", "analyst-behaviorist", "analysts"}
+
     def test_pipeline_elapsed(self):
         import time
 

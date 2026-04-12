@@ -54,6 +54,81 @@ class TestExtractStreamResult:
         sr = extract_stream_result(raw)
         assert sr.token_usage == {}
 
+    def test_prefers_modelUsage_when_larger_than_usage(self):
+        """modelUsage often has more complete token counts than usage."""
+        raw = json.dumps(
+            {
+                "type": "result",
+                "result": "done",
+                "num_turns": 3,
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_creation_input_tokens": 10,
+                    "cache_read_input_tokens": 20,
+                },
+                "modelUsage": {
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "cache_creation_input_tokens": 200,
+                    "cache_read_input_tokens": 300,
+                },
+            }
+        )
+        sr = extract_stream_result(raw)
+        # Should prefer modelUsage since sum(2000) > sum(180)
+        assert sr.token_usage["input_tokens"] == 1000
+        assert sr.token_usage["output_tokens"] == 500
+        assert sr.token_usage["cache_creation_input_tokens"] == 200
+        assert sr.token_usage["cache_read_input_tokens"] == 300
+
+    def test_uses_usage_when_modelUsage_smaller(self):
+        """If modelUsage is smaller, prefer usage field."""
+        raw = json.dumps(
+            {
+                "type": "result",
+                "result": "done",
+                "num_turns": 3,
+                "usage": {
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "cache_creation_input_tokens": 200,
+                    "cache_read_input_tokens": 300,
+                },
+                "modelUsage": {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_creation_input_tokens": 10,
+                    "cache_read_input_tokens": 20,
+                },
+            }
+        )
+        sr = extract_stream_result(raw)
+        # Should prefer usage since sum(2000) > sum(180)
+        assert sr.token_usage["input_tokens"] == 1000
+        assert sr.token_usage["output_tokens"] == 500
+
+    def test_uses_modelUsage_when_usage_missing(self):
+        """If usage is missing but modelUsage exists, use modelUsage."""
+        raw = json.dumps(
+            {
+                "type": "result",
+                "result": "done",
+                "num_turns": 3,
+                "modelUsage": {
+                    "input_tokens": 500,
+                    "output_tokens": 250,
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 150,
+                },
+            }
+        )
+        sr = extract_stream_result(raw)
+        assert sr.token_usage["input_tokens"] == 500
+        assert sr.token_usage["output_tokens"] == 250
+        assert sr.token_usage["cache_creation_input_tokens"] == 100
+        assert sr.token_usage["cache_read_input_tokens"] == 150
+
     def test_falls_back_to_last_assistant_text_on_error(self):
         raw = "\n".join(
             [
