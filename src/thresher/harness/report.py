@@ -374,6 +374,12 @@ def render_report(
     )
     template = env.get_template("template_report.html")
 
+    # Overwrite agent-generated counts with values derived from actual data
+    report_data["counts"] = _derive_counts(
+        report_data.get("scanner_findings", []),
+        report_data.get("ai_findings", []),
+    )
+
     serialized = _json.dumps(report_data, indent=2, default=str)
     html = template.render(report_data=serialized)
 
@@ -455,16 +461,7 @@ def build_fallback_report_data(config, enriched_findings: list) -> dict:
             "severity": verdict_severity,
             "callout": callout,
         },
-        "counts": {
-            "total_scanner": str(total),
-            "total_ai": "0",
-            "p0": "0",
-            "critical": str(counts["critical"]),
-            "high_scanner": str(counts["high"]),
-            "high_ai": "0",
-            "medium": str(counts["medium"]),
-            "low": str(counts["low"]),
-        },
+        "counts": _derive_counts(scanner, []),
         "executive_summary": (
             f"<p>Automated scanning of <strong>{repo_name}</strong> produced "
             f"<strong>{total} findings</strong> across 22 tools.</p>"

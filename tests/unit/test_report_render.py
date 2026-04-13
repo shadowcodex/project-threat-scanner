@@ -375,6 +375,30 @@ class TestVerdictRendering:
                 break
 
 
+class TestRenderReportDerivesCounts:
+    def test_render_overwrites_agent_counts_with_derived(self, tmp_path):
+        """render_report should replace agent-computed counts with derived values."""
+        from thresher.harness.report import render_report
+
+        report_data = _valid_report_data()
+        # Agent says 62 AI findings but only 2 in the array
+        report_data["counts"]["total_ai"] = "62"
+        report_data["ai_findings"] = [
+            {"severity": "high", "title": "t", "file": "f", "description": "d", "confidence": "h", "analysts": ["a"]},
+            {"severity": "low", "title": "t", "file": "f", "description": "d", "confidence": "l", "analysts": ["b"]},
+        ]
+
+        render_report(report_data, str(tmp_path))
+
+        written = json.loads((tmp_path / "report_data.json").read_text())
+        assert written["counts"]["total_ai"] == "2", "Counts should be derived from ai_findings array"
+        assert written["counts"]["high_ai"] == "1"
+        # low is combined scanner + AI
+        scanner_low = len([f for f in written["scanner_findings"] if f["severity"] == "low"])
+        ai_low = len([f for f in written["ai_findings"] if f["severity"] == "low"])
+        assert written["counts"]["low"] == str(scanner_low + ai_low)
+
+
 class TestDeriveCounts:
     def test_counts_from_findings_arrays(self):
         """Counts should be derived from actual array contents."""
