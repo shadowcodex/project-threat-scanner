@@ -299,7 +299,8 @@ class TestPredepHook:
         data["hidden_dependencies"][0]["type"] = "invalid_type"
         result = _run_agent_hook("predep", json.dumps(data))
         assert result.returncode == 2
-        assert "invalid type" in result.stderr.decode().lower()
+        stderr = result.stderr.decode().lower()
+        assert "type" in stderr and "invalid_type" in stderr
 
     def test_invalid_confidence_blocks(self):
         data = self._valid_predep_data()

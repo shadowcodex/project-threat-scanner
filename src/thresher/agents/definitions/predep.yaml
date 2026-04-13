@@ -31,30 +31,54 @@ prompt: |
   - "docker" — a Docker base image that may contain relevant dependencies
   - "submodule" — a git submodule reference
 
-  Your output MUST be a single JSON object with this exact structure:
+  Your output MUST be a single JSON object with this exact structure, no fences or extra data...:
   ```json
   {
-    "hidden_dependencies": [
-      {
-        "type": "git",
-        "source": "https://github.com/example/repo.git",
-        "found_in": "Makefile:42",
-        "context": "Cloned during build step to vendor a parser library",
-        "confidence": "high",
-        "risk": "low"
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Thresher Pre-Dependency Discovery Agent Output",
+    "description": "Schema for the JSON output produced by the predep agent",
+    "type": "object",
+    "required": ["hidden_dependencies", "files_scanned", "summary"],
+    "properties": {
+      "hidden_dependencies": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["type", "source", "found_in", "confidence", "risk"],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["git", "npm", "pypi", "cargo", "go", "url", "docker", "submodule"]
+            },
+            "source": {
+              "type": "string"
+            },
+            "found_in": {
+              "type": "string"
+            },
+            "context": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "string",
+              "enum": ["high", "medium", "low"]
+            },
+            "risk": {
+              "type": "string",
+              "enum": ["high", "medium", "low"]
+            }
+          }
+        }
       },
-      {
-        "type": "url",
-        "source": "https://example.com/tool-v1.2.tar.gz",
-        "found_in": "scripts/setup.sh:17",
-        "context": "Downloads and extracts a precompiled binary",
-        "confidence": "medium",
-        "risk": "high"
+      "files_scanned": {
+        "type": "integer"
+      },
+      "summary": {
+        "type": "string"
       }
-    ],
-    "files_scanned": 42,
-    "summary": "Brief description of what you found"
+    }
   }
+
   ```
 
   Rules:

@@ -1,76 +1,44 @@
-"""Validation rules for the analyst stop hook."""
+"""Validation rules for the analyst stop hook.
+
+Uses the JSON Schema in ``analyst_schema.json`` validated with
+``jsonschema``. Also includes a pre-check to reject predep-shaped
+output (hidden_dependencies without findings) before schema validation.
+"""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
-_REQUIRED = (
-    "analyst",
-    "analyst_number",
-    "core_question",
-    "findings",
-    "summary",
-    "risk_score",
-)
-_VALID_SEVERITIES = ("critical", "high", "medium", "low")
-
-_HINTS = [
-    "Fix your output to match the required analyst schema:",
-    "  {",
-    '    "analyst": "name",',
-    '    "analyst_number": N,',
-    '    "core_question": "...",',
-    '    "files_analyzed": N,',
-    '    "findings": [{"title": "...", "severity": "high", "confidence": 90, ...}],',
-    '    "summary": "...",',
-    '    "risk_score": 0-10',
-    "  }",
-]
+_SCHEMA_PATH = Path(__file__).parent / "analyst_schema.json"
 
 
 def validate(data: Any) -> tuple[list[str], list[str]]:
     """Return ``(errors, hints)``. Empty errors == valid output."""
-    errors: list[str] = []
     if not isinstance(data, dict):
-        return ["Response JSON is not an object"], _HINTS
+        return ["Response JSON is not an object"], []
 
     # Reject predep schema explicitly so analyst agents don't drift.
     if "hidden_dependencies" in data and "findings" not in data:
-        errors.append(
+        return [
             "Output uses hidden_dependencies schema — use the analyst findings schema instead",
-        )
+        ], []
 
-    for field in _REQUIRED:
-        if field not in data:
-            errors.append(f"Missing required field: {field}")
+    try:
+        import jsonschema
+    except ImportError as exc:
+        return [
+            "jsonschema is required for analyst output validation "
+            f"but is not installed ({exc}). Install with: pip install jsonschema",
+        ], []
 
-    findings = data.get("findings")
-    if findings is not None:
-        if not isinstance(findings, list):
-            errors.append("findings must be an array")
-        else:
-            for i, f in enumerate(findings):
-                if not isinstance(f, dict):
-                    errors.append(f"findings[{i}] is not an object")
-                    continue
-                for field in ("title", "severity", "description"):
-                    if field not in f:
-                        errors.append(f"findings[{i}] missing field: {field}")
-                sev = f.get("severity", "")
-                if sev not in _VALID_SEVERITIES:
-                    errors.append(
-                        f"findings[{i}] invalid severity: {sev} (must be critical|high|medium|low)",
-                    )
+    try:
+        with open(_SCHEMA_PATH) as f:
+            schema = json.loads(f.read())
+        jsonschema.validate(instance=data, schema=schema)
+    except jsonschema.ValidationError as e:
+        path = " -> ".join(str(p) for p in e.absolute_path) or "(root)"
+        return [f"Schema validation failed at {path}: {e.message}"], []
 
-    risk = data.get("risk_score")
-    if risk is not None:
-        try:
-            r = int(risk)
-            if r < 0 or r > 10:
-                errors.append(f"risk_score must be 0-10, got {r}")
-        except (ValueError, TypeError):
-            errors.append(
-                f"risk_score must be an integer 0-10, got {risk}",
-            )
-
-    return errors, _HINTS
+    return [], []

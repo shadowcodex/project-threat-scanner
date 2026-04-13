@@ -50,3 +50,81 @@ prompt: |
      registry goes down? Look for hardcoded URLs, single points of failure.
 
   9. Other things as you see fit.
+
+  ## Output Info
+
+  You must output only JSON and in this format with no fences and no comments:
+
+  ```jsonschema
+  {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "title": "Thresher Analyst Agent Output",
+   "description": "Schema for the JSON output produced by each of the 8 analyst agents",
+   "type": "object",
+   "required": ["analyst", "analyst_number", "core_question", "findings", "summary", "risk_score"],
+   "properties": {
+      "analyst": {
+         "type": "string"
+      },
+      "analyst_number": {
+         "type": "integer"
+      },
+      "core_question": {
+         "type": "string"
+      },
+      "files_analyzed": {
+         "type": "integer"
+      },
+      "findings": {
+         "type": "array",
+         "items": {
+         "type": "object",
+         "required": ["title", "severity", "description"],
+         "properties": {
+            "title": {
+               "type": "string"
+            },
+            "severity": {
+               "type": "string",
+               "enum": ["critical", "high", "medium", "low"]
+            },
+            "confidence": {
+               "type": "integer",
+               "minimum": 0,
+               "maximum": 100
+            },
+            "file_path": {
+               "type": "string"
+            },
+            "line_numbers": {
+               "type": "array",
+               "items": {
+               "type": "integer"
+               }
+            },
+            "description": {
+               "type": "string"
+            },
+            "evidence": {
+               "type": "string"
+            },
+            "reasoning": {
+               "type": "string"
+            },
+            "recommendation": {
+               "type": "string"
+            }
+         }
+         }
+      },
+      "summary": {
+         "type": "string"
+      },
+      "risk_score": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 10
+      }
+   }
+   }
+   ```

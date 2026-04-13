@@ -1,49 +1,37 @@
-"""Validation rules for the adversarial verification stop hook."""
+"""Validation rules for the adversarial verification stop hook.
+
+Uses the JSON Schema in ``adversarial_schema.json`` validated with
+``jsonschema``.
+"""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
-_HINTS = [
-    "Fix your output to match the required schema. Ensure:",
-    "  - verification_summary is a string",
-    "  - total_reviewed is a number",
-    "  - results is an array of objects",
-    "  - Each result has: file_path, verdict, reasoning",
-    '  - verdict is "confirmed" or "downgraded"',
-]
+_SCHEMA_PATH = Path(__file__).parent / "adversarial_schema.json"
 
 
 def validate(data: Any) -> tuple[list[str], list[str]]:
     """Return ``(errors, hints)``. Empty errors == valid output."""
-    errors: list[str] = []
     if not isinstance(data, dict):
-        return ["Response JSON is not an object"], _HINTS
+        return ["Response JSON is not an object"], []
 
-    if "verification_summary" not in data:
-        errors.append("Missing required field: verification_summary")
+    try:
+        import jsonschema
+    except ImportError as exc:
+        return [
+            "jsonschema is required for adversarial output validation "
+            f"but is not installed ({exc}). Install with: pip install jsonschema",
+        ], []
 
-    if "total_reviewed" not in data:
-        errors.append("Missing required field: total_reviewed")
-    elif not isinstance(data["total_reviewed"], (int, float)):
-        errors.append("total_reviewed must be a number")
+    try:
+        with open(_SCHEMA_PATH) as f:
+            schema = json.loads(f.read())
+        jsonschema.validate(instance=data, schema=schema)
+    except jsonschema.ValidationError as e:
+        path = " -> ".join(str(p) for p in e.absolute_path) or "(root)"
+        return [f"Schema validation failed at {path}: {e.message}"], []
 
-    if "results" not in data:
-        errors.append("Missing required field: results")
-    elif not isinstance(data["results"], list):
-        errors.append("results must be an array")
-    else:
-        for i, r in enumerate(data["results"]):
-            if not isinstance(r, dict):
-                errors.append(f"results[{i}] is not an object")
-                continue
-            for field in ("file_path", "verdict", "reasoning"):
-                if field not in r:
-                    errors.append(f"results[{i}] missing field: {field}")
-            verdict = r.get("verdict", "")
-            if verdict not in ("confirmed", "downgraded"):
-                errors.append(
-                    f'results[{i}] verdict must be "confirmed" or "downgraded", got: {verdict}',
-                )
-
-    return errors, _HINTS
+    return [], []
