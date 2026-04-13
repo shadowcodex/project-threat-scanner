@@ -91,6 +91,7 @@ class ScanConfig:
     tmux: bool = False
     high_risk_dep: bool = False
     branch: str = ""
+    local_path: str = ""
     analyst_max_turns: int | None = None  # Global override for all analyst max_turns
     analyst_max_turns_by_name: dict[str, int] = field(default_factory=dict)  # Per-analyst overrides
     adversarial_max_turns: int | None = None  # Override adversarial agent max_turns (default 20)
@@ -118,8 +119,8 @@ class ScanConfig:
 
     def validate(self) -> list[str]:
         errors = []
-        if not self.repo_url:
-            errors.append("repo_url is required")
+        if not self.repo_url and not self.local_path:
+            errors.append("repo_url or local_path is required")
         if not self.skip_ai and not self.has_ai_credentials:
             errors.append(
                 "No AI credentials found. Set ANTHROPIC_API_KEY, log in with `claude login`, or use --skip-ai"
@@ -149,6 +150,7 @@ class ScanConfig:
             "predep_max_turns": self.predep_max_turns,
             "report_maker_max_turns": self.report_maker_max_turns,
             "synthesize_max_turns": self.synthesize_max_turns,
+            "local_path": self.local_path,
             "launch_mode": self.launch_mode,
             "vm": {
                 "cpus": self.vm.cpus,
@@ -193,6 +195,7 @@ class ScanConfig:
             "predep_max_turns",
             "report_maker_max_turns",
             "synthesize_max_turns",
+            "local_path",
             "launch_mode",
         }
         filtered = {k: v for k, v in data.items() if k in known_fields}
@@ -211,6 +214,7 @@ def load_config(
     config_path: Path | None = None,
     high_risk_dep: bool = False,
     branch: str | None = None,
+    local_path: str = "",
 ) -> ScanConfig:
     """Build ScanConfig from config file + CLI args + env vars. CLI args take precedence."""
     config = ScanConfig()
@@ -285,6 +289,7 @@ def load_config(
 
     # CLI args override config file
     config.repo_url = repo_url
+    config.local_path = local_path
     if depth is not None:
         config.depth = depth
     config.skip_ai = skip_ai

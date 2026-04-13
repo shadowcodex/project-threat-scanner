@@ -47,6 +47,7 @@ def build_docker_args(
     output_mount: str,
     config_mount: str,
     env_flags: list[str],
+    source_mount: str | None = None,
 ) -> list[str]:
     """Return the ``docker run`` argv for the hardened Thresher container.
 
@@ -70,6 +71,10 @@ def build_docker_args(
         output_mount,
         "-v",
         config_mount,
+    ]
+    if source_mount:
+        args += ["-v", source_mount]
+    args += [
         *env_flags,
         *_VULN_DB_ENV,
         "--rm",

@@ -117,6 +117,55 @@ class TestScanCommandRefactored:
         assert config.launch_mode == "lima"
 
 
+class TestLocalPathDetection:
+    @patch("thresher.cli.launch_direct")
+    def test_existing_dir_sets_local_path(self, mock_launcher, tmp_path):
+        mock_launcher.return_value = 0
+        source = tmp_path / "my-project"
+        source.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["scan", str(source), "--no-vm", "--skip-ai"])
+
+        assert result.exit_code == 0
+        config = mock_launcher.call_args[0][0]
+        assert config.local_path == str(source)
+        assert config.repo_url == ""
+
+    @patch("thresher.cli.launch_direct")
+    def test_url_string_sets_repo_url(self, mock_launcher):
+        mock_launcher.return_value = 0
+        runner = CliRunner()
+        result = runner.invoke(cli, ["scan", "https://github.com/test/repo", "--no-vm", "--skip-ai"])
+
+        assert result.exit_code == 0
+        config = mock_launcher.call_args[0][0]
+        assert config.repo_url == "https://github.com/test/repo"
+        assert config.local_path == ""
+
+    @patch("thresher.cli.launch_direct")
+    def test_local_path_scan_id_uses_dir_name(self, mock_launcher, tmp_path):
+        mock_launcher.return_value = 0
+        source = tmp_path / "my-project"
+        source.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["scan", str(source), "--no-vm", "--skip-ai"])
+
+        assert result.exit_code == 0
+        config = mock_launcher.call_args[0][0]
+        assert "my-project" in config.output_dir
+
+    def test_file_path_prints_error(self, tmp_path):
+        target = tmp_path / "somefile.txt"
+        target.write_text("hello")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["scan", str(target), "--no-vm", "--skip-ai"])
+
+        assert result.exit_code != 0
+
+
 class TestBuildCommand:
     @patch("thresher.cli.subprocess.run")
     def test_build_runs_docker_build(self, mock_run):

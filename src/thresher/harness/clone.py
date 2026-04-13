@@ -84,6 +84,8 @@ def safe_clone(repo_url: str, target_dir: str, branch: str = "") -> str:
         logger.info("[safe_clone] Using branch: %s", branch)
 
     clone_cmd += _SAFE_CLONE_FLAGS
+    if repo_url.startswith("file://"):
+        clone_cmd += ["-c", "protocol.file.allow=always"]
     clone_cmd += [repo_url, target_dir]
 
     from thresher.run import run as run_cmd

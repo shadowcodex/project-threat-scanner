@@ -25,7 +25,6 @@ _HINTS = [
     '    "summary": "...",',
     '    "risk_score": 0-10',
     "  }",
-    "Do NOT use hidden_dependencies format. Use findings array.",
 ]
 
 

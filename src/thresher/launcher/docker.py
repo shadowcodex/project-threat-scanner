@@ -18,7 +18,14 @@ def launch_docker(config: ScanConfig) -> int:
     output_dir = str(Path(config.output_dir).resolve())
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    with tempfile_with(config.to_json(), suffix=".json") as config_path:
+    # Rewrite local_path for container — host path becomes /opt/source
+    config_for_container = config
+    if config.local_path:
+        import copy
+        config_for_container = copy.copy(config)
+        config_for_container.local_path = "/opt/source"
+
+    with tempfile_with(config_for_container.to_json(), suffix=".json") as config_path:
         cmd = _build_docker_cmd(config, str(config_path), output_dir)
         logger.info("Launching harness (docker mode): output=%s", output_dir)
         # Stream container output to both terminal and log file
@@ -55,8 +62,14 @@ def _build_docker_cmd(config: ScanConfig, config_path: str, output_dir: str) -> 
         env_flags += ["-e", f"ANTHROPIC_API_KEY={config.anthropic_api_key}"]
     elif config.oauth_token:
         env_flags += ["-e", f"CLAUDE_CODE_OAUTH_TOKEN={config.oauth_token}"]
+
+    source_mount = None
+    if config.local_path:
+        source_mount = f"{config.local_path}:/opt/source:ro"
+
     return build_docker_args(
         output_mount=f"{output_dir}:/output",
         config_mount=f"{config_path}:/config/config.json:ro",
         env_flags=env_flags,
+        source_mount=source_mount,
     )

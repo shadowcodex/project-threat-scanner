@@ -90,8 +90,20 @@ def scan(
     no_vm: bool,
 ) -> None:
     """Scan a repository for security threats and supply chain risks."""
+    # Auto-detect local path vs URL
+    target_path = Path(repo_url).resolve()
+    if target_path.exists():
+        if not target_path.is_dir():
+            print_error(f"Target path is not a directory: {repo_url}")
+            sys.exit(1)
+        local_path = str(target_path)
+        repo_url_for_config = ""
+    else:
+        local_path = ""
+        repo_url_for_config = repo_url
+
     config = load_config(
-        repo_url=repo_url,
+        repo_url=repo_url_for_config,
         depth=depth,
         skip_ai=skip_ai,
         verbose=verbose,
@@ -101,6 +113,7 @@ def scan(
         disk=disk,
         high_risk_dep=high_risk_dep,
         branch=branch,
+        local_path=local_path,
     )
 
     if no_vm:
@@ -111,7 +124,10 @@ def scan(
 
     import datetime
 
-    repo_short = repo_url.rstrip("/").rsplit("/", 1)[-1]
+    if local_path:
+        repo_short = Path(local_path).name
+    else:
+        repo_short = repo_url.rstrip("/").rsplit("/", 1)[-1]
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     scan_id = f"{repo_short}-{ts}"
     # Create timestamped subfolder for this scan's output

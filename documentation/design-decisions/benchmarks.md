@@ -30,7 +30,7 @@ Report is:
 
 1. Each stage of pipeline... Each Agent
 2. Individual stats for that stage/agent
-3. Total stats for all "analysts"
+3. Total stats for all "analysts" broken down by analyst
 4. Total stats for entire pipeline
 
 Report is saved as json and markdown.

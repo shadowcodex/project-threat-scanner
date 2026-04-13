@@ -98,6 +98,57 @@ def _normalize_title(title: str) -> str:
     return re.sub(r"\s+", " ", title.lower().strip())
 
 
+def _title_keyword_similarity(a: str, b: str) -> float:
+    """Compute Jaccard similarity between keyword sets of two titles.
+
+    Strips common English stop words to focus on meaningful terms.
+    Returns a float between 0.0 and 1.0.
+    """
+    stop = {
+        "a",
+        "an",
+        "the",
+        "in",
+        "on",
+        "of",
+        "for",
+        "to",
+        "and",
+        "or",
+        "is",
+        "are",
+        "was",
+        "were",
+        "with",
+        "from",
+        "by",
+        "at",
+        "it",
+        "its",
+        "this",
+        "that",
+    }
+    words_a = {w for w in a.lower().split() if w not in stop and len(w) > 2}
+    words_b = {w for w in b.lower().split() if w not in stop and len(w) > 2}
+    if not words_a or not words_b:
+        return 0.0
+    intersection = words_a & words_b
+    union = words_a | words_b
+    return len(intersection) / len(union)
+
+
+def _apply_verdict(finding: dict, verification_result: dict) -> None:
+    """Apply adversarial verification verdict to a finding."""
+    finding["adversarial_status"] = verification_result.get("verdict", "unknown")
+    finding["adversarial_reasoning"] = verification_result.get("reasoning", "")
+    finding["adversarial_confidence"] = verification_result.get("confidence", 0)
+    finding["benign_explanation"] = verification_result.get("benign_explanation_attempted", "")
+    revised = verification_result.get("revised_risk_score")
+    if revised is not None:
+        finding["original_risk_score"] = finding.get("risk_score", 0)
+        finding["risk_score"] = int(revised)
+
+
 def _deduplicate_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Deduplicate findings by (file_path, normalized title).
 
@@ -293,15 +344,18 @@ def _merge_adversarial_results(
         if isinstance(finding, dict):
             findings_by_file[finding.get("file_path", "")].append(finding)
 
-    for finding in findings_list:
+    # --- Pass 1: exact matches and single-file fallback ---
+    matched_results: set[int] = set()  # indices into `results` list
+    matched_findings: set[int] = set()  # indices into findings_list
+
+    for fi, finding in enumerate(findings_list):
         if not isinstance(finding, dict):
             continue
         fp = finding.get("file_path", "")
         title = _normalize_title(finding.get("title", ""))
         verification_result = results_by_key.get((fp, title))
 
-        # Fallback: if there's exactly one finding and one result for this
-        # file_path, match them even if titles diverged
+        # Existing single-file fallback
         if not verification_result and fp:
             file_results = results_by_file.get(fp, [])
             file_findings = findings_by_file.get(fp, [])
@@ -309,14 +363,45 @@ def _merge_adversarial_results(
                 verification_result = file_results[0]
 
         if verification_result:
-            finding["adversarial_status"] = verification_result.get("verdict", "unknown")
-            finding["adversarial_reasoning"] = verification_result.get("reasoning", "")
-            finding["adversarial_confidence"] = verification_result.get("confidence", 0)
-            finding["benign_explanation"] = verification_result.get("benign_explanation_attempted", "")
-            revised = verification_result.get("revised_risk_score")
-            if revised is not None:
-                finding["original_risk_score"] = finding.get("risk_score", 0)
-                finding["risk_score"] = int(revised)
+            _apply_verdict(finding, verification_result)
+            matched_findings.add(fi)
+            # Track consumed result by index
+            for ri, r in enumerate(results):
+                if r is verification_result:
+                    matched_results.add(ri)
+                    break
+
+    # --- Pass 2: fuzzy keyword matching for unmatched findings ---
+    unconsumed = [(ri, r) for ri, r in enumerate(results) if ri not in matched_results and isinstance(r, dict)]
+
+    for fi, finding in enumerate(findings_list):
+        if fi in matched_findings or not isinstance(finding, dict):
+            continue
+        fp = finding.get("file_path", "")
+        if not fp:
+            continue
+
+        best_score = 0.0
+        best_ri = -1
+        best_match = None
+        for ri, candidate in unconsumed:
+            if candidate.get("file_path", "") != fp:
+                continue
+            sim = _title_keyword_similarity(
+                finding.get("title", ""),
+                candidate.get("title", ""),
+            )
+            if sim > best_score:
+                best_score = sim
+                best_ri = ri
+                best_match = candidate
+
+        # Threshold 0.3: requires ~30% keyword overlap to match.
+        # Low enough to catch paraphrasing, high enough to avoid false positives.
+        if best_score >= 0.3 and best_match is not None:
+            _apply_verdict(finding, best_match)
+            matched_findings.add(fi)
+            unconsumed = [(ri, r) for ri, r in unconsumed if ri != best_ri]
 
     # Tag unreviewed findings so downstream code can distinguish "not reviewed"
     # from "reviewed but unmatched"

@@ -353,6 +353,53 @@ class TestLoadConfig:
         assert cfg.synthesize_max_turns is None
 
 
+class TestLocalPath:
+    def test_local_path_roundtrips_through_json(self):
+        config = ScanConfig(local_path="/some/path", repo_url="")
+        restored = ScanConfig.from_json(config.to_json())
+        assert restored.local_path == "/some/path"
+
+    def test_local_path_defaults_to_empty(self):
+        config = ScanConfig()
+        assert config.local_path == ""
+
+    def test_local_path_in_json_output(self):
+        config = ScanConfig(local_path="/tmp/src")
+        data = json.loads(config.to_json())
+        assert data["local_path"] == "/tmp/src"
+
+    def test_from_json_without_local_path_defaults_empty(self):
+        """Backward compat: old JSON without local_path still works."""
+        config = ScanConfig(repo_url="https://example.com/repo")
+        json_str = config.to_json()
+        data = json.loads(json_str)
+        data.pop("local_path", None)
+        restored = ScanConfig.from_json(json.dumps(data))
+        assert restored.local_path == ""
+
+    def test_validate_accepts_local_path_without_repo_url(self):
+        config = ScanConfig(local_path="/some/path", repo_url="", skip_ai=True)
+        assert config.validate() == []
+
+    def test_validate_rejects_both_empty(self):
+        config = ScanConfig(local_path="", repo_url="", skip_ai=True)
+        errors = config.validate()
+        assert any("repo_url" in e or "local_path" in e for e in errors)
+
+    def test_validate_still_accepts_repo_url(self):
+        config = ScanConfig(repo_url="https://example.com/repo", skip_ai=True)
+        assert config.validate() == []
+
+    def test_load_config_sets_local_path(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        config = load_config(
+            repo_url="", local_path="/some/dir",
+            config_path=tmp_path / "nonexistent.toml",
+        )
+        assert config.local_path == "/some/dir"
+        assert config.repo_url == ""
+
+
 class TestAiCredentials:
     def test_has_ai_credentials_api_key(self):
         cfg = ScanConfig(repo_url="https://github.com/x/y", anthropic_api_key="key")

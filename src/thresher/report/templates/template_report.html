@@ -836,8 +836,8 @@ function renderHero(d) {
   var c = d.counts || {};
   var label = v.label || '';
   var isGo = label === 'GO' || label === 'LOW RISK';
-  var isDanger = label === 'DO NOT USE';
-  var isWarning = label === 'FIX BEFORE USE' || label === 'REVIEW BEFORE USE' || label === 'CAUTION';
+  var isDanger = label === 'DO NOT USE' || label === 'FIX BEFORE USE';
+  var isWarning = label === 'REVIEW BEFORE USE' || label === 'CAUTION';
   var borderColor = isDanger ? 'var(--threat-red)' : isWarning ? 'var(--amber)' : isGo ? 'var(--safe-green)' : 'var(--charcoal)';
   var textColor = borderColor;
   var bgColor = isDanger ? 'rgba(239, 68, 68, 0.08)' : isWarning ? 'rgba(245, 158, 11, 0.08)' : isGo ? 'rgba(34, 197, 94, 0.08)' : 'rgba(42, 42, 42, 0.08)';

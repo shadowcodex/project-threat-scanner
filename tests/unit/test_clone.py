@@ -121,6 +121,34 @@ class TestSafeClone:
         assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
 
 
+    @patch("thresher.run._popen")
+    def test_file_url_adds_protocol_file_allow(self, mock_run):
+        """file:// URLs get protocol.file.allow=always to override the deny flag."""
+        mock_run.return_value = _mock_popen()
+        self._make_safe_clone_call(mock_run, "file:///opt/source", "/opt/target")
+        clone_call = mock_run.call_args_list[0]
+        cmd = clone_call[0][0]
+        c_pairs = []
+        for i, arg in enumerate(cmd):
+            if arg == "-c" and i + 1 < len(cmd):
+                c_pairs.append(cmd[i + 1])
+        assert "protocol.file.allow=always" in c_pairs
+
+    @patch("thresher.run._popen")
+    def test_https_url_does_not_add_file_allow(self, mock_run):
+        """Non-file URLs keep protocol.file.allow=never from _SAFE_CLONE_FLAGS."""
+        mock_run.return_value = _mock_popen()
+        self._make_safe_clone_call(mock_run, "https://github.com/test/repo", "/opt/target")
+        clone_call = mock_run.call_args_list[0]
+        cmd = clone_call[0][0]
+        c_pairs = []
+        for i, arg in enumerate(cmd):
+            if arg == "-c" and i + 1 < len(cmd):
+                c_pairs.append(cmd[i + 1])
+        assert "protocol.file.allow=always" not in c_pairs
+        assert "protocol.file.allow=never" in c_pairs
+
+
 class TestSanitizeGitConfig:
     def test_writes_minimal_config(self, tmp_path):
         """Phase 2: .git/config rewritten with safe settings."""

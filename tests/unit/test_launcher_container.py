@@ -82,6 +82,28 @@ class TestBuildDockerArgs:
         args = self._args(env_flags=["-e", "ANTHROPIC_API_KEY=k"])
         assert args.index("ANTHROPIC_API_KEY=k") < args.index(DOCKER_IMAGE)
 
+    def test_source_mount_adds_volume(self):
+        args = build_docker_args(
+            output_mount="/host/out:/output",
+            config_mount="/host/cfg.json:/config/config.json:ro",
+            env_flags=[],
+            source_mount="/local/src:/opt/source:ro",
+        )
+        v_indices = [i for i, a in enumerate(args) if a == "-v"]
+        source_mounts = [args[i + 1] for i in v_indices if args[i + 1].startswith("/local/src")]
+        assert len(source_mounts) == 1
+        assert source_mounts[0] == "/local/src:/opt/source:ro"
+
+    def test_no_source_mount_by_default(self):
+        args = build_docker_args(
+            output_mount="/host/out:/output",
+            config_mount="/host/cfg.json:/config/config.json:ro",
+            env_flags=[],
+        )
+        v_indices = [i for i, a in enumerate(args) if a == "-v"]
+        source_mounts = [args[i + 1] for i in v_indices if "/opt/source" in args[i + 1]]
+        assert len(source_mounts) == 0
+
     def test_supports_env_var_forwarding_form(self):
         """Lima mode passes -e NAME (no value) to forward host env var."""
         args = self._args(env_flags=["-e", "ANTHROPIC_API_KEY", "-e", "CLAUDE_CODE_OAUTH_TOKEN"])

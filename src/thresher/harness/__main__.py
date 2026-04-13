@@ -46,7 +46,8 @@ def main(argv: list[str] | None = None) -> None:
     set_verbose(config.verbose)
     set_max_stdout(config.limits.max_stdout_bytes)
 
-    logger.info("Harness starting — repo=%s output=%s", config.repo_url, config.output_dir)
+    target = config.local_path or config.repo_url
+    logger.info("Harness starting — target=%s output=%s", target, config.output_dir)
     logger.info(
         "Agent limits — analyst=%s predep=%s adversarial=%s report_maker=%s synthesize=%s max_stdout_mb=%s",
         config.analyst_max_turns,

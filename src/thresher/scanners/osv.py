@@ -23,7 +23,7 @@ def run_osv(target_dir: str, output_dir: str) -> ScanResults:
     """Run OSV-Scanner against the target directory."""
     return run_scanner(
         ScanSpec(
-            name="osv-scanner",
+            name="osv",
             cmd=["osv-scanner", "scan", "--format", "json", target_dir],
             output_filename="osv.json",
         ),
@@ -107,27 +107,36 @@ def _extract_severity(vuln: dict[str, Any]) -> str:
     if severity_str and severity_str.upper() in _SEVERITY_MAP:
         return _SEVERITY_MAP[severity_str.upper()]
 
-    # Check severity array (CVSS-based).
+    # Check severity array — prefer CVSS_V3, fall back to CVSS_V4.
+    v4_score = None
     for sev in vuln.get("severity", []):
         score_str = sev.get("score", "")
-        # CVSS vector strings contain the score; try to extract from type field.
         sev_type = sev.get("type", "")
         if sev_type == "CVSS_V3":
             score = _parse_cvss_from_vector(score_str)
             if score is not None:
                 return _score_to_severity(score)
+        elif sev_type == "CVSS_V4" and v4_score is None:
+            v4_score = _parse_cvss_from_vector(score_str)
+
+    if v4_score is not None:
+        return _score_to_severity(v4_score)
 
     return "medium"  # Default when severity is not provided.
 
 
 def _extract_cvss_score(vuln: dict[str, Any]) -> float | None:
     """Extract CVSS score from an OSV vulnerability entry."""
+    v4_score = None
     for sev in vuln.get("severity", []):
-        if sev.get("type") == "CVSS_V3":
+        sev_type = sev.get("type", "")
+        if sev_type == "CVSS_V3":
             score = _parse_cvss_from_vector(sev.get("score", ""))
             if score is not None:
                 return score
-    return None
+        elif sev_type == "CVSS_V4" and v4_score is None:
+            v4_score = _parse_cvss_from_vector(sev.get("score", ""))
+    return v4_score
 
 
 def _parse_cvss_from_vector(vector: str) -> float | None:

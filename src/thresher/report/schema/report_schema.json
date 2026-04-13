@@ -22,7 +22,7 @@
       "type": "object",
       "required": ["label", "severity", "callout"],
       "properties": {
-        "label": { "type": "string" },
+        "label": { "type": "string", "enum": ["LOW RISK", "REVIEW BEFORE USE", "FIX BEFORE USE", "CAUTION"] },
         "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
         "callout": { "type": "string" }
       },

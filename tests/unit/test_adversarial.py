@@ -524,6 +524,38 @@ class TestMergeNormalizedTitleMatching:
         result = _merge_adversarial_results(ai, verification)
         assert result["findings"][0]["adversarial_status"] == "confirmed"
 
+    def test_matches_paraphrased_titles_with_keyword_overlap(self):
+        """When titles share significant keywords, match even if paraphrased."""
+        ai = {
+            "findings": [
+                {"file_path": "/server.js", "title": "Hardcoded API credentials in configuration", "risk_score": 7},
+                {"file_path": "/server.js", "title": "Missing input validation on user endpoint", "risk_score": 6},
+            ]
+        }
+        verification = {
+            "results": [
+                {
+                    "file_path": "/server.js",
+                    "title": "API credentials hardcoded in config file",
+                    "verdict": "confirmed",
+                    "confidence": 90,
+                },
+                {
+                    "file_path": "/server.js",
+                    "title": "User endpoint lacks input validation",
+                    "verdict": "downgraded",
+                    "revised_risk_score": 3,
+                    "confidence": 85,
+                },
+            ],
+            "total_reviewed": 2,
+            "confirmed_count": 1,
+            "downgraded_count": 1,
+        }
+        result = _merge_adversarial_results(ai, verification)
+        statuses = [f["adversarial_status"] for f in result["findings"]]
+        assert "not_reviewed" not in statuses, f"Paraphrased titles should still match. Got: {statuses}"
+
     def test_no_fallback_when_multiple_findings_per_file(self):
         """When multiple findings share a file_path, don't use file-only fallback."""
         ai = {
@@ -593,6 +625,31 @@ class TestMergeNormalizedTitleMatching:
         assert len(enriched) == 1
         assert enriched[0]["adversarial_status"] == "confirmed"
         assert enriched[0]["ai_risk_score"] == 9
+
+    def test_no_match_when_titles_completely_different(self):
+        """Titles with no keyword overlap should not match even on same file."""
+        ai = {
+            "findings": [
+                {"file_path": "/a.py", "title": "SQL injection in query builder", "risk_score": 8},
+                {"file_path": "/a.py", "title": "Insecure random number generator", "risk_score": 5},
+            ]
+        }
+        verification = {
+            "results": [
+                {
+                    "file_path": "/a.py",
+                    "title": "Memory leak in connection pool",
+                    "verdict": "confirmed",
+                    "confidence": 70,
+                }
+            ],
+            "total_reviewed": 1,
+            "confirmed_count": 1,
+            "downgraded_count": 0,
+        }
+        result = _merge_adversarial_results(ai, verification)
+        statuses = [f["adversarial_status"] for f in result["findings"]]
+        assert statuses == ["not_reviewed", "not_reviewed"]
 
 
 class TestMergeAnalystFindings:

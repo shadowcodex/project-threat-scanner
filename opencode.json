@@ -1,27 +1,47 @@
 {
-    "$schema": "https://opencode.ai/config.json",
-    "permission": {
-      "bash": {
-        "*": "ask",
-        "ls *": "allow",
-        "sort *": "allow",
-        "grep *": "allow",
-        "head *": "allow",
-        "tail *": "allow",
-        "git *": "ask",
-        "git push *": "deny",
-        "npm *": "allow",
-        "rm *": "deny",
-        "grep *": "allow",
-        "ruff *": "allow",
-        "python -m pytest *": "allow",
-        "echo *": "allow",
-        "mkdir *": "allow"
-      },
-      "webfetch": "ask",
-      "websearch": "ask",
-      "codesearch": "ask",
-      "external_directory": "ask",
-      "doom_loop": "ask"
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "kimiy": {
+      "description": "Fast model, good as subagent for implementing things directed to it from others",
+      "mode": "subagent",
+      "model": "fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo"
+    },
+    "codexy": {
+      "description": "Strong subagent with high reasoning and abilities. Generally good for anything.",
+      "mode": "subagent",
+      "model": "openai/gpt-5.4"
+    },
+    "codexy-quick": {
+      "mode": "subagent",
+      "model": "openai/gpt-5.3-codex-spark"
+    },
+    "glmy": {
+      "mode": "subagent",
+      "model": "opencode-go/glm-5.1"
     }
+  },
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "ls *": "allow",
+      "sort *": "allow",
+      "grep *": "allow",
+      "head *": "allow",
+      "tail *": "allow",
+      "git *": "ask",
+      "git push *": "deny",
+      "npm *": "allow",
+      "rm *": "deny",
+      "grep *": "allow",
+      "ruff *": "allow",
+      "python -m pytest *": "allow",
+      "echo *": "allow",
+      "mkdir *": "allow"
+    },
+    "webfetch": "ask",
+    "websearch": "ask",
+    "codesearch": "ask",
+    "external_directory": "ask",
+    "doom_loop": "ask"
   }
+}

@@ -16,11 +16,24 @@ def launch_lima(config: ScanConfig) -> int:
     """Launch the harness inside Docker running in a Lima VM. Returns exit code."""
     _ensure_vm_running()
     _apply_firewall()
-    with tempfile_with(config.to_json(), suffix=".json") as config_path:
+
+    # Rewrite local_path for container
+    config_for_container = config
+    if config.local_path:
+        import copy
+        config_for_container = copy.copy(config)
+        config_for_container.local_path = "/opt/source"
+
+    with tempfile_with(config_for_container.to_json(), suffix=".json") as config_path:
         subprocess.run(
             ["limactl", "copy", str(config_path), f"{BASE_VM_NAME}:/opt/config.json"],
             check=True,
         )
+        if config.local_path:
+            subprocess.run(
+                ["limactl", "copy", "-r", config.local_path, f"{BASE_VM_NAME}:/opt/source"],
+                check=True,
+            )
         docker_cmd = _build_lima_docker_cmd(config)
         result = subprocess.run(["limactl", "shell", BASE_VM_NAME, "--", *docker_cmd])
         if result.returncode == 0:
@@ -55,6 +68,10 @@ def _apply_firewall() -> None:
 
 
 def _build_lima_docker_cmd(config: ScanConfig) -> list[str]:
+    source_mount = None
+    if config.local_path:
+        source_mount = "/opt/source:/opt/source:ro"
+
     return build_docker_args(
         output_mount="/opt/reports:/output",
         config_mount="/opt/config.json:/config/config.json:ro",
@@ -65,6 +82,7 @@ def _build_lima_docker_cmd(config: ScanConfig) -> list[str]:
             "-e",
             "CLAUDE_CODE_OAUTH_TOKEN",
         ],
+        source_mount=source_mount,
     )
 
 

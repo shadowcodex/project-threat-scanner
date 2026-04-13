@@ -26,7 +26,7 @@ def _valid_report_data():
             "repo_url": "https://github.com/example/repo",
         },
         "verdict": {
-            "label": "Low Risk",
+            "label": "LOW RISK",
             "severity": "low",
             "callout": "No critical issues found.",
         },

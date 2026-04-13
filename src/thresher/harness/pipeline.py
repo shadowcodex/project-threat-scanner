@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 from hamilton import driver
 
@@ -63,15 +64,37 @@ class _Timer:
         pass  # record() must be called explicitly
 
 
+# ── Helpers ─────────────────────────────────────────────────────────
+
+
+def copy_local_source(source_dir: str, target_dir: str) -> str:
+    """Copy a local non-git directory into the scan target."""
+    import shutil
+    shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
+    return target_dir
+
+
 # ── DAG Node Functions ──────────────────────────────────────────────
 
 
 def cloned_path(repo_url: str, config: ScanConfig, benchmark: BenchmarkCollector) -> str:
-    """Clone repo using hardened git clone."""
+    """Clone repo or copy local source into scan target."""
     from thresher.harness.clone import safe_clone
 
     with _time_stage(benchmark, "clone") as t:
-        result = safe_clone(repo_url, "/opt/target", branch=config.branch)
+        if config.local_path:
+            if (Path(config.local_path) / ".git").is_dir():
+                logger.info("Local git repo detected — cloning via file:// protocol")
+                result = safe_clone(
+                    "file://" + config.local_path,
+                    "/opt/target",
+                    branch=config.branch,
+                )
+            else:
+                logger.info("Local directory detected — copying to target")
+                result = copy_local_source(config.local_path, "/opt/target")
+        else:
+            result = safe_clone(repo_url, "/opt/target", branch=config.branch)
         t.record()
     return result
 

@@ -152,6 +152,51 @@ class TestBuildDockerCmd:
         assert cmd[idx + 1] == "/output"
 
 
+class TestLocalPathMount:
+    def test_docker_cmd_mounts_local_path(self, tmp_path):
+        config = _make_config()
+        config.local_path = "/Users/me/project"
+        config_path = str(tmp_path / "config.json")
+        cmd = _build_docker_cmd(config, config_path, str(tmp_path / "output"))
+        v_indices = [i for i, a in enumerate(cmd) if a == "-v"]
+        source_mounts = [cmd[i + 1] for i in v_indices if "/opt/source" in cmd[i + 1]]
+        assert len(source_mounts) == 1
+        assert source_mounts[0] == "/Users/me/project:/opt/source:ro"
+
+    def test_docker_cmd_no_source_mount_without_local_path(self, tmp_path):
+        config = _make_config()
+        config_path = str(tmp_path / "config.json")
+        cmd = _build_docker_cmd(config, config_path, str(tmp_path / "output"))
+        v_indices = [i for i, a in enumerate(cmd) if a == "-v"]
+        source_mounts = [cmd[i + 1] for i in v_indices if "/opt/source" in cmd[i + 1]]
+        assert len(source_mounts) == 0
+
+    def test_launch_rewrites_local_path_in_config(self, tmp_path):
+        """Config JSON passed to container should have local_path=/opt/source."""
+        import json
+        from contextlib import contextmanager
+
+        config = _make_config()
+        config.local_path = "/Users/me/project"
+        config.output_dir = str(tmp_path / "output")
+
+        written_json = []
+
+        with patch("thresher.launcher.docker.tempfile_with") as mock_tf:
+            @contextmanager
+            def capture(content, **kwargs):
+                written_json.append(content)
+                yield str(tmp_path / "fake-config.json")
+
+            mock_tf.side_effect = capture
+            with patch("thresher.launcher.docker.subprocess.run", return_value=MagicMock(returncode=0)):
+                launch_docker(config)
+
+        assert len(written_json) == 1
+        data = json.loads(written_json[0])
+        assert data["local_path"] == "/opt/source"
+
+
 class TestLaunchDocker:
     def test_calls_subprocess_run(self):
         config = _make_config()

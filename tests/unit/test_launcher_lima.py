@@ -184,6 +184,23 @@ class TestBuildLimaDockerCmd:
         assert "TRIVY_SKIP_DB_UPDATE=true" in env_vars
 
 
+class TestLocalPathDockerCmd:
+    def test_lima_docker_cmd_mounts_source(self):
+        config = ScanConfig(local_path="/Users/me/project", skip_ai=True)
+        cmd = _build_lima_docker_cmd(config)
+        v_indices = [i for i, a in enumerate(cmd) if a == "-v"]
+        source_mounts = [cmd[i + 1] for i in v_indices if "/opt/source" in cmd[i + 1]]
+        assert len(source_mounts) == 1
+        assert source_mounts[0] == "/opt/source:/opt/source:ro"
+
+    def test_lima_docker_cmd_no_mount_without_local_path(self):
+        config = ScanConfig(skip_ai=True)
+        cmd = _build_lima_docker_cmd(config)
+        v_indices = [i for i, a in enumerate(cmd) if a == "-v"]
+        source_mounts = [cmd[i + 1] for i in v_indices if "/opt/source" in cmd[i + 1]]
+        assert len(source_mounts) == 0
+
+
 class TestCopyReportToHost:
     def test_calls_limactl_copy(self, tmp_path):
         mock_result = MagicMock()
@@ -321,6 +338,32 @@ class TestLaunchLima:
         # At least one shell call should contain a docker run command
         docker_shell_calls = [c for c in shell_calls if "docker" in c]
         assert docker_shell_calls, "Docker run should execute inside limactl shell"
+
+    def test_launch_copies_local_path_to_vm(self, tmp_path):
+        config = ScanConfig(
+            local_path="/Users/me/project",
+            skip_ai=True,
+            output_dir=str(tmp_path / "output"),
+        )
+        call_log = []
+
+        def fake_run(cmd, **kwargs):
+            call_log.append(list(cmd))
+            r = MagicMock()
+            r.returncode = 0
+            r.stdout = b"Running\n"
+            return r
+
+        with patch("thresher.launcher.lima.subprocess.run", side_effect=fake_run):
+            launch_lima(config)
+
+        copy_calls = [c for c in call_log if "copy" in c and "-r" in c]
+        # Should have TWO -r copy calls: one for local source, one for report
+        source_copies = [c for c in copy_calls if "/opt/source" in " ".join(c)]
+        assert len(source_copies) >= 1
+        copy_cmd = source_copies[0]
+        assert "/Users/me/project" in " ".join(copy_cmd)
+        assert f"{BASE_VM_NAME}:/opt/source" in " ".join(copy_cmd)
 
     def test_config_file_cleaned_up(self, tmp_path):
         config = ScanConfig(
