@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Thresher Adversarial Verification Agent Output",
+  "description": "Schema for the JSON output produced by the adversarial verification agent",
+  "type": "object",
+  "required": ["verification_summary", "total_reviewed", "results"],
+  "properties": {
+    "verification_summary": {
+      "type": "string"
+    },
+    "total_reviewed": {
+      "type": "number"
+    },
+    "confirmed_count": {
+      "type": "integer"
+    },
+    "downgraded_count": {
+      "type": "integer"
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file_path", "verdict", "reasoning"],
+        "properties": {
+          "file_path": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "original_risk_score": {
+            "type": "integer"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": ["confirmed", "downgraded"]
+          },
+          "revised_risk_score": {
+            "type": "integer"
+          },
+          "benign_explanation_attempted": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "string"
+          },
+          "web_research_findings": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          }
+        }
+      }
+    }
+  }
+}

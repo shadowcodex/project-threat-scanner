@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -11,17 +12,16 @@ import time
 from pathlib import Path
 
 from thresher.config import ScanConfig
-from thresher.vm.ssh import SSHError, ssh_copy_to, ssh_exec
 
 logger = logging.getLogger(__name__)
 
 
 def _find_data_root() -> Path:
-    """Locate the project data root (lima/, vm_scripts/, rules/, docker/).
+    """Locate the project data root (lima/ directory).
 
-    In a development install the source tree layout has these directories
+    In a development install the source tree layout has the lima/ directory
     three levels above this file.  In a Homebrew (or other pip-installed)
-    layout they live under ``sys.prefix/share/thresher/``.
+    layout it lives under ``sys.prefix/share/thresher/``.
     """
     # 1. Development / editable-install layout
     dev_root = Path(__file__).resolve().parents[3]
@@ -40,28 +40,12 @@ def _find_data_root() -> Path:
 _PROJECT_ROOT = _find_data_root()
 _TEMPLATE_PATH = _PROJECT_ROOT / "lima" / "thresher.yaml"
 
-# Paths to provisioning scripts inside the project.
-_VM_SCRIPTS_DIR = _PROJECT_ROOT / "vm_scripts"
-
-# Path to custom scanner rules.
-_RULES_DIR = _PROJECT_ROOT / "rules"
-
 # Polling settings
 _POLL_INTERVAL = 2  # seconds
 _SSH_TIMEOUT = 300  # seconds (first boot can be slow)
 
-# Base VM image name — provisioned once, reused across scans.
+# Base VM image name — used by the Lima launcher.
 BASE_VM_NAME = "thresher-base"
-
-# Working directories cleaned between scans when reusing the base VM.
-_WORKING_DIRS = [
-    "/opt/target",
-    "/opt/deps",
-    "/opt/scan-results",
-    "/opt/security-reports",
-    "/opt/thresher/work/target",
-    "/opt/thresher/work/deps",
-]
 
 
 class LimaError(Exception):
@@ -88,14 +72,13 @@ def _read_ha_stderr_log(vm_name: str) -> str:
 
 
 def _check_vz_available() -> bool:
-    """Check whether the vz (Virtualization.framework) backend is available.
-
-    Returns True if vz is listed in limactl info vmTypes.
-    """
+    """Check whether the vz (Virtualization.framework) backend is available."""
     try:
         result = subprocess.run(
             ["limactl", "info"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             info = json.loads(result.stdout)
@@ -103,6 +86,16 @@ def _check_vz_available() -> bool:
     except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
         pass
     return False
+
+
+def _ensure_vz_available() -> None:
+    """Raise LimaError with a helpful message if vz is not available."""
+    if not _check_vz_available():
+        raise LimaError(
+            "The vz (Virtualization.framework) backend is not available.\n"
+            "Requirements: Apple Silicon Mac running macOS 13 (Ventura) or later.\n"
+            "Run 'limactl info' to see supported VM backends."
+        )
 
 
 def _wait_for_ssh(vm_name: str) -> None:
@@ -122,26 +115,19 @@ def _wait_for_ssh(vm_name: str) -> None:
             pass
         time.sleep(_POLL_INTERVAL)
 
-    raise LimaError(
-        f"SSH not ready on VM '{vm_name}' after {_SSH_TIMEOUT}s"
-    )
+    raise LimaError(f"SSH not ready on VM '{vm_name}' after {_SSH_TIMEOUT}s")
 
 
-def _ensure_vz_available() -> None:
-    """Raise LimaError with a helpful message if vz is not available."""
-    if not _check_vz_available():
-        raise LimaError(
-            "The vz (Virtualization.framework) backend is not available.\n"
-            "Requirements: Apple Silicon Mac running macOS 13 (Ventura) or later.\n"
-            "Run 'limactl info' to see supported VM backends."
-        )
+def base_exists() -> bool:
+    """Check whether the base VM exists."""
+    status = vm_status(BASE_VM_NAME)
+    return status != "Not found"
 
 
 def create_vm(config: ScanConfig) -> str:
     """Create and start a new ephemeral Lima VM.
 
-    Runs limactl create and start synchronously (they stream their own
-    progress to stderr), then verifies SSH readiness before returning.
+    Returns the VM name.
     """
     _ensure_vz_available()
     vm_name = f"thresher-{int(time.time())}"
@@ -152,7 +138,8 @@ def create_vm(config: ScanConfig) -> str:
     create_cmd = [
         "limactl",
         "create",
-        "--name", vm_name,
+        "--name",
+        vm_name,
         f"--cpus={config.vm.cpus}",
         f"--memory={config.vm.memory}",
         f"--disk={config.vm.disk}",
@@ -166,15 +153,12 @@ def create_vm(config: ScanConfig) -> str:
         raise LimaError(f"Failed to create VM '{vm_name}': {result.stderr}")
 
     start_vm(vm_name)
+    _provision_docker(vm_name)
     return vm_name
 
 
 def start_vm(vm_name: str) -> None:
-    """Start a Lima VM, then wait for SSH to be ready.
-
-    Uses streaming output so progress is visible during first boot
-    (image download, cloud-init, etc.).
-    """
+    """Start a Lima VM, then wait for SSH to be ready."""
     logger.info("Starting VM %s", vm_name)
 
     try:
@@ -187,8 +171,6 @@ def start_vm(vm_name: str) -> None:
     except FileNotFoundError as exc:
         raise LimaError("limactl not found. Install Lima: https://lima-vm.io") from exc
 
-    # Stream output to logger so it shows up in logs/tmux.
-    # Also capture the last N lines so we can include them in error messages.
     captured_lines: list[str] = []
     for line in proc.stdout:
         stripped = line.rstrip("\n")
@@ -198,19 +180,13 @@ def start_vm(vm_name: str) -> None:
 
     proc.wait()
     if proc.returncode != 0:
-        # Gather diagnostics from multiple sources
         diag_parts = [f"Failed to start VM '{vm_name}' (exit {proc.returncode})"]
-
-        # Include last few lines of limactl output
         tail = captured_lines[-10:]
         if tail:
             diag_parts.append("limactl output:\n  " + "\n  ".join(tail))
-
-        # Read the hostagent stderr log — this has the real vz crash reason
         ha_log = _read_ha_stderr_log(vm_name)
         if ha_log:
             diag_parts.append(f"ha.stderr.log:\n  {ha_log}")
-
         raise LimaError("\n".join(diag_parts))
 
     logger.info("VM %s started, waiting for SSH...", vm_name)
@@ -218,208 +194,31 @@ def start_vm(vm_name: str) -> None:
     logger.info("VM %s is ready", vm_name)
 
 
-def provision_vm(vm_name: str, config: ScanConfig) -> None:
-    """Provision a running Lima VM with tools and firewall rules.
-
-    Copies provision.sh and the generated firewall script into the VM,
-    then executes them. The ANTHROPIC_API_KEY is passed via SSH env var
-    (never written to disk inside the VM).
-
-    Args:
-        vm_name: Name of the running VM.
-        config: Scan configuration (used for API key and verbose flag).
-
-    Raises:
-        LimaError: If provisioning fails.
-        SSHError: If SSH operations fail.
-    """
-    provision_script = _VM_SCRIPTS_DIR / "provision.sh"
-    if not provision_script.exists():
-        raise LimaError(f"Provisioning script not found: {provision_script}")
-
-    # Copy provision.sh into the VM
-    ssh_copy_to(vm_name, str(provision_script), "/tmp/provision.sh")
-
-    # Copy firewall script (use the robust bash version that resolves
-    # domains to IPs, rather than generating a script with bare domain names)
-    firewall_script_path = _VM_SCRIPTS_DIR / "firewall.sh"
-    if not firewall_script_path.exists():
-        raise LimaError(f"Firewall script not found: {firewall_script_path}")
-    ssh_copy_to(vm_name, str(firewall_script_path), "/tmp/firewall.sh")
-
-    # Copy runtime scripts to /opt/thresher/bin/ (persists across reboots,
-    # unlike /tmp/ which is cleared). These are needed during scans, not
-    # just during provisioning.
-    ssh_exec(vm_name, "sudo mkdir -p /opt/thresher/bin && sudo chmod 777 /opt/thresher/bin")
-
-    safe_clone_script = _VM_SCRIPTS_DIR / "safe_clone.sh"
-    if not safe_clone_script.exists():
-        raise LimaError(f"Safe clone script not found: {safe_clone_script}")
-    ssh_copy_to(vm_name, str(safe_clone_script), "/opt/thresher/bin/safe_clone.sh")
-    ssh_exec(vm_name, "sudo chmod +x /opt/thresher/bin/safe_clone.sh")
-
-    validate_script = _VM_SCRIPTS_DIR / "validate_predep_output.sh"
-    if validate_script.exists():
-        ssh_copy_to(vm_name, str(validate_script), "/opt/thresher/bin/validate_predep_output.sh")
-        ssh_exec(vm_name, "sudo chmod +x /opt/thresher/bin/validate_predep_output.sh")
-
-    analyst_validate_script = _VM_SCRIPTS_DIR / "validate_analyst_output.sh"
-    if analyst_validate_script.exists():
-        ssh_copy_to(vm_name, str(analyst_validate_script), "/opt/thresher/bin/validate_analyst_output.sh")
-        ssh_exec(vm_name, "sudo chmod +x /opt/thresher/bin/validate_analyst_output.sh")
-
-    adversarial_validate_script = _VM_SCRIPTS_DIR / "validate_adversarial_output.sh"
-    if adversarial_validate_script.exists():
-        ssh_copy_to(vm_name, str(adversarial_validate_script), "/opt/thresher/bin/validate_adversarial_output.sh")
-        ssh_exec(vm_name, "sudo chmod +x /opt/thresher/bin/validate_adversarial_output.sh")
-
-    # Copy scanner-deps Docker build context (Dockerfile + scripts)
-    docker_dir = _PROJECT_ROOT / "docker"
-    if docker_dir.exists():
-        # Create the build context directory in the VM
-        ssh_exec(vm_name, "mkdir -p /tmp/docker-scanner-deps/scripts")
-        ssh_copy_to(
-            vm_name,
-            str(docker_dir / "Dockerfile.scanner-deps"),
-            "/tmp/docker-scanner-deps/Dockerfile.scanner-deps",
+def stop_vm(vm_name: str) -> None:
+    """Stop a Lima VM without deleting it."""
+    logger.info("Stopping VM %s", vm_name)
+    # Best-effort sync before stop
+    with contextlib.suppress(Exception):
+        subprocess.run(
+            ["limactl", "shell", vm_name, "sync"],
+            capture_output=True,
+            timeout=30,
         )
-        for script in sorted((docker_dir / "scripts").iterdir()):
-            ssh_copy_to(
-                vm_name,
-                str(script),
-                f"/tmp/docker-scanner-deps/scripts/{script.name}",
-            )
-
-    # Copy custom scanner rules (Semgrep supply-chain rules, etc.)
-    semgrep_rules_dir = _RULES_DIR / "semgrep"
-    if semgrep_rules_dir.exists():
-        ssh_exec(vm_name, "sudo mkdir -p /opt/rules/semgrep && sudo chmod 777 /opt/rules/semgrep")
-        for rule_file in sorted(semgrep_rules_dir.iterdir()):
-            if rule_file.is_file():
-                ssh_copy_to(
-                    vm_name,
-                    str(rule_file),
-                    f"/opt/rules/semgrep/{rule_file.name}",
-                )
-
-    # Copy lockdown scripts (scanner-docker wrapper + lockdown.sh)
-    lockdown_script = _VM_SCRIPTS_DIR / "lockdown.sh"
-    docker_wrapper = _VM_SCRIPTS_DIR / "scanner-docker"
-    if not lockdown_script.exists():
-        raise LimaError(f"Lockdown script not found: {lockdown_script}")
-    if not docker_wrapper.exists():
-        raise LimaError(f"Docker wrapper not found: {docker_wrapper}")
-    ssh_copy_to(vm_name, str(lockdown_script), "/tmp/lockdown.sh")
-    ssh_copy_to(vm_name, str(docker_wrapper), "/tmp/scanner-docker")
-
-    # Build env vars for the remote shell
-    env = config.ai_env()
-
-    # Run provision.sh (installs all tools, builds Docker images)
-    # Use progress bar — provision.sh has ~30 major [provision] log lines
-    from thresher.branding import FinProgressBar
-
-    _provision_bar = FinProgressBar("Provisioning", total=100)
-    _provision_step = [0]  # mutable for closure
-
-    def _on_provision_line(line: str) -> None:
-        if "[provision]" in line:
-            _provision_step[0] += 1
-            # Extract the message after the timestamp
-            parts = line.split("] ", 1)
-            status = parts[1][:30] if len(parts) > 1 else ""
-            _provision_bar.update(_provision_step[0], status)
-
-    stdout, stderr, rc = ssh_exec(
-        vm_name,
-        "chmod +x /tmp/provision.sh && sudo /tmp/provision.sh",
-        timeout=900,  # provisioning can take a while
-        env=env,
-        on_stdout=_on_provision_line,
-    )
-    _provision_bar.finish()
-
-    if rc != 0:
-        raise LimaError(
-            f"Provisioning failed (exit {rc}):\nstdout: {stdout}\nstderr: {stderr}"
-        )
-
-    # Run firewall.sh (applies iptables whitelist + DNS pinning)
-    stdout, stderr, rc = ssh_exec(
-        vm_name,
-        "chmod +x /tmp/firewall.sh && sudo /tmp/firewall.sh",
-        timeout=60,
-        env=env,
-    )
-    if rc != 0:
-        raise LimaError(
-            f"Firewall setup failed (exit {rc}):\nstdout: {stdout}\nstderr: {stderr}"
-        )
-
-    # Run lockdown.sh LAST — strips all sudo except the scanner-docker
-    # wrapper. Must be after provision.sh and firewall.sh since those
-    # scripts use sudo extensively.
-    stdout, stderr, rc = ssh_exec(
-        vm_name,
-        "chmod +x /tmp/lockdown.sh && sudo /tmp/lockdown.sh $(whoami)",
-        timeout=60,
-        env=env,
-    )
-    if rc != 0:
-        raise LimaError(
-            f"Lockdown failed (exit {rc}):\nstdout: {stdout}\nstderr: {stderr}"
-        )
-
-
-def base_exists() -> bool:
-    """Check whether the cached base VM exists."""
-    status = vm_status(BASE_VM_NAME)
-    return status != "Not found"
-
-
-def build_base(config: ScanConfig) -> None:
-    """Create, provision, and stop the base VM image.
-
-    If the base already exists it is deleted first so a fresh image is built.
-    After provisioning the VM is stopped (not destroyed) so its disk is
-    preserved for reuse.
-    """
-    _ensure_vz_available()
-
-    if base_exists():
-        logger.info("Removing existing base VM before rebuild")
-        destroy_vm(BASE_VM_NAME)
-
-    if not _TEMPLATE_PATH.exists():
-        raise LimaError(f"Lima template not found: {_TEMPLATE_PATH}")
-
-    create_cmd = [
-        "limactl",
-        "create",
-        "--name", BASE_VM_NAME,
-        f"--cpus={config.vm.cpus}",
-        f"--memory={config.vm.memory}",
-        f"--disk={config.vm.disk}",
-        "--plain",
-        str(_TEMPLATE_PATH),
-    ]
-
-    logger.info("Creating base VM %s", BASE_VM_NAME)
-    result = _run_limactl(create_cmd, timeout=300)
+    result = _run_limactl(["limactl", "stop", vm_name], timeout=120)
     if result.returncode != 0:
-        raise LimaError(f"Failed to create base VM: {result.stderr}")
+        raise LimaError(f"Failed to stop VM '{vm_name}': {result.stderr}")
 
-    start_vm(BASE_VM_NAME)
-    provision_vm(BASE_VM_NAME, config)
-    stop_vm(BASE_VM_NAME)
-    logger.info("Base VM %s built and stopped", BASE_VM_NAME)
+
+def destroy_vm(vm_name: str) -> None:
+    """Force-delete a Lima VM."""
+    cmd = ["limactl", "delete", "-f", vm_name]
+    result = _run_limactl(cmd, timeout=120)
+    if result.returncode != 0:
+        raise LimaError(f"Failed to destroy VM '{vm_name}': {result.stderr}")
 
 
 def ensure_base_running() -> str:
     """Start the base VM if it is stopped and return its name.
-
-    Returns:
-        The base VM name (``BASE_VM_NAME``).
 
     Raises:
         LimaError: If the base VM does not exist or cannot be started.
@@ -427,96 +226,80 @@ def ensure_base_running() -> str:
     status = vm_status(BASE_VM_NAME)
     if status == "Not found":
         raise LimaError(
-            f"Base VM '{BASE_VM_NAME}' not found. "
-            "Run `thresher build` first to create the cached base image."
+            f"Base VM '{BASE_VM_NAME}' not found. Run `thresher build` first to create the cached base image."
         )
     if status != "Running":
         start_vm(BASE_VM_NAME)
     return BASE_VM_NAME
 
 
-def clean_working_dirs(vm_name: str) -> None:
-    """Remove scan working directories inside the VM.
-
-    This is called between scans when reusing the base VM so that no
-    artefacts leak across runs.
-    """
-    for d in _WORKING_DIRS:
-        # Delete all contents (including dotfiles like .git) without
-        # removing the directory itself. Try without sudo first (works
-        # post-lockdown when dirs exist with 777). Fall back to sudo
-        # for dirs that need creation (works pre-lockdown or on
-        # imported VMs where lockdown didn't run).
-        ssh_exec(vm_name, (
-            f"find {d} -mindepth 1 -delete 2>/dev/null; "
-            f"mkdir -p {d} 2>/dev/null || sudo mkdir -p {d} 2>/dev/null; "
-            f"chmod 777 {d} 2>/dev/null || sudo chmod 777 {d} 2>/dev/null; "
-            f"true"
-        ))
-    logger.info("Cleaned working directories in %s", vm_name)
-
-
-def stop_vm(vm_name: str) -> None:
-    """Stop a Lima VM without deleting it.
-
-    Uses graceful shutdown with a filesystem sync to ensure all disk
-    writes (especially Docker image layers) are flushed before stopping.
-    """
-    logger.info("Stopping VM %s", vm_name)
-    try:
-        ssh_exec(vm_name, "sync", timeout=30)
-    except Exception:
-        pass  # best-effort; stop will proceed regardless
-    result = _run_limactl(["limactl", "stop", vm_name], timeout=120)
-    if result.returncode != 0:
-        raise LimaError(f"Failed to stop VM '{vm_name}': {result.stderr}")
-
-
-def destroy_vm(vm_name: str) -> None:
-    """Force-delete a Lima VM.
+def load_image(vm_name: str, image_path: str) -> None:
+    """Load a Docker image tarball into the VM.
 
     Args:
-        vm_name: Name of the VM to destroy.
-
-    Raises:
-        LimaError: If deletion fails.
+        vm_name: Running Lima VM name.
+        image_path: Host path to the .tar image file.
     """
-    cmd = ["limactl", "delete", "-f", vm_name]
-    result = _run_limactl(cmd, timeout=120)
+    # Copy the image into the VM then load it
+    remote_path = "/tmp/thresher-image.tar"
+    result = subprocess.run(
+        ["limactl", "copy", image_path, f"{vm_name}:{remote_path}"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
     if result.returncode != 0:
-        raise LimaError(f"Failed to destroy VM '{vm_name}': {result.stderr}")
+        raise LimaError(f"Failed to copy image to VM: {result.stderr}")
+
+    result = subprocess.run(
+        ["limactl", "shell", vm_name, "docker", "load", "-i", remote_path],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        raise LimaError(f"Failed to load Docker image: {result.stderr}")
 
 
 def vm_status(vm_name: str) -> str:
     """Get the status of a Lima VM.
 
-    Args:
-        vm_name: Name of the VM to query.
-
     Returns:
         Status string (e.g., "Running", "Stopped", or "Not found").
-
-    Raises:
-        LimaError: If the status query fails unexpectedly.
     """
     cmd = ["limactl", "list", "--format", "{{.Status}}", vm_name]
     result = _run_limactl(cmd, timeout=30)
 
     if result.returncode != 0:
-        # limactl list returns non-zero when the VM doesn't exist
         if "not found" in result.stderr.lower() or not result.stdout.strip():
             return "Not found"
-        raise LimaError(
-            f"Failed to get status of VM '{vm_name}': {result.stderr}"
-        )
+        raise LimaError(f"Failed to get status of VM '{vm_name}': {result.stderr}")
 
     return result.stdout.strip()
 
 
-def _run_limactl(
-    cmd: list[str], timeout: int = 120
-) -> subprocess.CompletedProcess[str]:
-    """Run a limactl command synchronously (for fast operations like status/destroy)."""
+def _provision_docker(vm_name: str) -> None:
+    """Install Docker in the VM (minimal — tools live in the container)."""
+    cmds = [
+        # Install Docker
+        "curl -fsSL https://get.docker.com | sudo sh",
+        # Add current user to docker group
+        "sudo usermod -aG docker $(whoami)",
+    ]
+    for cmd in cmds:
+        result = subprocess.run(
+            ["limactl", "shell", vm_name, "bash", "-c", cmd],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            raise LimaError(f"Docker provisioning failed: {result.stderr}")
+    logger.info("Docker provisioned in VM %s", vm_name)
+
+
+def _run_limactl(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
+    """Run a limactl command synchronously."""
     try:
         return subprocess.run(
             cmd,
@@ -525,34 +308,6 @@ def _run_limactl(
             timeout=timeout,
         )
     except FileNotFoundError as exc:
-        raise LimaError(
-            "limactl not found. Install Lima: https://lima-vm.io"
-        ) from exc
+        raise LimaError("limactl not found. Install Lima: https://lima-vm.io") from exc
     except subprocess.TimeoutExpired as exc:
-        raise LimaError(
-            f"limactl command timed out after {timeout}s: {' '.join(cmd)}"
-        ) from exc
-
-
-def _write_and_copy_script(
-    vm_name: str, content: str, remote_path: str
-) -> None:
-    """Write script content to a temporary file and copy it into the VM.
-
-    Args:
-        vm_name: Name of the VM.
-        content: Script content to write.
-        remote_path: Destination path inside the VM.
-    """
-    import tempfile
-
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".sh", delete=False
-    ) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-
-    try:
-        ssh_copy_to(vm_name, tmp_path, remote_path)
-    finally:
-        os.unlink(tmp_path)
+        raise LimaError(f"limactl command timed out after {timeout}s: {' '.join(cmd)}") from exc

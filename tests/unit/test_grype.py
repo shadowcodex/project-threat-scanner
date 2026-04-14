@@ -35,12 +35,12 @@ class TestParseGrypeOutput:
 
     def test_no_cve_prefix(self, grype_fixture):
         findings = parse_grype_output(grype_fixture)
-        ghsa_finding = [f for f in findings if "GHSA" in f.id][0]
+        ghsa_finding = next(f for f in findings if "GHSA" in f.id)
         assert ghsa_finding.cve_id is None
 
     def test_no_fix_version(self, grype_fixture):
         findings = parse_grype_output(grype_fixture)
-        medium = [f for f in findings if f.severity == "medium"][0]
+        medium = next(f for f in findings if f.severity == "medium")
         assert medium.fix_version is None
 
     def test_from_fixture(self, grype_fixture):

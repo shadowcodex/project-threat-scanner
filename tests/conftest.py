@@ -5,14 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock  # noqa: F401 — kept for test modules that import from conftest
 
 import pytest
 
 from thresher.config import ScanConfig, VMConfig
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import SSHResult
-
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 SCANNER_FIXTURES_DIR = FIXTURES_DIR / "sample_scanner_output"
@@ -176,73 +174,6 @@ def analyst_envelope_fixture() -> dict:
 @pytest.fixture
 def adversarial_fixture() -> dict:
     return load_fixture("adversarial.json", AGENT_FIXTURES_DIR)
-
-
-# ---------------------------------------------------------------------------
-# Fixtures: mock SSH
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def mock_ssh_exec(monkeypatch):
-    """Returns a function to configure what ssh_exec returns.
-
-    Usage:
-        def test_foo(mock_ssh_exec):
-            mock_ssh_exec(stdout="hello", stderr="", exit_code=0)
-            # now all ssh_exec calls return SSHResult("hello", "", 0)
-
-    For multiple sequential calls, pass a list:
-        mock_ssh_exec(calls=[
-            SSHResult("first", "", 0),
-            SSHResult("second", "", 0),
-        ])
-    """
-    mock = MagicMock()
-
-    def configure(
-        stdout: str = "",
-        stderr: str = "",
-        exit_code: int = 0,
-        calls: list[SSHResult] | None = None,
-    ):
-        if calls is not None:
-            mock.side_effect = calls
-        else:
-            mock.return_value = SSHResult(stdout, stderr, exit_code)
-        monkeypatch.setattr("thresher.vm.ssh.subprocess.run", _noop)
-        return mock
-
-    # We patch at the module level where ssh_exec is imported
-    _noop = lambda *a, **kw: None  # noqa: E731
-
-    def _patched_ssh_exec(vm_name, command, timeout=300, env=None):
-        return mock(vm_name, command, timeout=timeout, env=env)
-
-    monkeypatch.setattr("thresher.vm.ssh.ssh_exec", _patched_ssh_exec)
-    # Also patch in modules that import ssh_exec directly
-    for mod in [
-        "thresher.scanners.runner",
-        "thresher.scanners.syft",
-        "thresher.scanners.grype",
-        "thresher.scanners.osv",
-        "thresher.scanners.semgrep",
-        "thresher.scanners.guarddog",
-        "thresher.scanners.gitleaks",
-        "thresher.docker.sandbox",
-        "thresher.agents.analyst",
-        "thresher.agents.adversarial",
-        "thresher.scanners.guarddog_deps",
-        "thresher.scanners.capa_scanner",
-        "thresher.scanners.scancode",
-        "thresher.report.synthesize",
-    ]:
-        try:
-            monkeypatch.setattr(f"{mod}.ssh_exec", _patched_ssh_exec)
-        except AttributeError:
-            pass
-
-    return configure
 
 
 @pytest.fixture

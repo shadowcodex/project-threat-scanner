@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec
 
 logger = logging.getLogger(__name__)
 
@@ -20,52 +19,15 @@ _SEVERITY_MAP: dict[str, str] = {
 }
 
 
-def run_trivy(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
-    """Run Trivy filesystem scan to detect vulnerabilities.
-
-    Args:
-        vm_name: Name of the Lima VM.
-        target_dir: Path to the repository inside the VM.
-        output_dir: Directory for scan artifacts inside the VM.
-
-    Returns:
-        ScanResults with parsed Finding objects.
-    """
-    output_path = f"{output_dir}/trivy.json"
-    cmd = f"trivy fs --format json --output {output_path} {target_dir} 2>/dev/null"
-
-    start = time.monotonic()
-    try:
-        result = ssh_exec(vm_name, cmd)
-        elapsed = time.monotonic() - start
-
-        if result.exit_code not in (0, 1):
-            logger.warning("Trivy exited with code %d: %s", result.exit_code, result.stderr)
-            return ScanResults(
-                tool_name="trivy",
-                execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[f"Trivy failed (exit {result.exit_code}): {result.stderr}"],
-            )
-
-        # Findings remain inside the VM at output_path.
-        # No data crosses the VM trust boundary.
-        return ScanResults(
-            tool_name="trivy",
-            execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Trivy execution failed")
-        return ScanResults(
-            tool_name="trivy",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Trivy execution error: {exc}"],
-        )
+def run_trivy(target_dir: str, output_dir: str) -> ScanResults:
+    """Run Trivy filesystem scan to detect vulnerabilities."""
+    return run_scanner(
+        ScanSpec(
+            name="trivy",
+            cmd=["trivy", "fs", "--format", "json", "--skip-db-update", target_dir],
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_trivy_output(raw: dict[str, Any]) -> list[Finding]:

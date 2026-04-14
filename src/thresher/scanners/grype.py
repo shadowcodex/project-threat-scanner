@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec
 
 logger = logging.getLogger(__name__)
 
@@ -22,57 +21,15 @@ _SEVERITY_MAP: dict[str, str] = {
 }
 
 
-def run_grype(vm_name: str, sbom_path: str, output_dir: str) -> ScanResults:
-    """Run Grype against a CycloneDX SBOM produced by Syft.
-
-    Grype exits with code 0 when no vulnerabilities are found and code 1
-    when vulnerabilities *are* found.  Both are treated as successful runs.
-
-    Args:
-        vm_name: Name of the Lima VM.
-        sbom_path: Path to the SBOM JSON inside the VM.
-        output_dir: Directory for scan artifacts inside the VM.
-
-    Returns:
-        ScanResults with execution metadata only (findings stay in VM).
-    """
-    output_path = f"{output_dir}/grype.json"
-    cmd = f"grype sbom:{sbom_path} -o json > {output_path}"
-
-    start = time.monotonic()
-    try:
-        result = ssh_exec(vm_name, cmd)
-        elapsed = time.monotonic() - start
-
-        # Exit codes: 0 = no vulns, 1 = vulns found (not an error).
-        # Anything else is a real failure.
-        if result.exit_code not in (0, 1):
-            logger.warning("Grype exited with code %d: %s", result.exit_code, result.stderr)
-            return ScanResults(
-                tool_name="grype",
-                execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[f"Grype failed (exit {result.exit_code}): {result.stderr}"],
-            )
-
-        # Findings remain inside the VM at output_path.
-        # No data crosses the VM trust boundary.
-        return ScanResults(
-            tool_name="grype",
-            execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Grype execution failed")
-        return ScanResults(
-            tool_name="grype",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Grype execution error: {exc}"],
-        )
+def run_grype(sbom_path: str, output_dir: str) -> ScanResults:
+    """Run Grype against a CycloneDX SBOM produced by Syft."""
+    return run_scanner(
+        ScanSpec(
+            name="grype",
+            cmd=["grype", f"sbom:{sbom_path}", "-o", "json"],
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_grype_output(raw: dict[str, Any]) -> list[Finding]:
@@ -143,7 +100,6 @@ def _extract_cvss_score(vulnerability: dict[str, Any]) -> float | None:
     for cvss_entry in vulnerability.get("cvss", []):
         metrics = cvss_entry.get("metrics", {})
         score = metrics.get("baseScore")
-        if score is not None:
-            if best is None or score > best:
-                best = score
+        if score is not None and (best is None or score > best):
+            best = score
     return best

@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec
 
 logger = logging.getLogger(__name__)
 
@@ -17,57 +16,31 @@ _SEVERITY_MAP: dict[str, str] = {
     "LOW": "low",
 }
 
+# Directories to exclude from bandit scans. Test code uses asserts and
+# subprocess calls everywhere as part of normal practice — scanning them
+# drowns the real findings in noise. The target repo's own security
+# posture is what we care about.
+_BANDIT_EXCLUDE_DIRS = "tests,test,e2e,examples,docs,build,dist,.tox,.venv,venv"
 
-def run_bandit(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
-    """Run Bandit to detect security issues in Python code.
 
-    Bandit exits with code 0 when no issues are found and code 1 when
-    issues are detected.  Both are valid scan results.
-
-    Args:
-        vm_name: Name of the Lima VM.
-        target_dir: Path to the repository inside the VM.
-        output_dir: Directory for scan artifacts inside the VM.
-
-    Returns:
-        ScanResults with parsed Finding objects.
-    """
-    output_path = f"{output_dir}/bandit.json"
-    cmd = f"bandit -r {target_dir} -f json -o {output_path} 2>/dev/null"
-
-    start = time.monotonic()
-    try:
-        result = ssh_exec(vm_name, cmd)
-        elapsed = time.monotonic() - start
-
-        # Exit 0 = no issues, 1 = issues found.  Other codes are errors.
-        if result.exit_code not in (0, 1):
-            logger.warning("Bandit exited with code %d: %s", result.exit_code, result.stderr)
-            return ScanResults(
-                tool_name="bandit",
-                execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[f"Bandit failed (exit {result.exit_code}): {result.stderr}"],
-            )
-
-        # Findings remain inside the VM at output_path.
-        # No data crosses the VM trust boundary.
-        return ScanResults(
-            tool_name="bandit",
-            execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Bandit execution failed")
-        return ScanResults(
-            tool_name="bandit",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Bandit execution error: {exc}"],
-        )
+def run_bandit(target_dir: str, output_dir: str) -> ScanResults:
+    """Run Bandit to detect security issues in Python code."""
+    return run_scanner(
+        ScanSpec(
+            name="bandit",
+            cmd=[
+                "bandit",
+                "-r",
+                target_dir,
+                "-f",
+                "json",
+                "-q",
+                "-x",
+                _BANDIT_EXCLUDE_DIRS,
+            ],
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_bandit_output(raw: dict[str, Any]) -> list[Finding]:

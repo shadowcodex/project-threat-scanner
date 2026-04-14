@@ -3,38 +3,56 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
-from typing import Any
+from pathlib import Path
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_YARA_RULES_DIR = "/opt/yara-rules"
 
-def run_yara(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
+
+def resolve_yara_rules_dir() -> str:
+    """Return the YARA rules dir path, honoring the ``YARA_RULES_DIR``
+    environment variable. Defaults to ``/opt/yara-rules``.
+
+    The Docker image does not currently bundle YARA rules — operators who
+    want YARA scanning must mount their own rules directory and point this
+    env var at it.
+    """
+    return os.environ.get("YARA_RULES_DIR", DEFAULT_YARA_RULES_DIR)
+
+
+def run_yara(target_dir: str, output_dir: str) -> ScanResults:
     """Run YARA rules against the target directory to detect malware patterns.
 
-    Scans using key rule categories from /opt/yara-rules.  If the rules
-    directory does not exist, returns empty results with a warning.
+    Scans using key rule categories from the configured rules dir
+    (override with ``YARA_RULES_DIR``). If the rules directory does not
+    exist, returns clean empty results with an INFO log — this is the
+    default state when no rules are mounted, and is not an error.
 
     Args:
-        vm_name: Name of the Lima VM.
-        target_dir: Path to the repository inside the VM.
-        output_dir: Directory for scan artifacts inside the VM.
+        target_dir: Path to the repository.
+        output_dir: Directory for scan artifacts.
 
     Returns:
         ScanResults with parsed Finding objects.
     """
     output_path = f"{output_dir}/yara.txt"
+    rules_dir = resolve_yara_rules_dir()
 
     start = time.monotonic()
     try:
         # Check if YARA rules directory exists.
-        check_result = ssh_exec(vm_name, "[ -d /opt/yara-rules ] && echo exists")
-        if "exists" not in check_result.stdout:
+        if not Path(rules_dir).is_dir():
             elapsed = time.monotonic() - start
-            logger.warning("YARA rules directory /opt/yara-rules not found")
+            logger.info(
+                "YARA rules dir %r not found — skipping YARA scan. Set YARA_RULES_DIR to enable.",
+                rules_dir,
+            )
             return ScanResults(
                 tool_name="yara",
                 execution_time_seconds=elapsed,
@@ -42,25 +60,35 @@ def run_yara(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
                 findings=[],
             )
 
-        # Run YARA with key rule categories, suppressing errors from
-        # individual rule files that fail to compile.
-        # Exclude .git directory to avoid false positives on hook samples.
-        cmd = (
-            f"for f in /opt/yara-rules/malware/MALW_*.yar "
-            f"/opt/yara-rules/packers/*.yar; do "
-            f"yara -r \"$f\" {target_dir} 2>/dev/null | grep -v '/.git/'; "
-            f"done > {output_path}"
-        )
+        # Gather rule files to scan.
+        malw_rules = sorted(Path(rules_dir, "malware").glob("MALW_*.yar"))
+        packer_rules = sorted(Path(rules_dir, "packers").glob("*.yar"))
+        rule_files = malw_rules + packer_rules
 
-        result = ssh_exec(vm_name, cmd, timeout=600)
+        all_output_lines: list[str] = []
+        last_exit_code = 0
+
+        for rule_file in rule_files:
+            result = run_cmd(
+                ["yara", "-r", str(rule_file), target_dir],
+                label="yara",
+                timeout=600,
+                ok_codes=(0, 1),
+            )
+            last_exit_code = result.returncode
+            # Filter out .git matches to avoid false positives on hook samples.
+            for line in result.stdout.decode(errors="replace").splitlines():
+                if "/.git/" not in line:
+                    all_output_lines.append(line)
+
+        output_text = "\n".join(all_output_lines)
+        Path(output_path).write_text(output_text)
         elapsed = time.monotonic() - start
 
-        # Findings remain inside the VM at output_path.
-        # No data crosses the VM trust boundary.
         return ScanResults(
             tool_name="yara",
             execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
+            exit_code=last_exit_code,
             raw_output_path=output_path,
         )
 

@@ -16,7 +16,9 @@ def _repo_root() -> Path:
     """Find the repo root via git."""
     result = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return Path(result.stdout.strip())
 
@@ -47,31 +49,16 @@ def main():
 
     totals = {
         "projects_scanned": len(entries),
-        "total_findings": sum(
-            e["findings"]["total_deterministic"] + e["findings"]["total_ai"]
-            for e in entries
-        ),
+        "total_findings": sum(e["findings"]["total_deterministic"] + e["findings"]["total_ai"] for e in entries),
         "total_critical": sum(e["findings"]["critical"] for e in entries),
         "total_high": sum(e["findings"]["high"] for e in entries),
         "total_medium": sum(e["findings"]["medium"] for e in entries),
-        "total_supply_chain_findings": sum(
-            e["findings"]["supply_chain"] for e in entries
-        ),
-        "total_app_security_fixes": sum(
-            e["remediations"]["app_security_fixes"] for e in entries
-        ),
-        "total_secrets_remediated": sum(
-            e["remediations"]["secrets_remediated"] for e in entries
-        ),
-        "total_ci_cd_fixes": sum(
-            e["remediations"]["ci_cd_hardening"] for e in entries
-        ),
-        "total_dependency_upgrades": sum(
-            e["remediations"]["dependency_upgrades"] for e in entries
-        ),
-        "total_cves_resolved": sum(
-            e["remediations"]["cves_resolved"] for e in entries
-        ),
+        "total_supply_chain_findings": sum(e["findings"]["supply_chain"] for e in entries),
+        "total_app_security_fixes": sum(e["remediations"]["app_security_fixes"] for e in entries),
+        "total_secrets_remediated": sum(e["remediations"]["secrets_remediated"] for e in entries),
+        "total_ci_cd_fixes": sum(e["remediations"]["ci_cd_hardening"] for e in entries),
+        "total_dependency_upgrades": sum(e["remediations"]["dependency_upgrades"] for e in entries),
+        "total_cves_resolved": sum(e["remediations"]["cves_resolved"] for e in entries),
     }
 
     data["totals"] = totals

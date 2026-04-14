@@ -51,11 +51,12 @@ class VMConfig:
 @dataclass
 class LimitsConfig:
     """Configurable size limits for host boundary hardening."""
-    max_json_size_mb: int = 10       # Max JSON payload from VM (MB)
-    max_file_size_mb: int = 50       # Max individual file in report copy (MB)
-    max_copy_size_mb: int = 500      # Max total size of report copy (MB)
-    max_stdout_mb: int = 50          # Max stdout from ssh_exec before kill (MB)
-    max_concurrent_ssh: int = 8      # Max parallel SSH sessions to VM
+
+    max_json_size_mb: int = 10  # Max JSON payload from VM (MB)
+    max_file_size_mb: int = 50  # Max individual file in report copy (MB)
+    max_copy_size_mb: int = 500  # Max total size of report copy (MB)
+    max_stdout_mb: int = 50  # Max stdout from ssh_exec before kill (MB)
+    max_concurrent_ssh: int = 8  # Max parallel SSH sessions to VM
 
     @property
     def max_json_size_bytes(self) -> int:
@@ -90,9 +91,14 @@ class ScanConfig:
     tmux: bool = False
     high_risk_dep: bool = False
     branch: str = ""
+    local_path: str = ""
     analyst_max_turns: int | None = None  # Global override for all analyst max_turns
     analyst_max_turns_by_name: dict[str, int] = field(default_factory=dict)  # Per-analyst overrides
     adversarial_max_turns: int | None = None  # Override adversarial agent max_turns (default 20)
+    predep_max_turns: int | None = None  # Override pre-dep agent max_turns (default 15)
+    report_maker_max_turns: int | None = None  # Override report-maker agent max_turns (default 15)
+    synthesize_max_turns: int | None = None  # Override synthesize agent max_turns (default 75)
+    launch_mode: str = "lima"  # How the harness is launched: lima, docker, or direct
 
     @property
     def has_ai_credentials(self) -> bool:
@@ -113,16 +119,87 @@ class ScanConfig:
 
     def validate(self) -> list[str]:
         errors = []
-        if not self.repo_url:
-            errors.append("repo_url is required")
+        if not self.repo_url and not self.local_path:
+            errors.append("repo_url or local_path is required")
         if not self.skip_ai and not self.has_ai_credentials:
             errors.append(
-                "No AI credentials found. Set ANTHROPIC_API_KEY, "
-                "log in with `claude login`, or use --skip-ai"
+                "No AI credentials found. Set ANTHROPIC_API_KEY, log in with `claude login`, or use --skip-ai"
             )
         if self.depth < 1:
             errors.append("depth must be >= 1")
+        if self.launch_mode not in ("lima", "docker", "direct"):
+            errors.append(f"launch_mode must be one of 'lima', 'docker', 'direct'; got {self.launch_mode!r}")
         return errors
+
+    def to_json(self) -> str:
+        """Serialize config to JSON for harness handoff."""
+        data = {
+            "repo_url": self.repo_url,
+            "depth": self.depth,
+            "skip_ai": self.skip_ai,
+            "verbose": self.verbose,
+            "output_dir": self.output_dir,
+            "model": self.model,
+            "log_dir": self.log_dir,
+            "tmux": self.tmux,
+            "high_risk_dep": self.high_risk_dep,
+            "branch": self.branch,
+            "analyst_max_turns": self.analyst_max_turns,
+            "analyst_max_turns_by_name": self.analyst_max_turns_by_name,
+            "adversarial_max_turns": self.adversarial_max_turns,
+            "predep_max_turns": self.predep_max_turns,
+            "report_maker_max_turns": self.report_maker_max_turns,
+            "synthesize_max_turns": self.synthesize_max_turns,
+            "local_path": self.local_path,
+            "launch_mode": self.launch_mode,
+            "vm": {
+                "cpus": self.vm.cpus,
+                "memory": self.vm.memory,
+                "disk": self.vm.disk,
+            },
+            "limits": {
+                "max_json_size_mb": self.limits.max_json_size_mb,
+                "max_file_size_mb": self.limits.max_file_size_mb,
+                "max_copy_size_mb": self.limits.max_copy_size_mb,
+                "max_stdout_mb": self.limits.max_stdout_mb,
+                "max_concurrent_ssh": self.limits.max_concurrent_ssh,
+            },
+        }
+        return json.dumps(data)
+
+    @classmethod
+    def from_json(cls, json_str: str) -> ScanConfig:
+        """Deserialize config from JSON."""
+        data = json.loads(json_str)
+        vm_data = data.pop("vm", {})
+        limits_data = data.pop("limits", {})
+        vm = VMConfig(**vm_data) if vm_data else VMConfig()
+        limits = LimitsConfig(**limits_data) if limits_data else LimitsConfig()
+        # Remove keys that aren't ScanConfig fields
+        known_fields = {
+            "repo_url",
+            "depth",
+            "skip_ai",
+            "verbose",
+            "output_dir",
+            "anthropic_api_key",
+            "oauth_token",
+            "model",
+            "log_dir",
+            "tmux",
+            "high_risk_dep",
+            "branch",
+            "analyst_max_turns",
+            "analyst_max_turns_by_name",
+            "adversarial_max_turns",
+            "predep_max_turns",
+            "report_maker_max_turns",
+            "synthesize_max_turns",
+            "local_path",
+            "launch_mode",
+        }
+        filtered = {k: v for k, v in data.items() if k in known_fields}
+        return cls(vm=vm, limits=limits, **filtered)
 
 
 def load_config(
@@ -137,6 +214,7 @@ def load_config(
     config_path: Path | None = None,
     high_risk_dep: bool = False,
     branch: str | None = None,
+    local_path: str = "",
 ) -> ScanConfig:
     """Build ScanConfig from config file + CLI args + env vars. CLI args take precedence."""
     config = ScanConfig()
@@ -185,9 +263,33 @@ def load_config(
         adversarial_data = data.get("adversarial", {})
         if "max_turns" in adversarial_data:
             config.adversarial_max_turns = adversarial_data["max_turns"]
+        predep_data = data.get("predep", {})
+        if "max_turns" in predep_data:
+            config.predep_max_turns = predep_data["max_turns"]
+        report_maker_data = data.get("report_maker", {})
+        if "max_turns" in report_maker_data:
+            config.report_maker_max_turns = report_maker_data["max_turns"]
+        synthesize_data = data.get("synthesize", {})
+        if "max_turns" in synthesize_data:
+            config.synthesize_max_turns = synthesize_data["max_turns"]
+
+        # Precedence: named section -> [analysts] -> default
+        # Any per-agent max_turns left unset falls back to the global
+        # [analysts] value so users can configure once and have it apply
+        # everywhere.
+        if config.analyst_max_turns is not None:
+            for attr in (
+                "predep_max_turns",
+                "adversarial_max_turns",
+                "report_maker_max_turns",
+                "synthesize_max_turns",
+            ):
+                if getattr(config, attr) is None:
+                    setattr(config, attr, config.analyst_max_turns)
 
     # CLI args override config file
     config.repo_url = repo_url
+    config.local_path = local_path
     if depth is not None:
         config.depth = depth
     config.skip_ai = skip_ai
@@ -213,13 +315,9 @@ def load_config(
     global active_limits
     active_limits = config.limits
 
-    # Initialise SSH concurrency limit from config
-    from thresher.vm.ssh import _init_ssh_semaphore
-    _init_ssh_semaphore(config.limits.max_concurrent_ssh)
-
     return config
 
 
-# Module-level limits instance, readable by safe_io.py and ssh.py
+# Module-level limits instance, readable by utility modules
 # without importing ScanConfig. Updated by load_config().
 active_limits = LimitsConfig()

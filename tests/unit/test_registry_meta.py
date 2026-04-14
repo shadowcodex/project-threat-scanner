@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from thresher.scanners.registry_meta import (
+    _REGISTRY_META_SCRIPT,
     parse_registry_meta_output,
     run_registry_meta,
-    _REGISTRY_META_SCRIPT,
 )
-from thresher.vm.ssh import SSHResult
+
+
+def _mock_popen(returncode=0, stdout=b""):
+    """Create a mock that behaves like subprocess.Popen."""
+    mock = MagicMock()
+    mock.stdout = iter(stdout.splitlines(keepends=True)) if stdout else iter([])
+    mock.returncode = returncode
+    mock.wait.return_value = returncode
+    return mock
 
 
 class TestParseRegistryMetaOutput:
@@ -111,15 +119,32 @@ class TestParseRegistryMetaOutput:
         raw = {
             "scanner": "registry-meta",
             "findings": [
-                {"type": "maintainer_change", "package": "a", "ecosystem": "npm",
-                 "severity": "high", "description": "changed"},
-                {"type": "tarball_size_spike", "package": "b", "ecosystem": "npm",
-                 "severity": "medium", "description": "big"},
+                {
+                    "type": "maintainer_change",
+                    "package": "a",
+                    "ecosystem": "npm",
+                    "severity": "high",
+                    "description": "changed",
+                },
+                {
+                    "type": "tarball_size_spike",
+                    "package": "b",
+                    "ecosystem": "npm",
+                    "severity": "medium",
+                    "description": "big",
+                },
             ],
         }
         findings = parse_registry_meta_output(raw)
         assert len(findings) == 2
         assert findings[0].id != findings[1].id
+
+
+def _exec_script_function(func_name: str):
+    """Exec the embedded script and return a specific function from it."""
+    ns = {}
+    exec(_REGISTRY_META_SCRIPT, ns)
+    return ns[func_name]
 
 
 class TestRegistryMetaScript:
@@ -130,6 +155,14 @@ class TestRegistryMetaScript:
         assert "/opt/deps/dep_manifest.json" in _REGISTRY_META_SCRIPT
         assert "/opt/target/package-lock.json" in _REGISTRY_META_SCRIPT
         assert "/opt/target/package.json" in _REGISTRY_META_SCRIPT
+
+    def test_script_searches_uv_lock(self):
+        assert "/opt/target/uv.lock" in _REGISTRY_META_SCRIPT
+        assert "/opt/deps/uv.lock" in _REGISTRY_META_SCRIPT
+
+    def test_script_searches_requirements_txt(self):
+        assert "/opt/target/requirements.txt" in _REGISTRY_META_SCRIPT
+        assert "/opt/deps/requirements.txt" in _REGISTRY_META_SCRIPT
 
     def test_script_logs_searched_paths_on_no_manifests(self):
         """When no manifests found, script should report searched paths."""
@@ -143,36 +176,72 @@ class TestRegistryMetaScript:
         """Script should parse package.json as fallback."""
         assert "_parse_package_json" in _REGISTRY_META_SCRIPT
 
+    def test_script_has_uv_lock_parser(self):
+        assert "_parse_uv_lock" in _REGISTRY_META_SCRIPT
+
+    def test_script_has_requirements_txt_parser(self):
+        assert "_parse_requirements_txt" in _REGISTRY_META_SCRIPT
+
+
+class TestRegistryMetaParseUvLock:
+    def test_parses_basic_uv_lock(self, tmp_path):
+        parse_uv_lock = _exec_script_function("_parse_uv_lock")
+        uv_lock = tmp_path / "uv.lock"
+        uv_lock.write_text(
+            '[[package]]\nname = "requests"\nversion = "2.31.0"\n\n[[package]]\nname = "flask"\nversion = "3.0.2"\n'
+        )
+        result = parse_uv_lock(str(uv_lock))
+        assert ("requests", "2.31.0") in result
+        assert ("flask", "3.0.2") in result
+
+    def test_empty_file(self, tmp_path):
+        parse_uv_lock = _exec_script_function("_parse_uv_lock")
+        uv_lock = tmp_path / "uv.lock"
+        uv_lock.write_text("version = 1\n")
+        assert parse_uv_lock(str(uv_lock)) == []
+
+
+class TestRegistryMetaParseRequirementsTxt:
+    def test_parses_pinned(self, tmp_path):
+        parse_req = _exec_script_function("_parse_requirements_txt")
+        req = tmp_path / "requirements.txt"
+        req.write_text("requests==2.31.0\nflask==3.0.2\n")
+        result = parse_req(str(req))
+        assert ("requests", "2.31.0") in result
+        assert ("flask", "3.0.2") in result
+
+    def test_skips_comments(self, tmp_path):
+        parse_req = _exec_script_function("_parse_requirements_txt")
+        req = tmp_path / "requirements.txt"
+        req.write_text("# comment\nrequests==1.0\n")
+        result = parse_req(str(req))
+        assert len(result) == 1
+
 
 class TestRunRegistryMeta:
-    @patch("thresher.scanners.registry_meta.ssh_write_file")
-    @patch("thresher.scanners.registry_meta.ssh_exec")
-    def test_success(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult("Checking 3 packages...", "", 0)
-        mock_write.return_value = None
+    @patch("thresher.run._popen")
+    def test_success(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=b"Checking 3 packages...")
 
-        result = run_registry_meta("vm", "/opt/scan-results")
+        result = run_registry_meta("/opt/scan-results")
 
         assert result.tool_name == "registry-meta"
         assert result.exit_code == 0
         assert result.raw_output_path == "/opt/scan-results/registry-meta.json"
 
-    @patch("thresher.scanners.registry_meta.ssh_write_file")
-    @patch("thresher.scanners.registry_meta.ssh_exec")
-    def test_failure(self, mock_exec, mock_write):
-        mock_exec.return_value = SSHResult("", "error", 1)
-        mock_write.return_value = None
+    @patch("thresher.run._popen")
+    def test_failure(self, mock_popen):
+        mock_popen.return_value = _mock_popen(returncode=1, stdout=b"error")
 
-        result = run_registry_meta("vm", "/opt/scan-results")
+        result = run_registry_meta("/opt/scan-results")
 
         assert result.exit_code == 1
         assert len(result.errors) > 0
 
-    @patch("thresher.scanners.registry_meta.ssh_write_file")
-    @patch("thresher.scanners.registry_meta.ssh_exec")
-    def test_exception_handled(self, mock_exec, mock_write):
-        mock_write.side_effect = RuntimeError("connection lost")
+    @patch("thresher.run._popen")
+    def test_exception_handled(self, mock_popen):
+        mock_popen.side_effect = RuntimeError("connection lost")
 
-        result = run_registry_meta("vm", "/opt/scan-results")
+        result = run_registry_meta("/opt/scan-results")
         assert result.exit_code == -1
         assert len(result.errors) > 0

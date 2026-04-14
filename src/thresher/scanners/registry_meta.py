@@ -7,17 +7,21 @@ Detects supply chain manipulation signals that deps.dev doesn't cover:
 - Tarball size spikes between versions
 - Author email domain changes
 
-Runs as a self-contained Python script inside the VM.
+Runs as a self-contained Python script via subprocess.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import sys
+import tempfile
 import time
+from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec, ssh_write_file
 
 logger = logging.getLogger(__name__)
 
@@ -296,13 +300,82 @@ def _parse_package_json(path: str) -> list[tuple[str, str]]:
     return packages
 
 
+def _parse_uv_lock(path: str) -> list[tuple[str, str]]:
+    """Extract (name, version) tuples from a uv.lock file."""
+    packages = []
+    try:
+        with open(path) as f:
+            content = f.read()
+    except IOError:
+        return []
+
+    current_name = ""
+    current_version = ""
+    in_package = False
+
+    for line in content.splitlines():
+        stripped = line.strip()
+
+        if stripped == "[[package]]":
+            if in_package and current_name:
+                packages.append((current_name, current_version or "unknown"))
+            in_package = True
+            current_name = ""
+            current_version = ""
+            continue
+
+        if not in_package:
+            continue
+
+        if stripped.startswith("name") and "=" in stripped:
+            val = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+            current_name = val
+        elif stripped.startswith("version") and "=" in stripped:
+            val = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+            current_version = val
+
+    if in_package and current_name:
+        packages.append((current_name, current_version or "unknown"))
+
+    return packages
+
+
+def _parse_requirements_txt(path: str) -> list[tuple[str, str]]:
+    """Extract (name, version) tuples from a requirements.txt file."""
+    packages = []
+    try:
+        with open(path) as f:
+            content = f.read()
+    except IOError:
+        return []
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("-"):
+            continue
+
+        for sep in ("==", ">=", "<=", "~=", "!=", ">", "<"):
+            if sep in stripped:
+                name = stripped.split(sep)[0].strip().split("[")[0].strip()
+                version = stripped.split(sep, 1)[1].strip().split(",")[0].strip()
+                if name:
+                    packages.append((name, version or "unknown"))
+                break
+        else:
+            name = stripped.split("[")[0].strip()
+            if name and not name.startswith("http"):
+                packages.append((name, "unknown"))
+
+    return packages
+
+
 def load_manifest() -> dict[str, list[tuple[str, str]]]:
     """Load manifest and return {ecosystem: [(name, version), ...]}.
 
     Searches multiple locations for dependency information:
     1. /opt/deps/dep_manifest.json (primary, written by dependency resolution)
-    2. /opt/target/package.json or package-lock.json (npm fallback)
-    3. /opt/deps/package.json or package-lock.json (npm fallback)
+    2. /opt/target/ manifest files (npm, Python fallback)
+    3. /opt/deps/ manifest files (npm, Python fallback)
     """
     searched_paths = []
 
@@ -333,23 +406,34 @@ def load_manifest() -> dict[str, list[tuple[str, str]]]:
             return result
 
     # 2. Fall back to raw manifest files in /opt/target/ and /opt/deps/
-    fallback_paths = [
+    npm_fallbacks = [
         "/opt/target/package-lock.json",
         "/opt/target/package.json",
         "/opt/deps/package-lock.json",
         "/opt/deps/package.json",
     ]
 
+    python_fallbacks = [
+        ("/opt/target/uv.lock", _parse_uv_lock),
+        ("/opt/target/requirements.txt", _parse_requirements_txt),
+        ("/opt/deps/uv.lock", _parse_uv_lock),
+        ("/opt/deps/requirements.txt", _parse_requirements_txt),
+    ]
+
     result = {}
-    for path in fallback_paths:
+    for path in npm_fallbacks:
         searched_paths.append(path)
         if os.path.isfile(path):
             pkgs = _parse_package_json(path)
             if pkgs and "node" not in result:
                 result["node"] = pkgs
 
-    # Note: PyPI packages require requirements.txt parsing which is
-    # already handled by the primary manifest.  No simple fallback here.
+    for path, parser in python_fallbacks:
+        searched_paths.append(path)
+        if os.path.isfile(path):
+            pkgs = parser(path)
+            if pkgs and "python" not in result:
+                result["python"] = pkgs
 
     if not result:
         print(f"WARNING: No manifests found. Searched: {', '.join(searched_paths)}")
@@ -406,43 +490,45 @@ if __name__ == "__main__":
 '''
 
 
-def run_registry_meta(vm_name: str, output_dir: str) -> ScanResults:
-    """Run registry metadata checks inside the VM.
+def run_registry_meta(output_dir: str) -> ScanResults:
+    """Run registry metadata checks via subprocess.
 
     Args:
-        vm_name: Name of the Lima VM.
-        output_dir: Directory for scan artifacts inside the VM.
+        output_dir: Directory for scan artifacts.
 
     Returns:
-        ScanResults with execution metadata only (findings stay in VM).
+        ScanResults with execution metadata only.
     """
-    script_path = "/tmp/registry_meta_scanner.py"
+    output_path = f"{output_dir}/registry-meta.json"
+    script_path = ""
 
     start = time.monotonic()
     try:
-        ssh_write_file(vm_name, _REGISTRY_META_SCRIPT, script_path)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="registry_meta_scanner_") as f:
+            f.write(_REGISTRY_META_SCRIPT)
+            script_path = f.name
 
-        result = ssh_exec(vm_name, f"python3 {script_path}", timeout=600)
+        result = run_cmd(
+            [sys.executable, script_path],
+            label="registry-meta",
+            timeout=600,
+            ok_codes=(0,),
+        )
         elapsed = time.monotonic() - start
 
-        output_path = f"{output_dir}/registry-meta.json"
-
-        if result.exit_code != 0:
-            logger.warning(
-                "Registry metadata scanner exited with code %d: %s",
-                result.exit_code, result.stderr,
-            )
+        if result.returncode != 0:
+            logger.warning("Registry metadata scanner exited with code %d", result.returncode)
             return ScanResults(
                 tool_name="registry-meta",
                 execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[f"Registry metadata scanner failed (exit {result.exit_code}): {result.stderr}"],
+                exit_code=result.returncode,
+                errors=[f"Registry metadata scanner failed (exit {result.returncode})"],
             )
 
         return ScanResults(
             tool_name="registry-meta",
             execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
+            exit_code=result.returncode,
             raw_output_path=output_path,
         )
 
@@ -455,6 +541,10 @@ def run_registry_meta(vm_name: str, output_dir: str) -> ScanResults:
             exit_code=-1,
             errors=[f"Registry metadata scanner error: {exc}"],
         )
+    finally:
+        if script_path:
+            with contextlib.suppress(Exception):
+                Path(script_path).unlink(missing_ok=True)
 
 
 def parse_registry_meta_output(raw: dict[str, Any]) -> list[Finding]:
@@ -466,7 +556,7 @@ def parse_registry_meta_output(raw: dict[str, Any]) -> list[Finding]:
         severity = item.get("severity", "low")
         description = item.get("description", "")
         package = item.get("package", "unknown")
-        ecosystem = item.get("ecosystem", "unknown")
+        item.get("ecosystem", "unknown")
 
         findings.append(
             Finding(

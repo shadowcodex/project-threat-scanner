@@ -4,77 +4,36 @@ from __future__ import annotations
 
 import json
 import logging
-import time
-from typing import Any
+from pathlib import Path
 
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec
 
 logger = logging.getLogger(__name__)
 
 
-def run_govulncheck(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
-    """Run govulncheck to detect vulnerabilities in Go modules.
+def run_govulncheck(target_dir: str, output_dir: str) -> ScanResults:
+    """Run govulncheck to detect reachable vulnerabilities in Go modules.
 
-    First checks if a go.mod file exists.  If not, returns empty results.
-    govulncheck only reports reachable vulnerabilities.
-
-    Args:
-        vm_name: Name of the Lima VM.
-        target_dir: Path to the repository inside the VM.
-        output_dir: Directory for scan artifacts inside the VM.
-
-    Returns:
-        ScanResults with parsed Finding objects.
+    Skips quietly when there's no ``go.mod`` to scan.
     """
-    output_path = f"{output_dir}/govulncheck.json"
-
-    start = time.monotonic()
-    try:
-        # Check if go.mod exists.
-        check_result = ssh_exec(vm_name, f"[ -f {target_dir}/go.mod ] && echo exists")
-        if "exists" not in check_result.stdout:
-            elapsed = time.monotonic() - start
-            logger.info("No go.mod found, skipping govulncheck")
-            return ScanResults(
-                tool_name="govulncheck",
-                execution_time_seconds=elapsed,
-                exit_code=0,
-                findings=[],
-            )
-
-        cmd = f"cd {target_dir} && govulncheck -json ./... > {output_path} 2>/dev/null"
-
-        result = ssh_exec(vm_name, cmd)
-        elapsed = time.monotonic() - start
-
-        if result.exit_code not in (0, 1):
-            logger.warning("govulncheck exited with code %d: %s", result.exit_code, result.stderr)
-            return ScanResults(
-                tool_name="govulncheck",
-                execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[f"govulncheck failed (exit {result.exit_code}): {result.stderr}"],
-            )
-
-        # Findings remain inside the VM at output_path.
-        # No data crosses the VM trust boundary.
+    if not Path(target_dir, "go.mod").exists():
+        logger.info("No go.mod found, skipping govulncheck")
         return ScanResults(
             tool_name="govulncheck",
-            execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
-            raw_output_path=output_path,
+            execution_time_seconds=0.0,
+            exit_code=0,
+            findings=[],
         )
 
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("govulncheck execution failed")
-        return ScanResults(
-            tool_name="govulncheck",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"govulncheck execution error: {exc}"],
-        )
+    return run_scanner(
+        ScanSpec(
+            name="govulncheck",
+            cmd=["govulncheck", "-json", "./..."],
+            cwd=target_dir,
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_govulncheck_output(raw_text: str) -> list[Finding]:

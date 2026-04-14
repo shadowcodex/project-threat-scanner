@@ -11,20 +11,24 @@ license = {text = "MIT"}
 dependencies = [
     "click>=8.1",
     "jinja2>=3.1",
+    "jsonschema>=4.0",
     "markdown>=3.5",
     "pyyaml>=6.0",
+    "sf-hamilton>=1.82",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "ruff>=0.8",
 ]
 
 [project.scripts]
 thresher = "thresher.cli:main"
 thresher-build = "thresher.cli:build_entry"
 thresher-stop = "thresher.cli:stop_entry"
+thresher-harness = "thresher.harness:main"
 thresher-update-totals = "thresher.scripts.update_totals:main"
 
 [tool.pytest.ini_options]
@@ -34,3 +38,18 @@ filterwarnings = ["error"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"thresher.report" = ["data/*.json", "templates/*.j2", "templates/*.html", "templates/examples/*.html", "schema/*.json"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["thresher"]

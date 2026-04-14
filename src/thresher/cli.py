@@ -14,17 +14,14 @@ from pathlib import Path
 import click
 
 from thresher.branding import (
-    ANALYST_DISPLAY_NAMES,
     FinSpinner,
-    print_report_path,
-    print_scan_header,
     print_splash,
-    print_stage_fail,
     print_stage_ok,
-    print_swim_divider,
-    print_analyst_status,
 )
-from thresher.config import ScanConfig, load_config
+from thresher.config import load_config
+from thresher.launcher.direct import launch_direct
+from thresher.launcher.docker import launch_docker
+from thresher.launcher.lima import launch_lima
 
 _DEFAULT_LOG_DIR = Path(tempfile.gettempdir()) / "thresher" / "logs"
 LOG_DIR: Path = _DEFAULT_LOG_DIR
@@ -42,8 +39,10 @@ def print_error(message: str) -> None:
 # CLI group
 # ---------------------------------------------------------------------------
 
+
 def _get_version() -> str:
     from importlib.metadata import version as pkg_version
+
     return pkg_version("thresher")
 
 
@@ -60,6 +59,7 @@ def cli(ctx: click.Context) -> None:
 # thresher scan <url>
 # ---------------------------------------------------------------------------
 
+
 @cli.command()
 @click.argument("repo_url")
 @click.option("--depth", type=int, default=None, help="Transitive dependency depth (default: 2)")
@@ -72,6 +72,8 @@ def cli(ctx: click.Context) -> None:
 @click.option("--tmux", is_flag=True, help="Enable tmux split-pane UI")
 @click.option("--high-risk-dep", is_flag=True, help="Download high-risk hidden dependencies (binaries, tarballs)")
 @click.option("--branch", default=None, help="Git branch to clone (default: repo default branch)")
+@click.option("--docker", "use_docker", is_flag=True, help="Run in Docker (no VM)")
+@click.option("--no-vm", "no_vm", is_flag=True, help="Run directly on host (dev mode)")
 def scan(
     repo_url: str,
     depth: int | None,
@@ -84,10 +86,24 @@ def scan(
     tmux: bool,
     high_risk_dep: bool,
     branch: str | None,
+    use_docker: bool,
+    no_vm: bool,
 ) -> None:
     """Scan a repository for security threats and supply chain risks."""
+    # Auto-detect local path vs URL
+    target_path = Path(repo_url).resolve()
+    if target_path.exists():
+        if not target_path.is_dir():
+            print_error(f"Target path is not a directory: {repo_url}")
+            sys.exit(1)
+        local_path = str(target_path)
+        repo_url_for_config = ""
+    else:
+        local_path = ""
+        repo_url_for_config = repo_url
+
     config = load_config(
-        repo_url=repo_url,
+        repo_url=repo_url_for_config,
         depth=depth,
         skip_ai=skip_ai,
         verbose=verbose,
@@ -97,12 +113,30 @@ def scan(
         disk=disk,
         high_risk_dep=high_risk_dep,
         branch=branch,
+        local_path=local_path,
     )
 
+    if no_vm:
+        config.launch_mode = "direct"
+    elif use_docker:
+        config.launch_mode = "docker"
+    # else: keep default launch_mode from config (lima)
+
     import datetime
-    repo_short = repo_url.rstrip("/").rsplit("/", 1)[-1]
+
+    if local_path:
+        repo_short = Path(local_path).name
+    else:
+        repo_short = repo_url.rstrip("/").rsplit("/", 1)[-1]
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    _setup_logging(verbose, config.log_dir, scan_id=f"{repo_short}-{ts}")
+    scan_id = f"{repo_short}-{ts}"
+    # Create timestamped subfolder for this scan's output
+    config.output_dir = str(Path(config.output_dir) / scan_id)
+    _setup_logging(verbose, config.log_dir, scan_id=scan_id)
+
+    from thresher.run import set_verbose
+
+    set_verbose(verbose)
 
     errors = config.validate()
     if errors:
@@ -122,120 +156,39 @@ def scan(
         elif config.oauth_token:
             click.secho("Auth: using OAuth token from macOS Keychain", fg="blue")
 
+    launchers = {"direct": launch_direct, "docker": launch_docker, "lima": launch_lima}
+    launcher = launchers[config.launch_mode]
     try:
-        _run_scan(config)
+        exit_code = launcher(config)
     except KeyboardInterrupt:
         click.echo("\nScan interrupted.")
         sys.exit(130)
     except Exception as e:
         print_error(str(e))
         sys.exit(1)
+    sys.exit(exit_code)
 
 
 # ---------------------------------------------------------------------------
 # thresher build
 # ---------------------------------------------------------------------------
 
+
 @cli.command()
-@click.option("--cpus", type=int, default=None, help="VM CPU count (default: 4)")
-@click.option("--memory", type=int, default=None, help="VM memory in GB (default: 8)")
-@click.option("--disk", type=int, default=None, help="VM disk in GB (default: 50)")
-@click.option("--verbose", is_flag=True, help="Show detailed output")
-@click.option("--tmux", is_flag=True, help="Enable tmux split-pane UI")
-def build(
-    cpus: int | None,
-    memory: int | None,
-    disk: int | None,
-    verbose: bool,
-    tmux: bool,
-) -> None:
-    """Build (or rebuild) the cached base VM image."""
-    config = load_config(
-        repo_url="",  # not scanning, just building
-        skip_ai=True,
-        verbose=verbose,
-        cpus=cpus,
-        memory=memory,
-        disk=disk,
+def build() -> None:
+    """Build the Thresher Docker image."""
+    project_root = Path(__file__).parent.parent.parent
+    result = subprocess.run(
+        ["docker", "build", "-t", "thresher:latest", "-f", "docker/Dockerfile", "."],
+        cwd=str(project_root),
     )
-
-    _setup_logging(verbose, config.log_dir)
-
-    # Launch under tmux if enabled (CLI flag or config)
-    use_tmux = tmux or config.tmux
-    if use_tmux and not os.environ.get(_TMUX_ENV_FLAG):
-        _exec_in_tmux(sys.argv)
-        return
-
-    from thresher.vm.lima import (
-        BASE_VM_NAME,
-        _PROJECT_ROOT,
-        _TEMPLATE_PATH,
-        _run_limactl,
-        base_exists,
-        destroy_vm,
-        provision_vm,
-        start_vm,
-        stop_vm,
-    )
-
-    try:
-        print_splash("v0.2.2", "thresher.sh")
-
-        if base_exists():
-            with FinSpinner("Removing existing base VM"):
-                destroy_vm(BASE_VM_NAME)
-
-        with FinSpinner("Creating base VM"):
-            # Inline the create logic so we can show granular progress
-            if not _TEMPLATE_PATH.exists():
-                raise RuntimeError("Lima template not found")
-            create_cmd = [
-                "limactl", "create",
-                "--name", BASE_VM_NAME,
-                f"--cpus={config.vm.cpus}",
-                f"--memory={config.vm.memory}",
-                f"--disk={config.vm.disk}",
-                "--plain",
-                str(_TEMPLATE_PATH),
-            ]
-            result = _run_limactl(create_cmd, timeout=300)
-            if result.returncode != 0:
-                raise RuntimeError(f"Failed to create VM: {result.stderr}")
-
-        with FinSpinner("Starting VM (first boot may take a minute)"):
-            start_vm(BASE_VM_NAME)
-
-        # Provisioning gets its own progress bar (inside provision_vm)
-        provision_vm(BASE_VM_NAME, config)
-
-        with FinSpinner("Stopping base VM"):
-            stop_vm(BASE_VM_NAME)
-
-        print_stage_ok("Base VM image built successfully")
-
-    except KeyboardInterrupt:
-        click.echo("\nBuild interrupted.")
-        # Destroy the incomplete VM so scan doesn't try to use it
-        if base_exists():
-            click.echo("Cleaning up incomplete VM...")
-            destroy_vm(BASE_VM_NAME)
-        sys.exit(130)
-    except Exception as e:
-        print_error(str(e))
-        # Destroy the incomplete VM so scan doesn't try to use it
-        if base_exists():
-            click.echo("Cleaning up incomplete VM...")
-            try:
-                destroy_vm(BASE_VM_NAME)
-            except Exception:
-                pass  # best-effort cleanup
-        sys.exit(1)
+    sys.exit(result.returncode)
 
 
 # ---------------------------------------------------------------------------
 # thresher stop
 # ---------------------------------------------------------------------------
+
 
 @cli.command()
 def stop() -> None:
@@ -247,24 +200,25 @@ def stop() -> None:
 # thresher list
 # ---------------------------------------------------------------------------
 
+
 @cli.command(name="list")
 def list_images() -> None:
     """List available pre-built VM images from GitHub releases."""
     import json
-    import urllib.request
     import urllib.error
+    import urllib.request
 
-    from thresher.branding import VIOLET, ARCTIC, GRAY, GREEN, RESET, BOLD, DIM
+    from thresher.branding import ARCTIC, BOLD, DIM, GRAY, GREEN, RESET, VIOLET
 
-    GITHUB_REPO = "thresher-sh/thresher"
-    ASSET_NAME = "thresher-base.qcow2"
-    API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
+    github_repo = "thresher-sh/thresher"
+    asset_name = "thresher-base.qcow2"
+    api_url = f"https://api.github.com/repos/{github_repo}/releases"
 
     print(f"\n  {BOLD}{ARCTIC}Available Thresher VM Images{RESET}\n")
 
     try:
         req = urllib.request.Request(
-            API_URL,
+            api_url,
             headers={"User-Agent": "thresher/0.2.2", "Accept": "application/vnd.github+json"},
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -278,7 +232,7 @@ def list_images() -> None:
 
     if not releases:
         click.echo(f"  {GRAY}No releases found.{RESET}")
-        click.echo(f"  Build locally with: thresher build")
+        click.echo("  Build locally with: thresher build")
         return
 
     found = 0
@@ -291,7 +245,7 @@ def list_images() -> None:
 
         # Check if this release has a VM image asset
         assets = release.get("assets", [])
-        image_asset = next((a for a in assets if a.get("name") == ASSET_NAME), None)
+        image_asset = next((a for a in assets if a.get("name") == asset_name), None)
 
         if image_asset:
             size_mb = image_asset.get("size", 0) / (1024 * 1024)
@@ -316,7 +270,7 @@ def list_images() -> None:
 
     if found == 0:
         click.echo(f"  {GRAY}No releases have VM images attached.{RESET}")
-        click.echo(f"  Build locally with: thresher build")
+        click.echo("  Build locally with: thresher build")
     else:
         print(f"  {GRAY}Import with: thresher import latest{RESET}")
         print(f"  {GRAY}Or specific: thresher import <tag>{RESET}")
@@ -327,9 +281,11 @@ def list_images() -> None:
 # thresher export
 # ---------------------------------------------------------------------------
 
+
 @cli.command(name="export")
-@click.option("--output", "output_path", default=None,
-              help="Output path for the disk image (default: ./thresher-base.qcow2)")
+@click.option(
+    "--output", "output_path", default=None, help="Output path for the disk image (default: ./thresher-base.qcow2)"
+)
 def export_image(output_path: str | None) -> None:
     """Export the base VM disk image for distribution.
 
@@ -359,22 +315,24 @@ def export_image(output_path: str | None) -> None:
 
     with FinSpinner(f"Exporting base image to {dest}"):
         result = subprocess.run(
-            ["qemu-img", "convert", "-f", "raw", "-O", "qcow2", "-c",
-             str(disk_path), str(dest)],
-            capture_output=True, text=True, timeout=600,
+            ["qemu-img", "convert", "-f", "raw", "-O", "qcow2", "-c", str(disk_path), str(dest)],
+            capture_output=True,
+            text=True,
+            timeout=600,
         )
         if result.returncode != 0:
             raise RuntimeError(f"qemu-img failed: {result.stderr}")
 
     size_mb = dest.stat().st_size / (1024 * 1024)
     print_stage_ok(f"Exported to {dest} ({size_mb:.0f} MB)")
-    click.echo(f"\n  Share this file. Others can import with:")
+    click.echo("\n  Share this file. Others can import with:")
     click.echo(f"    thresher import {dest}")
 
 
 # ---------------------------------------------------------------------------
 # thresher import
 # ---------------------------------------------------------------------------
+
 
 @cli.command(name="import")
 @click.argument("image_source")
@@ -390,44 +348,41 @@ def import_image(image_source: str, cpus: int | None, memory: int | None, disk: 
       - A GitHub release shorthand: latest (downloads from latest release)
       - A GitHub release tag: v0.2.2
     """
-    import urllib.request
-    import urllib.error
     import tempfile
+    import urllib.error
+    import urllib.request
 
     from thresher.vm.lima import (
-        BASE_VM_NAME, _TEMPLATE_PATH, _run_limactl,
-        base_exists, destroy_vm,
+        _TEMPLATE_PATH,
+        BASE_VM_NAME,
+        _run_limactl,
+        base_exists,
+        destroy_vm,
     )
 
     config = load_config(repo_url="", skip_ai=True, cpus=cpus, memory=memory, disk=disk)
 
-    GITHUB_REPO = "thresher-sh/thresher"
-    ASSET_NAME = "thresher-base.qcow2"
+    github_repo = "thresher-sh/thresher"
+    asset_name = "thresher-base.qcow2"
 
     # Resolve the image source
     if image_source.startswith("http://") or image_source.startswith("https://"):
         download_url = image_source
     elif image_source == "latest":
-        download_url = (
-            f"https://github.com/{GITHUB_REPO}/releases/latest/download/{ASSET_NAME}"
-        )
+        download_url = f"https://github.com/{github_repo}/releases/latest/download/{asset_name}"
     elif image_source.startswith("v"):
-        download_url = (
-            f"https://github.com/{GITHUB_REPO}/releases/download/{image_source}/{ASSET_NAME}"
-        )
+        download_url = f"https://github.com/{github_repo}/releases/download/{image_source}/{asset_name}"
     elif Path(image_source).exists():
         download_url = None  # local file
     else:
-        print_error(
-            f"Cannot resolve '{image_source}'. Use a file path, URL, 'latest', or a version tag (v0.2.2)."
-        )
+        print_error(f"Cannot resolve '{image_source}'. Use a file path, URL, 'latest', or a version tag (v0.2.2).")
         sys.exit(1)
 
     try:
         # Download if needed
         if download_url:
             print_splash("v0.2.2", "thresher.sh")
-            local_image = Path(tempfile.mkdtemp()) / ASSET_NAME
+            local_image = Path(tempfile.mkdtemp()) / asset_name
 
             def _download() -> None:
                 req = urllib.request.Request(
@@ -436,7 +391,7 @@ def import_image(image_source: str, cpus: int | None, memory: int | None, disk: 
                 )
                 try:
                     with urllib.request.urlopen(req, timeout=600) as resp:
-                        total = int(resp.headers.get("Content-Length", 0))
+                        int(resp.headers.get("Content-Length", 0))
                         downloaded = 0
                         with open(local_image, "wb") as f:
                             while True:
@@ -447,10 +402,7 @@ def import_image(image_source: str, cpus: int | None, memory: int | None, disk: 
                                 downloaded += len(chunk)
                 except urllib.error.HTTPError as e:
                     if e.code == 404:
-                        raise RuntimeError(
-                            f"Image not found at {download_url}. "
-                            f"Check the release exists."
-                        ) from e
+                        raise RuntimeError(f"Image not found at {download_url}. Check the release exists.") from e
                     raise RuntimeError(f"Download failed: {e}") from e
 
             with FinSpinner(f"Downloading image from {download_url}"):
@@ -467,15 +419,20 @@ def import_image(image_source: str, cpus: int | None, memory: int | None, disk: 
                 destroy_vm(BASE_VM_NAME)
 
         with FinSpinner("Creating VM from template"):
-            result = _run_limactl([
-                "limactl", "create",
-                "--name", BASE_VM_NAME,
-                f"--cpus={config.vm.cpus}",
-                f"--memory={config.vm.memory}",
-                f"--disk={config.vm.disk}",
-                "--plain",
-                str(_TEMPLATE_PATH),
-            ], timeout=300)
+            result = _run_limactl(
+                [
+                    "limactl",
+                    "create",
+                    "--name",
+                    BASE_VM_NAME,
+                    f"--cpus={config.vm.cpus}",
+                    f"--memory={config.vm.memory}",
+                    f"--disk={config.vm.disk}",
+                    "--plain",
+                    str(_TEMPLATE_PATH),
+                ],
+                timeout=300,
+            )
             if result.returncode != 0:
                 raise RuntimeError(f"Failed to create VM: {result.stderr}")
 
@@ -483,9 +440,10 @@ def import_image(image_source: str, cpus: int | None, memory: int | None, disk: 
 
         with FinSpinner("Importing disk image"):
             result = subprocess.run(
-                ["qemu-img", "convert", "-f", "qcow2", "-O", "raw",
-                 str(local_image), str(disk_path)],
-                capture_output=True, text=True, timeout=600,
+                ["qemu-img", "convert", "-f", "qcow2", "-O", "raw", str(local_image), str(disk_path)],
+                capture_output=True,
+                text=True,
+                timeout=600,
             )
             if result.returncode != 0:
                 raise RuntimeError(f"qemu-img failed: {result.stderr}")
@@ -509,6 +467,7 @@ def import_image(image_source: str, cpus: int | None, memory: int | None, disk: 
 # Legacy entry points (for backward compat with thresher-build, thresher-stop)
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     """Main entry point — invokes the CLI group."""
     cli()
@@ -516,7 +475,7 @@ def main() -> None:
 
 def build_entry() -> None:
     """Legacy entry point for thresher-build."""
-    cli(["build"] + sys.argv[1:], standalone_mode=True)
+    cli(["build", *sys.argv[1:]], standalone_mode=True)
 
 
 def stop_entry() -> None:
@@ -527,6 +486,7 @@ def stop_entry() -> None:
 # ---------------------------------------------------------------------------
 # Tmux helper
 # ---------------------------------------------------------------------------
+
 
 def _exec_in_tmux(argv: list[str]) -> None:
     """Re-exec the current command inside a tmux split-pane layout."""
@@ -554,9 +514,7 @@ def _exec_in_tmux(argv: list[str]) -> None:
 
     inner_cmd = " ".join(shlex.quote(a) for a in argv)
     scan_cmd = (
-        f"export {_TMUX_ENV_FLAG}=1; "
-        f"{inner_cmd}; "
-        f"echo ''; echo 'Scan finished. Press Ctrl-b + q to exit.'; read -r"
+        f"export {_TMUX_ENV_FLAG}=1; {inner_cmd}; echo ''; echo 'Scan finished. Press Ctrl-b + q to exit.'; read -r"
     )
 
     subprocess.run(
@@ -564,8 +522,7 @@ def _exec_in_tmux(argv: list[str]) -> None:
         check=True,
     )
     subprocess.run(
-        ["tmux", "split-window", "-h", "-t", _TMUX_SESSION, "-p", "40",
-         "tail", "-F", str(LOG_FILE)],
+        ["tmux", "split-window", "-h", "-t", _TMUX_SESSION, "-p", "40", "tail", "-F", str(LOG_FILE)],
         check=True,
     )
     for pane, title in [("0.0", "Scan"), ("0.1", "Logs")]:
@@ -578,8 +535,7 @@ def _exec_in_tmux(argv: list[str]) -> None:
         check=True,
     )
     subprocess.run(
-        ["tmux", "set-option", "-t", _TMUX_SESSION, "pane-border-format",
-         " #{pane_title} "],
+        ["tmux", "set-option", "-t", _TMUX_SESSION, "pane-border-format", " #{pane_title} "],
         check=True,
     )
     subprocess.run(
@@ -589,8 +545,7 @@ def _exec_in_tmux(argv: list[str]) -> None:
     subprocess.run(["tmux", "bind-key", "-T", "prefix", "h", "select-pane", "-L"])
     subprocess.run(["tmux", "bind-key", "-T", "prefix", "l", "select-pane", "-R"])
     subprocess.run(
-        ["tmux", "bind-key", "-T", "prefix", "q",
-         "kill-session", "-t", _TMUX_SESSION],
+        ["tmux", "bind-key", "-T", "prefix", "q", "kill-session", "-t", _TMUX_SESSION],
     )
     subprocess.run(
         ["tmux", "select-pane", "-t", f"{_TMUX_SESSION}:0.0"],
@@ -601,129 +556,9 @@ def _exec_in_tmux(argv: list[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scan pipeline
-# ---------------------------------------------------------------------------
-
-def _run_scan(config: ScanConfig) -> None:
-    """Execute the full scan pipeline."""
-    from thresher.vm.lima import (
-        BASE_VM_NAME,
-        base_exists,
-        clean_working_dirs,
-        create_vm,
-        destroy_vm,
-        ensure_base_running,
-        provision_vm,
-        stop_vm,
-    )
-
-    scan_id = _SCAN_TIMESTAMP
-
-    print_splash("v0.2.2", "thresher.sh")
-    print_scan_header(config.repo_url)
-
-    using_base = base_exists()
-
-    vm_name = None
-    try:
-        if using_base:
-            with FinSpinner("Starting cached base VM"):
-                vm_name = ensure_base_running()
-            # Verify the base VM was fully provisioned before using it
-            from thresher.vm.ssh import ssh_exec as _ssh_exec
-            _, _, rc = _ssh_exec(vm_name, "test -x /usr/local/bin/scanner-docker")
-            if rc != 0:
-                raise RuntimeError(
-                    "Base VM is incomplete (scanner-docker not found). "
-                    "Run `thresher build` to rebuild it."
-                )
-            with FinSpinner("Cleaning working directories"):
-                clean_working_dirs(vm_name)
-        else:
-            with FinSpinner("Creating isolated VM"):
-                vm_name = create_vm(config)
-            with FinSpinner("Provisioning VM (installing scanners)"):
-                provision_vm(vm_name, config)
-
-        from thresher.vm.ssh import ssh_exec
-        from thresher.docker.sandbox import download_dependencies
-
-        with FinSpinner("Cloning repository (hardened)"):
-            safe_url = shlex.quote(config.repo_url)
-            branch_arg = f" {shlex.quote(config.branch)}" if config.branch else ""
-            stdout, stderr, rc = ssh_exec(
-                vm_name,
-                f"bash /opt/thresher/bin/safe_clone.sh {safe_url} /opt/target{branch_arg}",
-                timeout=300,
-            )
-            if rc != 0:
-                raise RuntimeError(f"git clone failed (exit {rc}): {stderr}")
-
-        if not config.skip_ai:
-            from thresher.agents.predep import run_predep_discovery
-            with FinSpinner("Discovering hidden dependencies"):
-                run_predep_discovery(vm_name, config)
-
-        with FinSpinner("Resolving dependencies"):
-            download_dependencies(vm_name, config)
-
-        from thresher.scanners.runner import run_all_scanners
-
-        with FinSpinner("Vulnerability scanners (22 tools)"):
-            scanner_status = run_all_scanners(vm_name, config)
-
-        if not config.skip_ai:
-            from thresher.agents.analysts import run_all_analysts, ANALYST_DEFINITIONS
-            from thresher.agents.adversarial import run_adversarial_verification
-
-            print_stage_ok("AI analyst panel")
-            print()
-
-            with FinSpinner("Running 8 analyst agents"):
-                run_all_analysts(vm_name, config)
-
-            for analyst_def in ANALYST_DEFINITIONS:
-                num = analyst_def["number"]
-                name = analyst_def["name"]
-                display = ANALYST_DISPLAY_NAMES.get(name, name)
-                print_analyst_status(num, display, "done")
-
-            print()
-            with FinSpinner("Adversarial verification"):
-                run_adversarial_verification(vm_name, config)
-
-        from thresher.report.synthesize import generate_report
-
-        with FinSpinner("Report synthesis"):
-            report_path = generate_report(vm_name, config)
-
-        from thresher.vm.safe_io import ssh_copy_from_safe, validate_report_structure
-
-        output = Path(config.output_dir) / scan_id
-        output.mkdir(parents=True, exist_ok=True)
-        ssh_copy_from_safe(vm_name, report_path, str(output))
-        validate_report_structure(output)
-
-        print_stage_ok("Report synthesis")
-
-        print()
-        print_swim_divider()
-        print_report_path(str(output))
-        print_swim_divider()
-
-    finally:
-        if vm_name:
-            if using_base:
-                click.echo("Stopping base VM...")
-                stop_vm(vm_name)
-            else:
-                click.echo("Destroying VM...")
-                destroy_vm(vm_name)
-
-
-# ---------------------------------------------------------------------------
 # Stop helper
 # ---------------------------------------------------------------------------
+
 
 def _stop_all() -> None:
     """Kill all thresher VMs and the tmux session."""

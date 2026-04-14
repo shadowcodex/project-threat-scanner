@@ -6,15 +6,14 @@ These tests are slow (~10 min) and require Lima installed.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 
 import pytest
 
-from thresher.vm.lima import create_vm, destroy_vm, provision_vm, vm_status, LimaError
-from thresher.vm.ssh import ssh_exec
 from thresher.config import ScanConfig, VMConfig
-
+from thresher.vm.lima import LimaError, create_vm, destroy_vm, vm_status
 
 pytestmark = [
     pytest.mark.e2e,
@@ -39,23 +38,15 @@ def ephemeral_vm():
         yield vm_name, config
     finally:
         if vm_name:
-            try:
+            with contextlib.suppress(LimaError):
                 destroy_vm(vm_name)
-            except LimaError:
-                pass
 
 
 class TestVMLifecycle:
-    def test_create_provision_destroy(self, ephemeral_vm):
-        vm_name, config = ephemeral_vm
+    def test_create_destroy(self, ephemeral_vm):
+        vm_name, _config = ephemeral_vm
         status = vm_status(vm_name)
         assert status == "Running"
-
-        provision_vm(vm_name, config)
-
-        # Verify tools are installed
-        result = ssh_exec(vm_name, "which git && which docker && which syft && which grype")
-        assert result.exit_code == 0
 
     def test_destroy_removes_vm(self, ephemeral_vm):
         vm_name, _ = ephemeral_vm
@@ -64,41 +55,13 @@ class TestVMLifecycle:
         assert status == "Not found"
 
 
-class TestFirewall:
-    def test_blocks_unwhitelisted(self, ephemeral_vm):
-        vm_name, config = ephemeral_vm
-        provision_vm(vm_name, config)
-
-        # Attempt to reach an unwhitelisted domain — should be blocked
-        result = ssh_exec(
-            vm_name,
-            "curl -s --connect-timeout 5 https://example.com || echo BLOCKED",
-            timeout=15,
+class TestDockerInVM:
+    def test_docker_available(self, ephemeral_vm):
+        vm_name, _ = ephemeral_vm
+        result = subprocess.run(
+            ["limactl", "shell", vm_name, "docker", "version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
-        assert "BLOCKED" in result.stdout or result.exit_code != 0
-
-
-class TestSkipAIScan:
-    def test_deterministic_scan_small_repo(self, ephemeral_vm):
-        vm_name, config = ephemeral_vm
-        provision_vm(vm_name, config)
-
-        # Clone a small repo using the hardened safe_clone.sh script
-        result = ssh_exec(
-            vm_name,
-            "bash /opt/thresher/bin/safe_clone.sh https://github.com/pallets/markupsafe /opt/target",
-            timeout=300,
-        )
-        assert result.exit_code == 0, f"safe_clone failed: {result.stderr}"
-
-        # Run Syft to verify scanner tooling works
-        result = ssh_exec(
-            vm_name,
-            "syft /opt/target -o cyclonedx-json | sudo tee /opt/scan-results/sbom.json > /dev/null",
-            timeout=120,
-        )
-        assert result.exit_code == 0, f"syft failed: {result.stderr}"
-
-        # Verify SBOM was created
-        result = ssh_exec(vm_name, "test -f /opt/scan-results/sbom.json && echo OK")
-        assert "OK" in result.stdout
+        assert result.returncode == 0, f"docker not available: {result.stderr}"

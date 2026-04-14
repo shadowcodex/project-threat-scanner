@@ -3,69 +3,35 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec
 
 logger = logging.getLogger(__name__)
 
 
-def run_gitleaks(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
-    """Run Gitleaks to detect hardcoded secrets in the repository.
-
-    Gitleaks exits with code 0 when no leaks are found and code 1 when
-    leaks are detected.  Both are valid scan results.
-
-    Args:
-        vm_name: Name of the Lima VM.
-        target_dir: Path to the repository inside the VM.
-        output_dir: Directory for scan artifacts inside the VM.
-
-    Returns:
-        ScanResults with parsed Finding objects.
-    """
+def run_gitleaks(target_dir: str, output_dir: str) -> ScanResults:
+    """Run Gitleaks to detect hardcoded secrets in the repository."""
     output_path = f"{output_dir}/gitleaks.json"
-    cmd = (
-        f"gitleaks detect --source {target_dir} "
-        f"--report-format json --report-path {output_path} "
-        f"--no-banner 2>/dev/null"
+    return run_scanner(
+        ScanSpec(
+            name="gitleaks",
+            cmd=[
+                "gitleaks",
+                "detect",
+                "--source",
+                target_dir,
+                "--report-format",
+                "json",
+                "--report-path",
+                output_path,
+                "--no-banner",
+            ],
+            output_mode="self",
+        ),
+        output_dir=output_dir,
     )
-
-    start = time.monotonic()
-    try:
-        result = ssh_exec(vm_name, cmd)
-        elapsed = time.monotonic() - start
-
-        # Exit 0 = no leaks, 1 = leaks found.  Other codes are errors.
-        if result.exit_code not in (0, 1):
-            logger.warning("Gitleaks exited with code %d: %s", result.exit_code, result.stderr)
-            return ScanResults(
-                tool_name="gitleaks",
-                execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[f"Gitleaks failed (exit {result.exit_code}): {result.stderr}"],
-            )
-
-        # Findings remain inside the VM at output_path.
-        # No data crosses the VM trust boundary.
-        return ScanResults(
-            tool_name="gitleaks",
-            execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Gitleaks execution failed")
-        return ScanResults(
-            tool_name="gitleaks",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Gitleaks execution error: {exc}"],
-        )
 
 
 def parse_gitleaks_output(raw: list[dict[str, Any]]) -> list[Finding]:

@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from thresher.agents.predep import (
-    _parse_predep_output,
     _empty_result,
+    _parse_predep_output,
     run_predep_discovery,
 )
 from thresher.config import ScanConfig, VMConfig
-from thresher.vm.ssh import SSHResult
+
+
+def _mock_popen(returncode=0, stdout=b""):
+    """Create a mock that behaves like subprocess.Popen."""
+    mock = MagicMock()
+    mock.stdout = iter(stdout.splitlines(keepends=True)) if stdout else iter([])
+    mock.returncode = returncode
+    mock.wait.return_value = returncode
+    return mock
 
 
 @pytest.fixture
@@ -25,7 +33,7 @@ def config():
     )
 
 
-SAMPLE_OUTPUT = '''{
+SAMPLE_OUTPUT = """{
   "hidden_dependencies": [
     {
       "type": "git",
@@ -44,7 +52,7 @@ SAMPLE_OUTPUT = '''{
   ],
   "files_scanned": 15,
   "summary": "Found 2 hidden dependencies"
-}'''
+}"""
 
 
 class TestParsePredepOutput:
@@ -56,16 +64,51 @@ class TestParsePredepOutput:
 
     def test_stream_json_result(self):
         import json
-        stream_line = json.dumps({
-            "type": "result",
-            "result": SAMPLE_OUTPUT,
-        })
+
+        stream_line = json.dumps(
+            {
+                "type": "result",
+                "result": SAMPLE_OUTPUT,
+            }
+        )
         result = _parse_predep_output(stream_line)
         assert len(result["hidden_dependencies"]) == 2
 
     def test_code_block(self):
         wrapped = f"Some text\n```json\n{SAMPLE_OUTPUT}\n```\nMore text"
         result = _parse_predep_output(wrapped)
+        assert len(result["hidden_dependencies"]) == 2
+
+    def test_stream_json_result_with_markdown_fences(self):
+        """Regression: Claude wraps result JSON in ```json fences. The parser
+        must strip them before parsing the inner string."""
+        import json
+
+        fenced_inner = "```json\n" + SAMPLE_OUTPUT + "\n```"
+        stream_line = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": fenced_inner,
+            }
+        )
+        result = _parse_predep_output(stream_line)
+        assert len(result["hidden_dependencies"]) == 2
+        assert result["files_scanned"] == 15
+
+    def test_stream_json_result_with_bare_fences(self):
+        """Same regression but with bare ``` (no json language tag)."""
+        import json
+
+        fenced_inner = "```\n" + SAMPLE_OUTPUT + "\n```"
+        stream_line = json.dumps(
+            {
+                "type": "result",
+                "result": fenced_inner,
+            }
+        )
+        result = _parse_predep_output(stream_line)
         assert len(result["hidden_dependencies"]) == 2
 
     def test_empty_deps(self):
@@ -98,6 +141,7 @@ class TestParsePredepOutput:
     def test_logs_raw_output_on_failure(self, caplog):
         """When parsing fails, the raw output should be logged for diagnosis."""
         import logging
+
         with caplog.at_level(logging.WARNING):
             _parse_predep_output("agent said something unhelpful")
         assert "agent said something unhelpful" in caplog.text
@@ -111,97 +155,89 @@ class TestEmptyResult:
 
 
 class TestRunPredepDiscovery:
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_writes_output_to_vm(self, mock_exec, mock_write, config):
-        mock_exec.return_value = SSHResult(SAMPLE_OUTPUT, "", 0)
-        mock_write.return_value = None
+    @patch("thresher.run._popen")
+    def test_returns_findings_dict(self, mock_popen, config):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=SAMPLE_OUTPUT.encode())
 
-        result = run_predep_discovery("test-vm", config)
+        result = run_predep_discovery(config)
 
+        assert isinstance(result, dict)
         assert len(result["hidden_dependencies"]) == 2
-        # Should write the result to hidden_deps.json
-        write_calls = [c[0] for c in mock_write.call_args_list]
-        paths = [c[2] for c in write_calls]
-        assert any("hidden_deps.json" in p for p in paths)
 
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_uses_tmpfs_api_key(self, mock_exec, mock_write, config):
-        mock_exec.return_value = SSHResult(SAMPLE_OUTPUT, "", 0)
-        mock_write.return_value = None
+    @patch("thresher.run._popen")
+    def test_injects_high_risk_dep_flag(self, mock_popen, config):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=SAMPLE_OUTPUT.encode())
 
-        run_predep_discovery("test-vm", config)
+        result = run_predep_discovery(config)
+        assert "high_risk_dep" in result
+        assert result["high_risk_dep"] == config.high_risk_dep
 
-        cmds = [c[0][1] for c in mock_exec.call_args_list]
-        assert any("/dev/shm/.cred_" in cmd for cmd in cmds)
+    @patch("thresher.run._popen")
+    def test_api_key_in_env(self, mock_popen, config):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=SAMPLE_OUTPUT.encode())
 
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_handles_agent_failure(self, mock_exec, mock_write, config):
-        # mkdir for .claude dir, tmpfs key write succeed, then claude fails
-        mock_exec.side_effect = [
-            SSHResult("", "", 0),  # mkdir .claude
-            SSHResult("", "", 0),  # tmpfs key write
-            Exception("connection lost"),  # claude invocation
-        ]
-        mock_write.return_value = None
+        run_predep_discovery(config)
 
-        result = run_predep_discovery("test-vm", config)
+        call_kwargs = mock_popen.call_args[1]
+        env = call_kwargs.get("env", {})
+        assert "ANTHROPIC_API_KEY" in env
+        assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key"
+
+    @patch("thresher.run._popen")
+    def test_handles_subprocess_failure(self, mock_popen, config):
+        mock_popen.side_effect = RuntimeError("connection lost")
+
+        result = run_predep_discovery(config)
         assert result["hidden_dependencies"] == []
         assert "failed" in result["summary"].lower()
 
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_fallback_reads_output_from_vm(self, mock_exec, mock_write, config):
-        """If parsing fails, check if agent wrote output directly to VM path."""
-        fallback_json = '{"hidden_dependencies": [{"type": "git", "source": "https://example.com/repo.git", "found_in": "Makefile:1", "context": "clone", "confidence": "high", "risk": "low"}], "files_scanned": 5, "summary": "found 1"}'
-        mock_exec.side_effect = [
-            SSHResult("", "", 0),  # mkdir .claude
-            SSHResult("", "", 0),  # tmpfs key write
-            SSHResult("garbled output not json", "", 0),  # claude invocation
-            SSHResult(fallback_json, "", 0),  # cat fallback path
-            SSHResult("", "", 0),  # mkdir for output dir
-        ]
-        mock_write.return_value = None
+    @patch("thresher.run._popen")
+    def test_handles_bad_output(self, mock_popen, config):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=b"garbled output not json")
 
-        result = run_predep_discovery("test-vm", config)
-        assert len(result["hidden_dependencies"]) == 1
-        assert result["hidden_dependencies"][0]["type"] == "git"
+        result = run_predep_discovery(config)
+        assert isinstance(result, dict)
+        assert "hidden_dependencies" in result
 
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_fallback_skipped_when_parsing_succeeds(self, mock_exec, mock_write, config):
-        """When normal parsing succeeds, no fallback read should happen."""
-        mock_exec.side_effect = [
-            SSHResult("", "", 0),  # mkdir .claude
-            SSHResult("", "", 0),  # tmpfs key write
-            SSHResult(SAMPLE_OUTPUT, "", 0),  # claude invocation
-            SSHResult("", "", 0),  # mkdir for output dir
-        ]
-        mock_write.return_value = None
+    @patch("thresher.run._popen")
+    def test_uses_correct_model(self, mock_popen, config):
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=SAMPLE_OUTPUT.encode())
 
-        result = run_predep_discovery("test-vm", config)
-        assert len(result["hidden_dependencies"]) == 2
-        # Only 4 ssh_exec calls — no fallback cat
-        assert mock_exec.call_count == 4
+        run_predep_discovery(config)
 
-    @patch("thresher.agents.predep.ssh_write_file")
-    @patch("thresher.agents.predep.ssh_exec")
-    def test_handles_mkdir_failure_for_output(self, mock_exec, mock_write, config):
-        """If mkdir for the output dir fails, return result without writing."""
-        mock_exec.side_effect = [
-            SSHResult("", "", 0),  # mkdir .claude
-            SSHResult("", "", 0),  # tmpfs key write
-            SSHResult(SAMPLE_OUTPUT, "", 0),  # claude invocation
-            SSHResult("", "permission denied", 1),  # mkdir for output dir fails
-        ]
-        mock_write.return_value = None
+        cmd = mock_popen.call_args[0][0]
+        assert "--model" in cmd
 
-        result = run_predep_discovery("test-vm", config)
-        # Should still return parsed findings even though write failed
-        assert len(result["hidden_dependencies"]) == 2
-        # ssh_write_file should NOT be called for the output (only for prompt + hook)
-        write_calls = [c[0] for c in mock_write.call_args_list]
-        output_writes = [c for c in write_calls if "hidden_deps.json" in c[2]]
-        assert len(output_writes) == 0
+    def test_returns_empty_on_prompt_write_failure(self, config):
+        """If the prompt tempfile can't be written, predep degrades to empty."""
+        with patch(
+            "thresher.agents._runner.tempfile_with",
+            side_effect=OSError("write failed"),
+        ):
+            result = run_predep_discovery(config)
+            assert result["hidden_dependencies"] == []
+            assert "failed" in result["summary"].lower()
+
+    @patch("thresher.run._popen")
+    def test_uses_default_max_turns(self, mock_popen, config):
+        """Without config override, predep should use default of 15."""
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=SAMPLE_OUTPUT.encode())
+        assert config.predep_max_turns is None
+
+        run_predep_discovery(config)
+
+        cmd = mock_popen.call_args[0][0]
+        idx = cmd.index("--max-turns")
+        assert cmd[idx + 1] == "15"
+
+    @patch("thresher.run._popen")
+    def test_uses_config_max_turns(self, mock_popen, config):
+        """When predep_max_turns is set in config, it should override the default."""
+        mock_popen.return_value = _mock_popen(returncode=0, stdout=SAMPLE_OUTPUT.encode())
+        config.predep_max_turns = 25
+
+        run_predep_discovery(config)
+
+        cmd = mock_popen.call_args[0][0]
+        idx = cmd.index("--max-turns")
+        assert cmd[idx + 1] == "25"

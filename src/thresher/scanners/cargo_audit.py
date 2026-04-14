@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import time
+from pathlib import Path
 from typing import Any
 
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec
 
 logger = logging.getLogger(__name__)
 
@@ -21,68 +21,28 @@ _SEVERITY_MAP: dict[str, str] = {
 }
 
 
-def run_cargo_audit(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
+def run_cargo_audit(target_dir: str, output_dir: str) -> ScanResults:
     """Run cargo-audit to detect vulnerabilities in Rust dependencies.
 
-    First checks if a Cargo.lock file exists.  If not, returns empty
-    results.
-
-    Args:
-        vm_name: Name of the Lima VM.
-        target_dir: Path to the repository inside the VM.
-        output_dir: Directory for scan artifacts inside the VM.
-
-    Returns:
-        ScanResults with parsed Finding objects.
+    Skips quietly when there's no ``Cargo.lock`` to audit.
     """
-    output_path = f"{output_dir}/cargo-audit.json"
-
-    start = time.monotonic()
-    try:
-        # Check if Cargo.lock exists.
-        check_result = ssh_exec(vm_name, f"[ -f {target_dir}/Cargo.lock ] && echo exists")
-        if "exists" not in check_result.stdout:
-            elapsed = time.monotonic() - start
-            logger.info("No Cargo.lock found, skipping cargo-audit")
-            return ScanResults(
-                tool_name="cargo-audit",
-                execution_time_seconds=elapsed,
-                exit_code=0,
-                findings=[],
-            )
-
-        cmd = f"cd {target_dir} && cargo-audit audit --json > {output_path} 2>/dev/null"
-
-        result = ssh_exec(vm_name, cmd)
-        elapsed = time.monotonic() - start
-
-        if result.exit_code not in (0, 1):
-            logger.warning("cargo-audit exited with code %d: %s", result.exit_code, result.stderr)
-            return ScanResults(
-                tool_name="cargo-audit",
-                execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[f"cargo-audit failed (exit {result.exit_code}): {result.stderr}"],
-            )
-
-        # Findings remain inside the VM at output_path.
-        # No data crosses the VM trust boundary.
+    if not Path(target_dir, "Cargo.lock").exists():
+        logger.info("No Cargo.lock found, skipping cargo-audit")
         return ScanResults(
             tool_name="cargo-audit",
-            execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
-            raw_output_path=output_path,
+            execution_time_seconds=0.0,
+            exit_code=0,
+            findings=[],
         )
 
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("cargo-audit execution failed")
-        return ScanResults(
-            tool_name="cargo-audit",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"cargo-audit execution error: {exc}"],
-        )
+    return run_scanner(
+        ScanSpec(
+            name="cargo-audit",
+            cmd=["cargo-audit", "audit", "--json"],
+            cwd=target_dir,
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_cargo_audit_output(raw: dict[str, Any]) -> list[Finding]:

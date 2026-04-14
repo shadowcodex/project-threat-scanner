@@ -8,25 +8,34 @@ only verifies the AI researcher's findings.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
+import time
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
-from thresher.agents.prompts import ADVERSARIAL_SYSTEM_PROMPT
+import yaml
+
+from thresher.agents._json import extract_json_object
+from thresher.agents._runner import AgentSpec, build_stop_hook_settings, run_agent
 from thresher.config import ScanConfig
-from thresher.vm.safe_io import safe_json_loads
-from thresher.vm.ssh import ssh_exec, ssh_write_file
 
 logger = logging.getLogger(__name__)
 
 
-def _shell_quote_key(value: str) -> str:
-    """Quote a string for safe inclusion in a shell command."""
-    return "'" + value.replace("'", "'\\''") + "'"
-
 TARGET_DIR = "/opt/target"
+
+_DEFINITION_PATH = Path(__file__).parent / "definitions" / "adversarial.yaml"
+
+
+def _load_definition() -> dict[str, Any]:
+    with open(_DEFINITION_PATH) as f:
+        return yaml.safe_load(f)
+
+
+_DEFINITION = _load_definition()
+ADVERSARIAL_SYSTEM_PROMPT: str = _DEFINITION["prompt"]
 
 # Risk threshold: findings at or above this score go through adversarial review
 RISK_THRESHOLD = 4
@@ -41,27 +50,27 @@ _SEVERITY_TO_RISK: dict[str, int] = {
 
 
 def _finding_risk_score(finding: dict[str, Any]) -> int:
-    """Derive a numeric risk score from a finding.
+    """Map a finding to a numeric risk score.
 
-    Supports both the legacy per-file schema (has ``risk_score`` int) and
-    the multi-analyst flat schema (has ``severity`` string + ``confidence``).
+    Severity remains the primary source of truth for this branch's
+    per-finding risk model. When severity is missing or invalid, fall back
+    to an explicit integer ``risk_score`` if present so we can tolerate
+    slightly different agent output shapes.
     """
-    # Legacy schema: explicit risk_score on the finding
-    explicit = finding.get("risk_score")
-    if isinstance(explicit, (int, float)):
-        return int(explicit)
-
-    # Multi-analyst schema: map severity string to numeric score
     severity = finding.get("severity", "").lower()
-    return _SEVERITY_TO_RISK.get(severity, 0)
+    mapped = _SEVERITY_TO_RISK.get(severity)
+    if mapped is not None:
+        return mapped
+
+    explicit = finding.get("risk_score")
+    if isinstance(explicit, int):
+        return explicit
+
+    return 0
 
 
 def _extract_high_risk(ai_findings: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract AI findings that meet the risk threshold for adversarial review.
-
-    Supports both the legacy per-file schema (nested findings with risk_score)
-    and the multi-analyst flat schema (severity + confidence per finding).
-    """
+    """Pull findings at or above the adversarial-review risk threshold."""
     high_risk: list[dict[str, Any]] = []
 
     findings_list = ai_findings.get("findings", [])
@@ -73,60 +82,27 @@ def _extract_high_risk(ai_findings: dict[str, Any]) -> list[dict[str, Any]]:
             continue
 
         risk_score = _finding_risk_score(finding)
-
         if risk_score < RISK_THRESHOLD:
             continue
 
-        # Multi-analyst flat schema: finding itself has title, description, etc.
-        if "title" in finding or "severity" in finding:
-            line_numbers = finding.get("line_numbers", [])
-            if isinstance(line_numbers, list):
-                line_numbers = sorted(
-                    ln for ln in line_numbers if isinstance(ln, int)
-                )
-            else:
-                line_numbers = []
-
-            high_risk.append(
-                {
-                    "file_path": finding.get("file_path", "N/A"),
-                    "line_numbers": line_numbers,
-                    "risk_score": risk_score,
-                    "title": finding.get("title", "AI finding")[:120],
-                    "description": finding.get("description", ""),
-                    "reasoning": finding.get("reasoning", ""),
-                    "source_analyst": finding.get("source_analyst", "unknown"),
-                    "source_analyst_number": finding.get("source_analyst_number", 0),
-                }
-            )
+        line_numbers = finding.get("line_numbers", [])
+        if isinstance(line_numbers, list):
+            line_numbers = sorted(ln for ln in line_numbers if isinstance(ln, int))
         else:
-            # Legacy per-file schema: nested sub-findings
-            sub_findings = finding.get("findings", [])
-            descriptions = []
-            line_nums: list[int] = []
-            for sf in sub_findings if isinstance(sub_findings, list) else []:
-                if isinstance(sf, dict):
-                    desc = sf.get("description", "")
-                    if desc:
-                        descriptions.append(desc)
-                    lines = sf.get("line_numbers", [])
-                    if isinstance(lines, list):
-                        line_nums.extend(
-                            ln for ln in lines if isinstance(ln, int)
-                        )
+            line_numbers = []
 
-            high_risk.append(
-                {
-                    "file_path": finding.get("file_path", "N/A"),
-                    "line_numbers": sorted(set(line_nums)),
-                    "risk_score": risk_score,
-                    "title": (
-                        descriptions[0][:120] if descriptions else "AI finding"
-                    ),
-                    "description": "\n".join(descriptions),
-                    "reasoning": finding.get("reasoning", ""),
-                }
-            )
+        high_risk.append(
+            {
+                "file_path": finding.get("file_path", "N/A"),
+                "line_numbers": line_numbers,
+                "risk_score": risk_score,
+                "title": finding.get("title", "AI finding")[:120],
+                "description": finding.get("description", ""),
+                "reasoning": finding.get("reasoning", ""),
+                "source_analyst": finding.get("source_analyst", "unknown"),
+                "source_analyst_number": finding.get("source_analyst_number", 0),
+            }
+        )
 
     return high_risk
 
@@ -134,6 +110,57 @@ def _extract_high_risk(ai_findings: dict[str, Any]) -> list[dict[str, Any]]:
 def _normalize_title(title: str) -> str:
     """Normalize a finding title for dedup grouping: lowercase, collapse whitespace."""
     return re.sub(r"\s+", " ", title.lower().strip())
+
+
+def _title_keyword_similarity(a: str, b: str) -> float:
+    """Compute Jaccard similarity between keyword sets of two titles.
+
+    Strips common English stop words to focus on meaningful terms.
+    Returns a float between 0.0 and 1.0.
+    """
+    stop = {
+        "a",
+        "an",
+        "the",
+        "in",
+        "on",
+        "of",
+        "for",
+        "to",
+        "and",
+        "or",
+        "is",
+        "are",
+        "was",
+        "were",
+        "with",
+        "from",
+        "by",
+        "at",
+        "it",
+        "its",
+        "this",
+        "that",
+    }
+    words_a = {w for w in a.lower().split() if w not in stop and len(w) > 2}
+    words_b = {w for w in b.lower().split() if w not in stop and len(w) > 2}
+    if not words_a or not words_b:
+        return 0.0
+    intersection = words_a & words_b
+    union = words_a | words_b
+    return len(intersection) / len(union)
+
+
+def _apply_verdict(finding: dict, verification_result: dict) -> None:
+    """Apply adversarial verification verdict to a finding."""
+    finding["adversarial_status"] = verification_result.get("verdict", "unknown")
+    finding["adversarial_reasoning"] = verification_result.get("reasoning", "")
+    finding["adversarial_confidence"] = verification_result.get("confidence", 0)
+    finding["benign_explanation"] = verification_result.get("benign_explanation_attempted", "")
+    revised = verification_result.get("revised_risk_score")
+    if revised is not None:
+        finding["original_risk_score"] = finding.get("risk_score", 0)
+        finding["risk_score"] = int(revised)
 
 
 def _deduplicate_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -167,9 +194,7 @@ def _deduplicate_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]
         # Shallow copy to avoid mutating the original dict's top-level keys
         kept = dict(best)
         kept["duplicate_count"] = len(group)
-        kept["source_analysts"] = sorted(
-            {f.get("source_analyst", "unknown") for f in group}
-        )
+        kept["source_analysts"] = sorted({f.get("source_analyst", "unknown") for f in group})
         deduped.append(kept)
 
     return deduped
@@ -230,59 +255,6 @@ def _build_adversarial_prompt(findings: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def _extract_result_from_stream(raw_output: str) -> str:
-    """Extract the final result text from stream-json output.
-
-    Handles both successful results and error results (e.g. max_turns).
-    For error results, attempts to extract the last assistant text content
-    as a fallback before giving up.
-    """
-    result_text = ""
-    is_error = False
-    error_reason = ""
-    last_assistant_text = ""
-
-    for line in raw_output.strip().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            if not isinstance(obj, dict):
-                continue
-
-            if obj.get("type") == "result":
-                result_text = obj.get("result", "")
-                is_error = obj.get("is_error", False)
-                if is_error:
-                    error_reason = obj.get("subtype", "unknown_error")
-            elif obj.get("type") == "assistant":
-                content = obj.get("message", {}).get("content", [])
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        last_assistant_text = block.get("text", "")
-            elif "result" in obj and "type" not in obj:
-                result_text = obj["result"]
-        except json.JSONDecodeError:
-            continue
-
-    if result_text:
-        return result_text
-
-    if is_error and last_assistant_text:
-        logger.warning(
-            "Adversarial agent ended with %s; using last assistant text as fallback",
-            error_reason,
-        )
-        return last_assistant_text
-
-    if is_error:
-        logger.warning("Adversarial agent ended with %s and produced no text output", error_reason)
-        return ""
-
-    return raw_output
-
-
 def _normalize_adversarial_schema(parsed: dict[str, Any]) -> dict[str, Any]:
     """Normalize analyst-forced schema to the expected adversarial schema.
 
@@ -300,25 +272,17 @@ def _normalize_adversarial_schema(parsed: dict[str, Any]) -> dict[str, Any]:
         return parsed
 
     # Only remap if findings items look like adversarial verdicts (have "verdict")
-    has_verdicts = any(
-        isinstance(f, dict) and "verdict" in f for f in findings
-    )
+    has_verdicts = any(isinstance(f, dict) and "verdict" in f for f in findings)
     if not has_verdicts:
         return parsed
 
     logger.info(
-        "Remapping analyst-forced schema to adversarial schema "
-        "(%d findings with verdicts)", len(findings),
+        "Remapping analyst-forced schema to adversarial schema (%d findings with verdicts)",
+        len(findings),
     )
 
-    confirmed = sum(
-        1 for f in findings
-        if isinstance(f, dict) and f.get("verdict") == "confirmed"
-    )
-    downgraded = sum(
-        1 for f in findings
-        if isinstance(f, dict) and f.get("verdict") == "downgraded"
-    )
+    confirmed = sum(1 for f in findings if isinstance(f, dict) and f.get("verdict") == "confirmed")
+    downgraded = sum(1 for f in findings if isinstance(f, dict) and f.get("verdict") == "downgraded")
 
     return {
         "results": findings,
@@ -329,64 +293,26 @@ def _normalize_adversarial_schema(parsed: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _parse_adversarial_output(raw_output: str) -> dict[str, Any]:
-    """Parse JSON from the adversarial agent output.
+def _parse_adversarial_output(text: str) -> dict[str, Any]:
+    """Parse the adversarial JSON object from the agent's result text.
 
     Handles both the native adversarial schema (``results``) and the
     analyst-forced schema (``findings`` with verdict fields), normalizing
     the latter to the expected adversarial format.
     """
-    if not raw_output or not raw_output.strip():
+    if not text or not text.strip():
         logger.warning("Empty output from adversarial agent")
         return {"results": [], "error": "Agent returned empty output"}
 
-    text = _extract_result_from_stream(raw_output).strip()
+    parsed = extract_json_object(text)
+    if parsed is not None:
+        return _normalize_adversarial_schema(parsed)
 
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict) and "result" in parsed:
-            inner = parsed["result"]
-            if isinstance(inner, str):
-                try:
-                    return _normalize_adversarial_schema(json.loads(inner))
-                except json.JSONDecodeError:
-                    pass
-            elif isinstance(inner, dict):
-                return _normalize_adversarial_schema(inner)
-        if isinstance(parsed, dict):
-            return _normalize_adversarial_schema(parsed)
-    except json.JSONDecodeError:
-        pass
-
-    # Try code block extraction
-    json_block = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
-    if json_block:
-        try:
-            parsed = json.loads(json_block.group(1))
-            if isinstance(parsed, dict):
-                return _normalize_adversarial_schema(parsed)
-        except json.JSONDecodeError:
-            pass
-
-    brace_start = text.find("{")
-    if brace_start >= 0:
-        depth = 0
-        for i in range(brace_start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = text[brace_start : i + 1]
-                    try:
-                        parsed = json.loads(candidate)
-                        if isinstance(parsed, dict):
-                            return _normalize_adversarial_schema(parsed)
-                    except json.JSONDecodeError:
-                        break
-
-    logger.warning("Could not parse adversarial output. Raw (first 500 chars): %s", text[:500])
-    return {"results": [], "error": f"Parse failed. Raw: {text[:500]}"}
+    logger.warning(
+        "Could not parse adversarial output. Result (first 500 chars): %s",
+        text[:500],
+    )
+    return {"results": [], "error": f"Parse failed. Result: {text[:500]}"}
 
 
 def _merge_adversarial_results(
@@ -412,30 +338,90 @@ def _merge_adversarial_results(
             list(verification.keys()),
         )
 
-    results_by_path: dict[str, dict[str, Any]] = {}
+    # Build lookup by (file_path, normalized_title) for robust matching.
+    # The adversarial agent may paraphrase or truncate titles.
+    results_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    results_by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for result in results:
         if isinstance(result, dict):
             fp = result.get("file_path", "")
+            title = _normalize_title(result.get("title", ""))
             if fp:
-                results_by_path[fp] = result
+                results_by_key[(fp, title)] = result
+                results_by_file[fp].append(result)
 
     findings_list = updated_findings.get("findings", [])
+
+    # Count findings per file_path for fallback matching
+    findings_by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for finding in findings_list:
+        if isinstance(finding, dict):
+            findings_by_file[finding.get("file_path", "")].append(finding)
+
+    # --- Pass 1: exact matches and single-file fallback ---
+    matched_results: set[int] = set()  # indices into `results` list
+    matched_findings: set[int] = set()  # indices into findings_list
+
+    for fi, finding in enumerate(findings_list):
         if not isinstance(finding, dict):
             continue
         fp = finding.get("file_path", "")
-        verification_result = results_by_path.get(fp)
+        title = _normalize_title(finding.get("title", ""))
+        verification_result = results_by_key.get((fp, title))
+
+        # Existing single-file fallback
+        if not verification_result and fp:
+            file_results = results_by_file.get(fp, [])
+            file_findings = findings_by_file.get(fp, [])
+            if len(file_results) == 1 and len(file_findings) == 1:
+                verification_result = file_results[0]
+
         if verification_result:
-            finding["adversarial_status"] = verification_result.get("verdict", "unknown")
-            finding["adversarial_reasoning"] = verification_result.get("reasoning", "")
-            finding["adversarial_confidence"] = verification_result.get("confidence", 0)
-            finding["benign_explanation"] = verification_result.get(
-                "benign_explanation_attempted", ""
+            _apply_verdict(finding, verification_result)
+            matched_findings.add(fi)
+            # Track consumed result by index
+            for ri, r in enumerate(results):
+                if r is verification_result:
+                    matched_results.add(ri)
+                    break
+
+    # --- Pass 2: fuzzy keyword matching for unmatched findings ---
+    unconsumed = [(ri, r) for ri, r in enumerate(results) if ri not in matched_results and isinstance(r, dict)]
+
+    for fi, finding in enumerate(findings_list):
+        if fi in matched_findings or not isinstance(finding, dict):
+            continue
+        fp = finding.get("file_path", "")
+        if not fp:
+            continue
+
+        best_score = 0.0
+        best_ri = -1
+        best_match = None
+        for ri, candidate in unconsumed:
+            if candidate.get("file_path", "") != fp:
+                continue
+            sim = _title_keyword_similarity(
+                finding.get("title", ""),
+                candidate.get("title", ""),
             )
-            revised = verification_result.get("revised_risk_score")
-            if revised is not None:
-                finding["original_risk_score"] = finding.get("risk_score", 0)
-                finding["risk_score"] = int(revised)
+            if sim > best_score:
+                best_score = sim
+                best_ri = ri
+                best_match = candidate
+
+        # Threshold 0.3: requires ~30% keyword overlap to match.
+        # Low enough to catch paraphrasing, high enough to avoid false positives.
+        if best_score >= 0.3 and best_match is not None:
+            _apply_verdict(finding, best_match)
+            matched_findings.add(fi)
+            unconsumed = [(ri, r) for ri, r in unconsumed if ri != best_ri]
+
+    # Tag unreviewed findings so downstream code can distinguish "not reviewed"
+    # from "reviewed but unmatched"
+    for finding in findings_list:
+        if isinstance(finding, dict) and "adversarial_status" not in finding:
+            finding["adversarial_status"] = "not_reviewed"
 
     updated_findings["adversarial_verification"] = {
         "summary": verification.get("verification_summary", ""),
@@ -447,99 +433,57 @@ def _merge_adversarial_results(
     return updated_findings
 
 
-def _read_analyst_findings_from_vm(vm_name: str) -> dict[str, Any]:
-    """Read all analyst findings JSON files from within the VM.
+def _merge_analyst_findings(analyst_findings_list: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge a list of per-analyst findings dicts into a combined structure.
 
-    Discovers analyst-*-findings.json files in /opt/scan-results/,
-    reads each one, and merges them into a combined findings structure.
     Each finding is annotated with which analyst produced it.
-
-    Returns the merged findings dict, or an empty findings structure
-    if no files can be read or parsed.
     """
     combined_findings: list[dict[str, Any]] = []
 
-    try:
-        # List all analyst findings files
-        result = ssh_exec(
-            vm_name,
-            "ls /opt/scan-results/analyst-*-findings.json 2>/dev/null",
-        )
-        if result.exit_code != 0 or not result.stdout.strip():
-            # Fall back to legacy single-analyst file
-            logger.info("No multi-analyst files found, trying legacy analyst-findings.json")
-            try:
-                result = ssh_exec(vm_name, "cat /opt/scan-results/analyst-findings.json")
-                if result.exit_code != 0:
-                    logger.warning("Could not read analyst findings from VM")
-                    return {"findings": []}
-                parsed = safe_json_loads(result.stdout, source="analyst-findings.json")
-                if parsed is None:
-                    return {"findings": []}
-                return parsed
-            except Exception:
-                logger.warning("Failed to read legacy analyst findings", exc_info=True)
-                return {"findings": []}
+    for analyst_result in analyst_findings_list:
+        if not isinstance(analyst_result, dict):
+            continue
+        analyst_name = analyst_result.get("analyst", "unknown")
+        analyst_number = analyst_result.get("analyst_number", 0)
 
-        files = result.stdout.strip().splitlines()
-        logger.info("Found %d analyst findings files to merge", len(files))
-
-        for filepath in files:
-            filepath = filepath.strip()
-            if not filepath:
-                continue
-            try:
-                file_result = ssh_exec(vm_name, f"cat {filepath}")
-                if file_result.exit_code != 0:
-                    logger.warning("Could not read %s", filepath)
-                    continue
-                parsed = safe_json_loads(
-                    file_result.stdout,
-                    source=filepath.rsplit("/", 1)[-1],
-                )
-                if parsed is None:
-                    continue
-
-                analyst_name = parsed.get("analyst", "unknown")
-                analyst_number = parsed.get("analyst_number", 0)
-
-                # Annotate each finding with the producing analyst
-                for finding in parsed.get("findings", []):
-                    if isinstance(finding, dict):
-                        finding["source_analyst"] = analyst_name
-                        finding["source_analyst_number"] = analyst_number
-                        combined_findings.append(finding)
-
-            except Exception:
-                logger.warning("Failed to read %s", filepath, exc_info=True)
-
-    except Exception:
-        logger.warning("Failed to list analyst findings from VM", exc_info=True)
-        return {"findings": []}
+        for finding in analyst_result.get("findings", []):
+            if isinstance(finding, dict):
+                finding = dict(finding)  # shallow copy
+                finding["source_analyst"] = analyst_name
+                finding["source_analyst_number"] = analyst_number
+                combined_findings.append(finding)
 
     return {"findings": combined_findings}
 
 
 def run_adversarial_verification(
-    vm_name: str,
     config: ScanConfig,
-) -> None:
+    analyst_findings: list[dict[str, Any]] | None = None,
+    target_dir: str = TARGET_DIR,
+    *,
+    output_dir: str | None = None,
+) -> dict[str, Any] | None:
     """Run the adversarial verification agent.
 
-    Reads analyst findings from /opt/scan-results/analyst-findings.json
-    inside the VM, filters to high-risk (score >= 4), invokes Claude Code
-    headless to attempt benign explanations, and writes merged results
-    back to the VM.
-
-    No structured findings data is returned to the host.
-
-    Has NO access to scanner results -- only verifies the AI researcher's findings.
+    Accepts analyst findings directly (from run_all_analysts), filters to
+    high-risk (score >= 4), invokes Claude Code headless to attempt benign
+    explanations, and returns merged results.
 
     Args:
-        vm_name: Name of the Lima VM.
         config: Scan configuration.
+        analyst_findings: List of per-analyst findings dicts from run_all_analysts.
+                          If None or empty, returns None (no verification needed).
+        target_dir: Directory to run the agent in.
+
+    Returns:
+        Merged findings dict with adversarial verification, or None if skipped.
     """
-    ai_findings = _read_analyst_findings_from_vm(vm_name)
+    if analyst_findings is None:
+        analyst_findings = []
+
+    # Merge per-analyst findings into a combined structure
+    ai_findings = _merge_analyst_findings(analyst_findings)
+
     high_risk = _extract_high_risk(ai_findings)
 
     # Deduplicate before adversarial review to avoid re-verifying the same
@@ -557,116 +501,65 @@ def run_adversarial_verification(
 
     if not high_risk:
         logger.info("No high-risk findings to verify — skipping adversarial agent")
-        # Still write the report explaining why verification was skipped
-        try:
-            num_findings = len(ai_findings.get("findings", []))
-            md = (
-                "# AI Security Researcher — Adversarial Verification\n\n"
-                f"**Status:** Skipped — no findings scored >= {RISK_THRESHOLD}/10\n\n"
-                f"The analyst identified {num_findings} finding(s), but all scored "
-                f"below the adversarial review threshold of {RISK_THRESHOLD}. "
-                "No adversarial verification was needed.\n"
-            )
-            ssh_write_file(vm_name, md, "/opt/scan-results/adversarial-findings.md")
-        except Exception:
-            logger.warning("Failed to save adversarial skip report", exc_info=True)
-        return
+        return None
 
-    logger.info(
-        "Starting adversarial verification of %d finding(s)", len(high_risk)
+    logger.info("Starting adversarial verification of %d finding(s)", len(high_risk))
+
+    try:
+        hooks_json: str | None = build_stop_hook_settings("adversarial")
+    except Exception:
+        logger.warning("Failed to resolve adversarial hook settings", exc_info=True)
+        hooks_json = None
+
+    spec = AgentSpec(
+        label="adversarial",
+        prompt=_build_adversarial_prompt(high_risk),
+        allowed_tools=list(_DEFINITION["tools"]),
+        max_turns=config.adversarial_max_turns or _DEFINITION["max_turns"],
+        timeout=2400,
+        cwd=target_dir,
+        hooks_settings_json=hooks_json,
     )
 
-    prompt = _build_adversarial_prompt(high_risk)
+    logger.info("Invoking adversarial agent")
+    start_time = time.monotonic()
+    agent_result = run_agent(spec, config)
+    duration = time.monotonic() - start_time
+    if agent_result.failed:
+        return None
 
-    try:
-        ssh_write_file(vm_name, prompt, "/tmp/adversarial_prompt.txt")
-    except Exception:
-        logger.warning(
-            "Failed to write adversarial prompt file to VM", exc_info=True
-        )
-        return
-
-    # Set up the stop hook to validate output schema before the agent
-    # is allowed to finish. Uses the adversarial-specific schema validator.
-    hook_settings = json.dumps({
-        "hooks": {
-            "Stop": [{
-                "hooks": [{
-                    "type": "command",
-                    "command": "/opt/thresher/bin/validate_adversarial_output.sh",
-                    "timeout": 30,
-                }]
-            }]
-        }
-    })
-    try:
-        ssh_exec(vm_name, f"mkdir -p {TARGET_DIR}/.claude")
-        ssh_write_file(
-            vm_name, hook_settings,
-            f"{TARGET_DIR}/.claude/settings.local.json",
-        )
-    except Exception:
-        logger.warning("Failed to write adversarial stop hook settings", exc_info=True)
-        # Continue without the hook — output parsing will still handle both schemas
-
-    model = config.model
-    max_turns = config.adversarial_max_turns or 20
-    claude_cmd = (
-        f"cd {TARGET_DIR} && "
-        f"claude -p \"$(cat /tmp/adversarial_prompt.txt)\" "
-        f"--model {model} "
-        f'--allowedTools "Read,Glob,Grep,WebSearch,WebFetch" '
-        f"--output-format stream-json "
-        f"--verbose "
-        f"--max-turns {max_turns}"
-    )
-
-    # Write credentials to tmpfs and read-and-delete.
-    env = config.ai_env()
-    if env:
-        exports = []
-        for key, value in env.items():
-            tmpfile = f"/dev/shm/.cred_{key}"
-            ssh_exec(
-                vm_name,
-                "printf '%s' " + _shell_quote_key(value) + f" > {tmpfile}"
-                f" && chmod 600 {tmpfile}",
-            )
-            exports.append(f"{key}=$(cat {tmpfile}); export {key}; rm -f {tmpfile}")
-        claude_cmd = "; ".join(exports) + "; " + claude_cmd
-
-    logger.info("Invoking adversarial agent in VM %s", vm_name)
-    try:
-        stdout, _stderr, _rc = ssh_exec(
-            vm_name, claude_cmd, timeout=2400,
-        )
-        raw_output = stdout
-    except Exception as exc:
-        logger.error("Adversarial agent invocation failed: %s", exc)
-        return
-
-    verification = _parse_adversarial_output(raw_output)
+    verification = _parse_adversarial_output(agent_result.result_text)
     logger.info(
-        "Adversarial verification completed: confirmed=%s, downgraded=%s",
+        "Adversarial verification completed in %.1fs: confirmed=%s, downgraded=%s",
+        duration,
         verification.get("confirmed_count", "?"),
         verification.get("downgraded_count", "?"),
     )
 
     merged = _merge_adversarial_results(ai_findings, verification)
+    merged["_benchmark"] = {
+        "duration": duration,
+        "turns": agent_result.num_turns,
+        "token_usage": agent_result.token_usage,
+        "model_usage": agent_result.model_usage_by_model,
+    }
 
-    # Write merged findings JSON back into the VM for the synthesis agent.
-    try:
-        merged_json = json.dumps(merged, indent=2, default=str)
-        ssh_write_file(vm_name, merged_json, "/opt/scan-results/adversarial-findings.json")
-    except Exception:
-        logger.warning("Failed to save adversarial findings JSON", exc_info=True)
+    # Persist a human-readable adversarial-verification.md report next to
+    # the main report. Without this the verification work is only visible
+    # in scan logs.
+    if output_dir:
+        try:
+            md_path = Path(output_dir) / "adversarial-verification.md"
+            md_path.parent.mkdir(parents=True, exist_ok=True)
+            md_path.write_text(_format_adversarial_markdown(verification, merged))
+            logger.info("Adversarial verification markdown written to %s", md_path)
+        except Exception:
+            logger.warning(
+                "Failed to write adversarial markdown report",
+                exc_info=True,
+            )
 
-    # Write adversarial findings as a readable markdown report
-    try:
-        md = _format_adversarial_markdown(verification, merged)
-        ssh_write_file(vm_name, md, "/opt/scan-results/adversarial-findings.md")
-    except Exception:
-        logger.warning("Failed to save adversarial findings markdown", exc_info=True)
+    return merged
 
 
 def _format_adversarial_markdown(

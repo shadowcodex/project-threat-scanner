@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec
 
 logger = logging.getLogger(__name__)
 
@@ -21,64 +20,16 @@ DEPS_DIR = "/opt/deps"
 RULES_PATH = "/opt/rules/semgrep/supply-chain.yaml"
 
 
-def run_semgrep_supply_chain(
-    vm_name: str, output_dir: str
-) -> ScanResults:
-    """Run Semgrep with custom supply-chain rules against /opt/deps/.
-
-    Uses the supply-chain.yaml rules file instead of ``--config auto``.
-    Findings remain inside the VM at the output path.
-
-    Args:
-        vm_name: Name of the Lima VM.
-        output_dir: Directory for scan artifacts inside the VM.
-
-    Returns:
-        ScanResults with execution metadata only (findings stay in VM).
-    """
-    output_path = f"{output_dir}/semgrep-supply-chain.json"
-    cmd = (
-        f"semgrep scan --config {RULES_PATH} --json {DEPS_DIR} "
-        f"> {output_path} 2>/dev/null"
+def run_semgrep_supply_chain(output_dir: str) -> ScanResults:
+    """Run Semgrep with custom supply-chain rules against /opt/deps/."""
+    return run_scanner(
+        ScanSpec(
+            name="semgrep-supply-chain",
+            cmd=["semgrep", "scan", "--config", RULES_PATH, "--json", DEPS_DIR],
+            timeout=600,
+        ),
+        output_dir=output_dir,
     )
-
-    start = time.monotonic()
-    try:
-        result = ssh_exec(vm_name, cmd, timeout=600)
-        elapsed = time.monotonic() - start
-
-        if result.exit_code not in (0, 1):
-            logger.warning(
-                "Semgrep supply-chain exited with code %d: %s",
-                result.exit_code,
-                result.stderr,
-            )
-            return ScanResults(
-                tool_name="semgrep-supply-chain",
-                execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[
-                    f"Semgrep supply-chain failed (exit {result.exit_code}): "
-                    f"{result.stderr}"
-                ],
-            )
-
-        return ScanResults(
-            tool_name="semgrep-supply-chain",
-            execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Semgrep supply-chain execution failed")
-        return ScanResults(
-            tool_name="semgrep-supply-chain",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Semgrep supply-chain execution error: {exc}"],
-        )
 
 
 def parse_semgrep_supply_chain_output(raw: dict[str, Any]) -> list[Finding]:
@@ -101,7 +52,7 @@ def parse_semgrep_supply_chain_output(raw: dict[str, Any]) -> list[Finding]:
         severity = _SEVERITY_MAP.get(severity_raw.upper(), "info")
 
         message = extra.get("message", "")
-        metadata = extra.get("metadata", {})
+        extra.get("metadata", {})
 
         file_path = hit.get("path")
         start_info = hit.get("start", {})

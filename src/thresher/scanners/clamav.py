@@ -3,59 +3,29 @@
 from __future__ import annotations
 
 import logging
-import time
-from typing import Any
 
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec
 
 logger = logging.getLogger(__name__)
 
 
-def run_clamav(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
+def run_clamav(target_dir: str, output_dir: str) -> ScanResults:
     """Run ClamAV to scan for known viruses and malware.
 
     Uses clamscan (on-demand scanner) rather than the daemon.
     Exit 0 = clean, 1 = virus found, 2 = error.
     """
-    output_path = f"{output_dir}/clamav.txt"
-    cmd = (
-        f"clamscan -r --infected --no-summary "
-        f"{target_dir} > {output_path} 2>/dev/null"
+    return run_scanner(
+        ScanSpec(
+            name="clamav",
+            cmd=["clamscan", "-r", "--infected", "--no-summary", target_dir],
+            timeout=600,
+            output_filename="clamav.txt",
+            sanitize_stdout=False,
+        ),
+        output_dir=output_dir,
     )
-
-    start = time.monotonic()
-    try:
-        result = ssh_exec(vm_name, cmd, timeout=600)
-        elapsed = time.monotonic() - start
-
-        if result.exit_code == 2:
-            logger.warning("ClamAV error (exit 2): %s", result.stderr)
-            return ScanResults(
-                tool_name="clamav",
-                execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[f"ClamAV error (exit 2): {result.stderr}"],
-            )
-
-        # Findings remain inside the VM at output_path.
-        # No data crosses the VM trust boundary.
-        return ScanResults(
-            tool_name="clamav",
-            execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("ClamAV execution failed")
-        return ScanResults(
-            tool_name="clamav",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"ClamAV execution error: {exc}"],
-        )
 
 
 def _parse_clamav_output(text: str) -> list[Finding]:

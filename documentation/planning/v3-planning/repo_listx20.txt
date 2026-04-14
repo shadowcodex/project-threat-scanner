@@ -1,0 +1,20 @@
+https://github.com/thresher-sh/thresher
+https://github.com/thresher-sh/limacode
+https://github.com/ibbybuilds/aegra
+https://github.com/langchain-ai/langchain
+https://github.com/langchain-ai/langgraph
+https://github.com/superradcompany/microsandbox
+https://github.com/BerriAI/litellm
+https://github.com/CrowdStrike/aidr-aiguard-lab
+https://github.com/fastapi/fastapi
+https://github.com/langfuse/langfuse
+https://github.com/langfuse/langfuse-python
+https://github.com/apache/hamilton
+https://github.com/pallets/jinja
+https://github.com/pallets/click
+https://github.com/Python-Markdown/markdown
+https://github.com/semgrep/semgrep
+x https://github.com/pycqa/bandit
+https://github.com/bridgecrewio/checkov
+https://github.com/DataDog/guarddog
+https://github.com/topydo/topydo

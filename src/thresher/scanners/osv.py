@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec
 
 logger = logging.getLogger(__name__)
 
@@ -20,56 +19,16 @@ _SEVERITY_MAP: dict[str, str] = {
 }
 
 
-def run_osv(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
-    """Run OSV-Scanner against the target directory.
-
-    OSV-Scanner exits with code 0 when no vulnerabilities are found and
-    code 1 when vulnerabilities are present.  Both are valid results.
-
-    Args:
-        vm_name: Name of the Lima VM.
-        target_dir: Path to the repository inside the VM.
-        output_dir: Directory for scan artifacts inside the VM.
-
-    Returns:
-        ScanResults with execution metadata only (findings stay in VM).
-    """
-    output_path = f"{output_dir}/osv.json"
-    cmd = f"osv-scanner scan --format json {target_dir} > {output_path} 2>/dev/null"
-
-    start = time.monotonic()
-    try:
-        result = ssh_exec(vm_name, cmd)
-        elapsed = time.monotonic() - start
-
-        # Exit 0 = clean, 1 = vulns found (expected).  Other codes are errors.
-        if result.exit_code not in (0, 1):
-            logger.warning("OSV-Scanner exited with code %d: %s", result.exit_code, result.stderr)
-            return ScanResults(
-                tool_name="osv-scanner",
-                execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[f"OSV-Scanner failed (exit {result.exit_code}): {result.stderr}"],
-            )
-
-        # Findings remain inside the VM at output_path.
-        # No data crosses the VM trust boundary.
-        return ScanResults(
-            tool_name="osv-scanner",
-            execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("OSV-Scanner execution failed")
-        return ScanResults(
-            tool_name="osv-scanner",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"OSV-Scanner execution error: {exc}"],
-        )
+def run_osv(target_dir: str, output_dir: str) -> ScanResults:
+    """Run OSV-Scanner against the target directory."""
+    return run_scanner(
+        ScanSpec(
+            name="osv",
+            cmd=["osv-scanner", "scan", "--format", "json", target_dir],
+            output_filename="osv.json",
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_osv_output(raw: dict[str, Any]) -> list[Finding]:
@@ -148,27 +107,36 @@ def _extract_severity(vuln: dict[str, Any]) -> str:
     if severity_str and severity_str.upper() in _SEVERITY_MAP:
         return _SEVERITY_MAP[severity_str.upper()]
 
-    # Check severity array (CVSS-based).
+    # Check severity array — prefer CVSS_V3, fall back to CVSS_V4.
+    v4_score = None
     for sev in vuln.get("severity", []):
         score_str = sev.get("score", "")
-        # CVSS vector strings contain the score; try to extract from type field.
         sev_type = sev.get("type", "")
         if sev_type == "CVSS_V3":
             score = _parse_cvss_from_vector(score_str)
             if score is not None:
                 return _score_to_severity(score)
+        elif sev_type == "CVSS_V4" and v4_score is None:
+            v4_score = _parse_cvss_from_vector(score_str)
+
+    if v4_score is not None:
+        return _score_to_severity(v4_score)
 
     return "medium"  # Default when severity is not provided.
 
 
 def _extract_cvss_score(vuln: dict[str, Any]) -> float | None:
     """Extract CVSS score from an OSV vulnerability entry."""
+    v4_score = None
     for sev in vuln.get("severity", []):
-        if sev.get("type") == "CVSS_V3":
+        sev_type = sev.get("type", "")
+        if sev_type == "CVSS_V3":
             score = _parse_cvss_from_vector(sev.get("score", ""))
             if score is not None:
                 return score
-    return None
+        elif sev_type == "CVSS_V4" and v4_score is None:
+            v4_score = _parse_cvss_from_vector(sev.get("score", ""))
+    return v4_score
 
 
 def _parse_cvss_from_vector(vector: str) -> float | None:

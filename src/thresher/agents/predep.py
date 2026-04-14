@@ -11,305 +11,111 @@ indicators (package.json, requirements.txt, etc.) don't capture:
 - go install / pip install commands in scripts
 - Vendored repos referenced by URL
 
-Outputs a structured JSON file that the scanner-deps container reads
-alongside the standard ecosystem detection.
+Outputs a structured dict with discovered hidden dependencies.
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import time
+from pathlib import Path
 from typing import Any
 
+import yaml
+
+from thresher.agents._json import extract_json_object
+from thresher.agents._runner import AgentSpec, build_stop_hook_settings, run_agent
 from thresher.config import ScanConfig
-from thresher.vm.safe_io import safe_json_loads
-from thresher.vm.ssh import ssh_exec, ssh_write_file
 
 logger = logging.getLogger(__name__)
 
 TARGET_DIR = "/opt/target"
 OUTPUT_PATH = "/opt/thresher/work/deps/hidden_deps.json"
 
-PREDEP_PROMPT = """\
-You are a dependency discovery agent. Your job is to scan a source code \
-repository and find ALL dependency sources that would NOT be detected by \
-standard package manager indicator files (package.json, requirements.txt, \
-Cargo.toml, go.mod, pyproject.toml, setup.py, Pipfile).
-
-Scan the repository thoroughly. Look at:
-- Makefiles, Rakefiles, Justfiles, Taskfiles
-- Shell scripts (.sh, .bash)
-- Dockerfiles and docker-compose files
-- CI/CD configs (.github/workflows/, .gitlab-ci.yml, Jenkinsfile, .circleci/)
-- .gitmodules (git submodule references)
-- Build scripts (build.sh, build.py, build.rs beyond normal cargo)
-- Install scripts
-- Any file that references external code sources
-
-For each hidden dependency you find, classify it:
-
-Types:
-- "git" — a git clone/checkout of an external repository
-- "npm" — an npm install/add of a package not in package.json
-- "pypi" — a pip install of a package not in requirements/pyproject
-- "cargo" — a cargo install not in Cargo.toml
-- "go" — a go install/get not in go.mod
-- "url" — a curl/wget/fetch of a tarball, binary, or script
-- "docker" — a Docker base image that may contain relevant dependencies
-- "submodule" — a git submodule reference
-
-Your output MUST be a single JSON object with this exact structure:
-```json
-{
-  "hidden_dependencies": [
-    {
-      "type": "git",
-      "source": "https://github.com/example/repo.git",
-      "found_in": "Makefile:42",
-      "context": "Cloned during build step to vendor a parser library",
-      "confidence": "high",
-      "risk": "low"
-    },
-    {
-      "type": "url",
-      "source": "https://example.com/tool-v1.2.tar.gz",
-      "found_in": "scripts/setup.sh:17",
-      "context": "Downloads and extracts a precompiled binary",
-      "confidence": "medium",
-      "risk": "high"
-    }
-  ],
-  "files_scanned": 42,
-  "summary": "Brief description of what you found"
-}
-```
-
-Rules:
-- confidence is "high", "medium", or "low" (how sure you are this is a real dependency)
-- risk is "high", "medium", or "low" — classify based on download risk:
-  - "high": precompiled binaries, tarballs from non-package-registry URLs, \
-executable downloads, curl-piped-to-bash patterns, unknown/suspicious domains
-  - "medium": git clones from non-major-hosting platforms, Docker images from \
-third-party registries
-  - "low": git clones from GitHub/GitLab/Bitbucket, standard package manager \
-installs, well-known CDN URLs
-- If you find NO hidden dependencies, return an empty list: "hidden_dependencies": []
-- Do NOT include dependencies that ARE in standard package files (package.json, requirements.txt, etc.)
-- DO include git submodules (.gitmodules entries)
-- DO include Docker FROM images if they reference non-standard base images
-- DO include any URL that downloads code, libraries, or tools
-- Be thorough — check EVERY file type listed above
-- Output ONLY the JSON object, nothing else
-"""
+_DEFINITION_PATH = Path(__file__).parent / "definitions" / "predep.yaml"
 
 
-def _shell_quote_key(value: str) -> str:
-    """Quote a string for safe inclusion in a shell command."""
-    return "'" + value.replace("'", "'\\''") + "'"
+def _load_definition() -> dict[str, Any]:
+    with open(_DEFINITION_PATH) as f:
+        return yaml.safe_load(f)
+
+
+_DEFINITION = _load_definition()
+PREDEP_PROMPT: str = _DEFINITION["prompt"]
 
 
 def run_predep_discovery(
-    vm_name: str,
     config: ScanConfig,
+    target_dir: str = TARGET_DIR,
 ) -> dict[str, Any]:
-    """Run the pre-dependency discovery agent inside the VM.
+    """Run the pre-dependency discovery agent locally via subprocess.
 
-    Scans the cloned source for hidden dependency sources and writes
-    the results to a JSON file that the scanner-deps container reads.
-
-    Args:
-        vm_name: Name of the Lima VM.
-        config: Scan configuration.
-
-    Returns:
-        Dict with discovered hidden dependencies.
+    Scans the cloned source for hidden dependency sources and returns
+    the results as a dict. A stop hook validates the output against the
+    hidden_dependencies schema before accepting it.
     """
     try:
-        ssh_write_file(vm_name, PREDEP_PROMPT, "/tmp/predep_prompt.txt")
+        hooks_json: str | None = build_stop_hook_settings("predep")
     except Exception:
-        logger.warning("Failed to write predep prompt to VM", exc_info=True)
-        return _empty_result("Failed to write prompt file")
+        logger.warning("Failed to resolve predep hook settings", exc_info=True)
+        # Continue without the hook — output validation still happens
+        # in _parse_predep_output, just without retry.
+        hooks_json = None
 
-    # Set up the stop hook to validate output schema before the agent
-    # is allowed to finish. The hook checks that the response contains
-    # valid JSON matching the hidden_dependencies schema.
-    hook_settings = json.dumps({
-        "hooks": {
-            "Stop": [{
-                "hooks": [{
-                    "type": "command",
-                    "command": "/opt/thresher/bin/validate_predep_output.sh",
-                    "timeout": 30,
-                }]
-            }]
-        }
-    })
-    try:
-        ssh_exec(vm_name, f"mkdir -p {TARGET_DIR}/.claude")
-        ssh_write_file(
-            vm_name, hook_settings,
-            f"{TARGET_DIR}/.claude/settings.local.json",
-        )
-    except Exception:
-        logger.warning("Failed to write stop hook settings", exc_info=True)
-        # Continue without the hook — output validation will still
-        # happen in _parse_predep_output, just without retry
-
-    model = config.model
-    claude_cmd = (
-        f"cd {TARGET_DIR} && "
-        f"claude -p \"$(cat /tmp/predep_prompt.txt)\" "
-        f"--model {model} "
-        f'--allowedTools "Read,Glob,Grep" '
-        f"--output-format stream-json "
-        f"--verbose "
-        f"--max-turns 15"
+    logger.info("Running pre-dependency discovery agent")
+    start_time = time.monotonic()
+    spec = AgentSpec(
+        label="predep",
+        prompt=_DEFINITION["prompt"],
+        allowed_tools=list(_DEFINITION["tools"]),
+        max_turns=config.predep_max_turns or _DEFINITION["max_turns"],
+        timeout=600,
+        cwd=target_dir,
+        hooks_settings_json=hooks_json,
     )
+    agent_result = run_agent(spec, config)
+    duration = time.monotonic() - start_time
+    if agent_result.failed:
+        return _empty_result(f"Agent invocation failed: {agent_result.error}")
 
-    # Write credentials to tmpfs and read-and-delete.
-    # Supports both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN.
-    env = config.ai_env()
-    if env:
-        exports = []
-        for key, value in env.items():
-            tmpfile = f"/dev/shm/.cred_{key}"
-            ssh_exec(
-                vm_name,
-                "printf '%s' " + _shell_quote_key(value) + f" > {tmpfile}"
-                f" && chmod 600 {tmpfile}",
-            )
-            exports.append(f"{key}=$(cat {tmpfile}); export {key}; rm -f {tmpfile}")
-        claude_cmd = "; ".join(exports) + "; " + claude_cmd
+    result = _parse_predep_output(agent_result.result_text)
+    result["_benchmark"] = {
+        "duration": duration,
+        "turns": agent_result.num_turns,
+        "token_usage": agent_result.token_usage,
+        "model_usage": agent_result.model_usage_by_model,
+    }
 
-    logger.info("Running pre-dependency discovery agent in VM %s", vm_name)
-    try:
-        stdout, _stderr, _rc = ssh_exec(
-            vm_name, claude_cmd, timeout=600,
-        )
-    except Exception as exc:
-        logger.error("Pre-dep discovery agent failed: %s", exc)
-        return _empty_result(f"Agent invocation failed: {exc}")
+    # Inject the high_risk_dep flag so downstream can know whether
+    # to download high-risk entries.
+    result["high_risk_dep"] = config.high_risk_dep
 
-    result = _parse_predep_output(stdout)
-
-    # Fallback: if parsing returned empty, check if the agent wrote
-    # the output file directly to the expected path in the VM.
-    if not result.get("hidden_dependencies"):
-        try:
-            fb_stdout, _fb_stderr, fb_rc = ssh_exec(
-                vm_name, f"cat {OUTPUT_PATH}", timeout=10,
-            )
-            if fb_rc == 0 and fb_stdout.strip():
-                fallback = safe_json_loads(fb_stdout, source="predep-fallback")
-                if (
-                    fallback is not None
-                    and isinstance(fallback, dict)
-                    and "hidden_dependencies" in fallback
-                ):
-                    logger.info(
-                        "Recovered predep output from fallback path %s",
-                        OUTPUT_PATH,
-                    )
-                    result = fallback
-        except (json.JSONDecodeError, OSError):
-            logger.debug("No fallback predep output at %s", OUTPUT_PATH)
-
-    # Write the result to the VM so the container can read it
-    try:
-        _, _, rc = ssh_exec(vm_name, f"mkdir -p $(dirname {OUTPUT_PATH})")
-        if rc != 0:
-            logger.warning(
-                "Cannot create output directory %s (exit %d) — "
-                "was the VM provisioned correctly?",
-                OUTPUT_PATH, rc,
-            )
-            return result
-        # Inject the high_risk_dep flag so the container knows whether
-        # to download high-risk entries
-        result["high_risk_dep"] = config.high_risk_dep
-        ssh_write_file(vm_name, json.dumps(result, indent=2), OUTPUT_PATH)
-
-        # Log summary with risk breakdown
-        deps = result.get("hidden_dependencies", [])
-        high_risk = [d for d in deps if d.get("risk") == "high"]
-        logger.info(
-            "Pre-dep discovery complete: %d hidden dependencies found "
-            "(%d high-risk, %s)",
-            len(deps),
-            len(high_risk),
-            "will download" if config.high_risk_dep else "will skip download",
-        )
-    except Exception:
-        logger.warning("Failed to write predep results to VM", exc_info=True)
+    deps = result.get("hidden_dependencies", [])
+    high_risk = [d for d in deps if d.get("risk") == "high"]
+    logger.info(
+        "Pre-dep discovery complete: %d hidden dependencies found (%d high-risk, %s)",
+        len(deps),
+        len(high_risk),
+        "will download" if config.high_risk_dep else "will skip download",
+    )
 
     return result
 
 
-def _parse_predep_output(raw_output: str) -> dict[str, Any]:
-    """Parse the agent's stream-json output to extract the JSON result.
+def _parse_predep_output(text: str) -> dict[str, Any]:
+    """Extract the predep JSON object from the agent's result text."""
+    parsed = extract_json_object(
+        text,
+        accept=lambda d: "hidden_dependencies" in d,
+    )
+    if parsed is not None:
+        return parsed
 
-    Uses the same extraction strategies as the analyst agent:
-    stream-json result field, markdown code blocks, bare JSON.
-    """
-    # Try stream-json format first (look for {"type":"result",...} lines)
-    for line in raw_output.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            if isinstance(obj, dict):
-                # stream-json wraps in {"type":"result","result":"..."}
-                if obj.get("type") == "result" and "result" in obj:
-                    inner = obj["result"]
-                    if isinstance(inner, str):
-                        try:
-                            parsed = json.loads(inner)
-                            if isinstance(parsed, dict) and "hidden_dependencies" in parsed:
-                                return parsed
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                    elif isinstance(inner, dict) and "hidden_dependencies" in inner:
-                        return inner
-                # Direct JSON object with our expected key
-                if "hidden_dependencies" in obj:
-                    return obj
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-    # Try extracting from markdown code block
-    import re
-    code_block = re.search(r"```(?:json)?\s*\n(.*?)\n```", raw_output, re.DOTALL)
-    if code_block:
-        try:
-            parsed = json.loads(code_block.group(1))
-            if isinstance(parsed, dict) and "hidden_dependencies" in parsed:
-                return parsed
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # Try finding any JSON object with our key
-    brace_start = raw_output.find("{")
-    if brace_start >= 0:
-        # Find matching closing brace
-        depth = 0
-        for i in range(brace_start, len(raw_output)):
-            if raw_output[i] == "{":
-                depth += 1
-            elif raw_output[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = raw_output[brace_start : i + 1]
-                    try:
-                        parsed = json.loads(candidate)
-                        if isinstance(parsed, dict) and "hidden_dependencies" in parsed:
-                            return parsed
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                    break
-
-    preview = raw_output[:500] if raw_output else "(empty)"
-    logger.warning("Could not parse predep agent output. Raw (first 500 chars): %s", preview)
+    preview = text[:500] if text else "(empty)"
+    logger.warning(
+        "Could not parse predep agent output. Result (first 500 chars): %s",
+        preview,
+    )
     return _empty_result("Failed to parse agent output")
 
 

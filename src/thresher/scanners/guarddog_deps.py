@@ -2,111 +2,88 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import tempfile
 import time
+from pathlib import Path
 from typing import Any
 
+from thresher.run import run as run_cmd
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec, ssh_write_file
 
 logger = logging.getLogger(__name__)
 
 DEPS_DIR = "/opt/deps"
 
-# Small helper script written into the VM to combine per-subdir guarddog
-# results into a single valid JSON array.  The previous approach of
-# ``echo '[]' > file && guarddog ... >> file`` produced malformed JSON
-# (``[]{"pkg": ...}{"pkg": ...}``).
-_COMBINE_SCRIPT = r'''#!/usr/bin/env python3
-"""Combine per-subdir GuardDog JSON results into one array."""
-import json
-import glob
-import sys
 
-output_path = sys.argv[1]
-results = []
-for f in sorted(glob.glob("/tmp/guarddog_sub_*.json")):
-    try:
-        with open(f) as fh:
-            data = json.load(fh)
-        if isinstance(data, list):
-            results.extend(data)
-        elif isinstance(data, dict):
-            results.append(data)
-    except Exception:
-        pass
-
-with open(output_path, "w") as fh:
-    json.dump(results, fh)
-'''
-
-
-def run_guarddog_deps(vm_name: str, output_dir: str) -> ScanResults:
+def run_guarddog_deps(output_dir: str) -> ScanResults:
     """Run GuardDog against dependency source in /opt/deps/.
 
     Iterates over ecosystem subdirectories in /opt/deps/ and scans each.
     Each subdir result is written to a separate temp file, then combined
-    into a single valid JSON array.  All findings remain inside the VM.
+    into a single valid JSON array.
 
     Args:
-        vm_name: Name of the Lima VM.
-        output_dir: Directory for scan artifacts inside the VM.
+        output_dir: Directory for scan artifacts.
 
     Returns:
-        ScanResults with execution metadata only (findings stay in VM).
+        ScanResults with execution metadata only.
     """
     output_path = f"{output_dir}/guarddog-deps.json"
-    combine_script_path = "/tmp/guarddog_combine.py"
-
-    # Scan each ecosystem subdir under /opt/deps/, writing each result to a
-    # separate temp file, then use a Python script to merge them into one
-    # valid JSON array.
-    scan_cmd = (
-        f"rm -f /tmp/guarddog_sub_*.json && "
-        f"_gd_idx=0 && "
-        f"for d in {DEPS_DIR}/*/; do "
-        f'  if [ -d "$d" ]; then '
-        f"    guarddog scan \"$d\" --output-format json "
-        f"    > /tmp/guarddog_sub_${{_gd_idx}}.json 2>/dev/null; "
-        f"    _gd_idx=$((_gd_idx + 1)); "
-        f"  fi; "
-        f"done && "
-        f"if [ \"$_gd_idx\" -eq 0 ]; then "
-        f"  guarddog scan {DEPS_DIR} --output-format json "
-        f"  > /tmp/guarddog_sub_0.json 2>/dev/null; "
-        f"fi && "
-        f"python3 {combine_script_path} {output_path} "
-        f"|| echo '[]' > {output_path}"
-    )
 
     start = time.monotonic()
     try:
-        # Write the combiner script into the VM first.
-        ssh_write_file(vm_name, _COMBINE_SCRIPT, combine_script_path)
+        deps_path = Path(DEPS_DIR)
+        subdirs = [str(d) for d in deps_path.iterdir() if d.is_dir()] if deps_path.is_dir() else []
 
-        result = ssh_exec(vm_name, scan_cmd, timeout=600)
+        if not subdirs:
+            # Fall back to scanning the whole deps dir
+            subdirs = [DEPS_DIR]
+
+        all_results: list[Any] = []
+        last_exit_code = 0
+
+        with tempfile.TemporaryDirectory():
+            for _idx, subdir in enumerate(sorted(subdirs)):
+                result = run_cmd(
+                    ["guarddog", "scan", subdir, "--output-format", "json"],
+                    label="guarddog-deps",
+                    timeout=600,
+                    ok_codes=(0, 1),
+                )
+                last_exit_code = result.returncode
+
+                # Parse and accumulate results
+                try:
+                    data = json.loads(result.stdout.decode(errors="replace"))
+                    if isinstance(data, list):
+                        all_results.extend(data)
+                    elif isinstance(data, dict):
+                        all_results.append(data)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+        # Write combined results
+        Path(output_path).write_text(json.dumps(all_results))
         elapsed = time.monotonic() - start
 
-        if result.exit_code not in (0, 1):
+        if last_exit_code not in (0, 1):
             logger.warning(
-                "GuardDog deps exited with code %d: %s",
-                result.exit_code,
-                result.stderr,
+                "GuardDog deps exited with code %d",
+                last_exit_code,
             )
             return ScanResults(
                 tool_name="guarddog-deps",
                 execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[
-                    f"GuardDog deps failed (exit {result.exit_code}): "
-                    f"{result.stderr}"
-                ],
+                exit_code=last_exit_code,
+                errors=[f"GuardDog deps failed (exit {last_exit_code})"],
             )
 
         return ScanResults(
             tool_name="guarddog-deps",
             execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
+            exit_code=last_exit_code,
             raw_output_path=output_path,
         )
 
@@ -121,8 +98,87 @@ def run_guarddog_deps(vm_name: str, output_dir: str) -> ScanResults:
         )
 
 
+# Top-level keys that GuardDog adds to its per-scan summary dict.
+# These are not package names, so the package-keyed scan must skip them.
+_GUARDDOG_META_KEYS = frozenset({"issues", "errors", "results"})
+
+
+def _is_explicit_finding_dict(item: dict[str, Any]) -> bool:
+    """True when a dict already looks like a single, formed finding entry
+    (the older list-of-findings format)."""
+    return "rule" in item or ("package" in item and "message" in item)
+
+
+def _parse_explicit_finding(item: dict[str, Any], idx: int) -> Finding:
+    rule_name = item.get("rule", item.get("name", f"unknown-{idx}"))
+    pkg_name = item.get("package", "unknown")
+    description = item.get("message", item.get("description", rule_name))
+    file_path = item.get("location", item.get("file"))
+    return Finding(
+        id=f"guarddog-deps-{pkg_name}-{rule_name}",
+        source_tool="guarddog-deps",
+        category="behavioral",
+        severity="high",
+        cvss_score=None,
+        cve_id=None,
+        title=f"Suspicious dep behavior: {rule_name} in {pkg_name}",
+        description=str(description),
+        file_path=str(file_path) if file_path else None,
+        line_number=None,
+        package_name=pkg_name,
+        package_version=None,
+        fix_version=None,
+        raw_output=item,
+    )
+
+
+def _parse_package_keyed_dict(raw: dict[str, Any]) -> list[Finding]:
+    """Walk a per-scan dict where top-level keys are package names mapping
+    to ``{"results": {rule: matches, ...}}`` entries.
+
+    Skips GuardDog's own meta keys (``issues``, ``errors``, ``results``)
+    so empty/clean scans yield zero findings instead of phantom entries.
+    """
+    findings: list[Finding] = []
+    for pkg_name, pkg_data in raw.items():
+        if pkg_name in _GUARDDOG_META_KEYS:
+            continue
+        if not isinstance(pkg_data, dict):
+            continue
+        results = pkg_data.get("results", {})
+        if not isinstance(results, dict):
+            continue
+        for rule_name, rule_matches in results.items():
+            if not rule_matches:
+                continue
+            findings.append(
+                Finding(
+                    id=f"guarddog-deps-{pkg_name}-{rule_name}",
+                    source_tool="guarddog-deps",
+                    category="behavioral",
+                    severity="high",
+                    cvss_score=None,
+                    cve_id=None,
+                    title=f"Suspicious dep behavior: {rule_name} in {pkg_name}",
+                    description=rule_name,
+                    file_path=None,
+                    line_number=None,
+                    package_name=pkg_name,
+                    package_version=None,
+                    fix_version=None,
+                    raw_output={"package": pkg_name, "rule": rule_name},
+                )
+            )
+    return findings
+
+
 def parse_guarddog_deps_output(raw: dict[str, Any] | list) -> list[Finding]:
     """Parse GuardDog deps JSON output into normalized Finding objects.
+
+    The harness combines per-subdir scan results into a list of dicts.
+    Each dict can be either:
+      1. an explicit finding entry (older list-of-findings format), or
+      2. a per-scan summary with package-keyed nested results.
 
     Args:
         raw: Parsed JSON from GuardDog output.
@@ -136,57 +192,13 @@ def parse_guarddog_deps_output(raw: dict[str, Any] | list) -> list[Finding]:
         for idx, item in enumerate(raw):
             if not isinstance(item, dict):
                 continue
-            rule_name = item.get("rule", item.get("name", f"unknown-{idx}"))
-            pkg_name = item.get("package", "unknown")
-            description = item.get("message", item.get("description", rule_name))
-            file_path = item.get("location", item.get("file"))
-
-            findings.append(
-                Finding(
-                    id=f"guarddog-deps-{pkg_name}-{rule_name}",
-                    source_tool="guarddog-deps",
-                    category="behavioral",
-                    severity="high",
-                    cvss_score=None,
-                    cve_id=None,
-                    title=f"Suspicious dep behavior: {rule_name} in {pkg_name}",
-                    description=str(description),
-                    file_path=str(file_path) if file_path else None,
-                    line_number=None,
-                    package_name=pkg_name,
-                    package_version=None,
-                    fix_version=None,
-                    raw_output=item,
-                )
-            )
+            if _is_explicit_finding_dict(item):
+                findings.append(_parse_explicit_finding(item, idx))
+            else:
+                findings.extend(_parse_package_keyed_dict(item))
         return findings
 
     if isinstance(raw, dict):
-        for pkg_name, pkg_data in raw.items():
-            if not isinstance(pkg_data, dict):
-                continue
-            results = pkg_data.get("results", {})
-            if isinstance(results, dict):
-                for rule_name, rule_matches in results.items():
-                    if not rule_matches:
-                        continue
-                    findings.append(
-                        Finding(
-                            id=f"guarddog-deps-{pkg_name}-{rule_name}",
-                            source_tool="guarddog-deps",
-                            category="behavioral",
-                            severity="high",
-                            cvss_score=None,
-                            cve_id=None,
-                            title=f"Suspicious dep behavior: {rule_name} in {pkg_name}",
-                            description=rule_name,
-                            file_path=None,
-                            line_number=None,
-                            package_name=pkg_name,
-                            package_version=None,
-                            fix_version=None,
-                            raw_output={"package": pkg_name, "rule": rule_name},
-                        )
-                    )
+        return _parse_package_keyed_dict(raw)
 
     return findings

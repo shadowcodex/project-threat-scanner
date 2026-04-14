@@ -14,10 +14,7 @@ logger = logging.getLogger(__name__)
 EPSS_API_URL = "https://api.first.org/data/v1/epss"
 
 # CISA KEV catalog URL
-KEV_CATALOG_URL = (
-    "https://www.cisa.gov/sites/default/files/feeds/"
-    "known_exploited_vulnerabilities.json"
-)
+KEV_CATALOG_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 
 # Maximum CVEs per EPSS batch request
 EPSS_BATCH_SIZE = 100
@@ -83,9 +80,7 @@ def load_kev_catalog() -> set[str]:
     Returns an empty set on failure.
     """
     try:
-        req = urllib.request.Request(
-            KEV_CATALOG_URL, headers={"Accept": "application/json"}
-        )
+        req = urllib.request.Request(KEV_CATALOG_URL, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
@@ -191,9 +186,7 @@ def enrich_findings(
         The same findings list with added enrichment fields.
     """
     # Collect all CVE IDs from findings
-    cve_ids = [
-        f["cve_id"] for f in findings if f.get("cve_id") and f["cve_id"].startswith("CVE-")
-    ]
+    cve_ids = [f["cve_id"] for f in findings if f.get("cve_id") and f["cve_id"].startswith("CVE-")]
 
     # Fetch EPSS scores (batched)
     epss = fetch_epss_scores(cve_ids)

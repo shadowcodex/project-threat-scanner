@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
+from thresher.scanners._runner import ScanSpec, run_scanner
 from thresher.scanners.models import Finding, ScanResults
-from thresher.vm.ssh import ssh_exec
 
 logger = logging.getLogger(__name__)
 
@@ -18,58 +17,16 @@ _SEVERITY_MAP: dict[str, str] = {
 }
 
 
-def run_semgrep(vm_name: str, target_dir: str, output_dir: str) -> ScanResults:
-    """Run Semgrep SAST scan with the auto config ruleset.
-
-    Semgrep exits with code 0 on success (findings or not), code 1 on
-    findings when ``--error`` is used (we do not use it), and other codes
-    for real errors.
-
-    Args:
-        vm_name: Name of the Lima VM.
-        target_dir: Path to the repository inside the VM.
-        output_dir: Directory for scan artifacts inside the VM.
-
-    Returns:
-        ScanResults with execution metadata only (findings stay in VM).
-    """
-    output_path = f"{output_dir}/semgrep.json"
-    cmd = f"semgrep scan --config auto --json {target_dir} > {output_path} 2>/dev/null"
-
-    start = time.monotonic()
-    try:
-        result = ssh_exec(vm_name, cmd, timeout=600)
-        elapsed = time.monotonic() - start
-
-        # Semgrep exit 0 = success, 1 = findings with --error (not used here).
-        # Other non-zero codes are real failures.
-        if result.exit_code not in (0, 1):
-            logger.warning("Semgrep exited with code %d: %s", result.exit_code, result.stderr)
-            return ScanResults(
-                tool_name="semgrep",
-                execution_time_seconds=elapsed,
-                exit_code=result.exit_code,
-                errors=[f"Semgrep failed (exit {result.exit_code}): {result.stderr}"],
-            )
-
-        # Findings remain inside the VM at output_path.
-        # No data crosses the VM trust boundary.
-        return ScanResults(
-            tool_name="semgrep",
-            execution_time_seconds=elapsed,
-            exit_code=result.exit_code,
-            raw_output_path=output_path,
-        )
-
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        logger.exception("Semgrep execution failed")
-        return ScanResults(
-            tool_name="semgrep",
-            execution_time_seconds=elapsed,
-            exit_code=-1,
-            errors=[f"Semgrep execution error: {exc}"],
-        )
+def run_semgrep(target_dir: str, output_dir: str) -> ScanResults:
+    """Run Semgrep SAST scan with the auto config ruleset."""
+    return run_scanner(
+        ScanSpec(
+            name="semgrep",
+            cmd=["semgrep", "scan", "--config", "auto", "--json", target_dir],
+            timeout=600,
+        ),
+        output_dir=output_dir,
+    )
 
 
 def parse_semgrep_output(raw: dict[str, Any]) -> list[Finding]:
@@ -101,10 +58,7 @@ def parse_semgrep_output(raw: dict[str, Any]) -> list[Finding]:
         # Some Semgrep rules include CWE or CVE references in metadata.
         cve_id = metadata.get("cve") or None
         cwe = metadata.get("cwe", [])
-        if isinstance(cwe, list):
-            cwe_str = ", ".join(cwe) if cwe else ""
-        else:
-            cwe_str = str(cwe)
+        cwe_str = (", ".join(cwe) if cwe else "") if isinstance(cwe, list) else str(cwe)
 
         title = f"{check_id}"
         if cwe_str:
