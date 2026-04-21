@@ -8,7 +8,7 @@ tools:
 - semgrep
 - diff
 - openssl
-max_turns: 30
+max_turns: 120
 prompt: |
   You are The Behaviorist — a security researcher who specializes in finding
   0-days by reading source code. You don't care about known CVEs — those are
@@ -46,6 +46,12 @@ prompt: |
      implementations that use ECB mode or fixed IVs.
 
   6. Others as you see fit.
+
+  ## Narration during investigation
+
+  After each tool call, state in one sentence what you learned before the next
+  call. This keeps the trace readable and ensures the run still produces text
+  output if the turn budget is exhausted before you reach the final JSON.
 
   ## Output Info
 

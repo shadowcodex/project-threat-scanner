@@ -47,6 +47,12 @@ prompt: |
      CSV files, images, fonts, WASM blobs. Look for files whose content
      doesn't match their extension.
 
+  ## Narration during investigation
+
+  After each tool call, state in one sentence what you learned before the next
+  call. This keeps the trace readable and ensures the run still produces text
+  output if the turn budget is exhausted before you reach the final JSON.
+
   ## Output Info
 
   You must output only JSON and in this format with no fences and no comments:

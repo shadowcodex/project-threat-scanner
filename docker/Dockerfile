@@ -39,6 +39,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libicu-dev \
     pkg-config \
     file \
+    # Declared by analyst personas (ast-grep/tree-sitter installed below).
+    # Missing binaries force tool_use retry loops that exhaust max_turns.
+    shellcheck \
+    binwalk \
+    libimage-exiftool-perl \
+    xxd \
+    cloc \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Node.js 20 ───────────────────────────────────────────────────────────────
@@ -131,6 +138,26 @@ RUN case "${TARGETARCH}" in \
 
 # ── Claude Code ──────────────────────────────────────────────────────────────
 RUN npm install -g @anthropic-ai/claude-code
+
+# ── tree-sitter CLI (declared by behaviorist + shadowcatcher personas) ──────
+RUN npm install -g tree-sitter-cli
+
+# ── ast-grep (declared by paranoid, behaviorist, pentester-*, shadowcatcher) ─
+ARG AST_GREP_VERSION=0.42.1
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        aarch64|arm64) target="aarch64-unknown-linux-gnu" ;; \
+        x86_64)        target="x86_64-unknown-linux-gnu"  ;; \
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL \
+        "https://github.com/ast-grep/ast-grep/releases/download/${AST_GREP_VERSION}/app-${target}.zip" \
+        -o /tmp/ast-grep.zip; \
+    unzip -j /tmp/ast-grep.zip "ast-grep" -d /usr/local/bin/; \
+    chmod +x /usr/local/bin/ast-grep; \
+    rm /tmp/ast-grep.zip; \
+    ast-grep --version
 
 # ── Non-root user ─────────────────────────────────────────────────────────────
 RUN userdel -r ubuntu 2>/dev/null || true \
