@@ -99,6 +99,7 @@ class ScanConfig:
     report_maker_max_turns: int | None = None  # Override report-maker agent max_turns (default 15)
     synthesize_max_turns: int | None = None  # Override synthesize agent max_turns (default 75)
     launch_mode: str = "lima"  # How the harness is launched: lima, docker, or direct
+    agent_runtime: str = "claude"  # Which CLI drives agents: claude or wksp
 
     @property
     def has_ai_credentials(self) -> bool:
@@ -121,7 +122,7 @@ class ScanConfig:
         errors = []
         if not self.repo_url and not self.local_path:
             errors.append("repo_url or local_path is required")
-        if not self.skip_ai and not self.has_ai_credentials:
+        if not self.skip_ai and self.agent_runtime != "wksp" and not self.has_ai_credentials:
             errors.append(
                 "No AI credentials found. Set ANTHROPIC_API_KEY, log in with `claude login`, or use --skip-ai"
             )
@@ -129,6 +130,8 @@ class ScanConfig:
             errors.append("depth must be >= 1")
         if self.launch_mode not in ("lima", "docker", "direct"):
             errors.append(f"launch_mode must be one of 'lima', 'docker', 'direct'; got {self.launch_mode!r}")
+        if self.agent_runtime not in ("claude", "wksp"):
+            errors.append(f"agent_runtime must be one of 'claude', 'wksp'; got {self.agent_runtime!r}")
         return errors
 
     def to_json(self) -> str:
@@ -152,6 +155,7 @@ class ScanConfig:
             "synthesize_max_turns": self.synthesize_max_turns,
             "local_path": self.local_path,
             "launch_mode": self.launch_mode,
+            "agent_runtime": self.agent_runtime,
             "vm": {
                 "cpus": self.vm.cpus,
                 "memory": self.vm.memory,
@@ -197,6 +201,7 @@ class ScanConfig:
             "synthesize_max_turns",
             "local_path",
             "launch_mode",
+            "agent_runtime",
         }
         filtered = {k: v for k, v in data.items() if k in known_fields}
         return cls(vm=vm, limits=limits, **filtered)
@@ -234,6 +239,8 @@ def load_config(
             config.log_dir = data["log_dir"]
         if "tmux" in data:
             config.tmux = data["tmux"]
+        if "agent_runtime" in data:
+            config.agent_runtime = data["agent_runtime"]
         vm_data = data.get("vm", {})
         if "cpus" in vm_data:
             config.vm.cpus = vm_data["cpus"]
