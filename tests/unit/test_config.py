@@ -494,3 +494,33 @@ class TestLaunchMode:
         assert config.launch_mode == "direct"
         assert config.skip_ai is True
         assert config.model == "opus"
+
+
+class TestAgentRuntime:
+    def test_scan_config_agent_runtime_default(self):
+        """agent_runtime defaults to 'claude' for backwards compatibility."""
+        config = ScanConfig()
+        assert config.agent_runtime == "claude"
+
+    def test_scan_config_agent_runtime_from_dict(self):
+        """agent_runtime can be set to 'wksp'."""
+        config = ScanConfig(agent_runtime="wksp")
+        assert config.agent_runtime == "wksp"
+
+    def test_scan_config_agent_runtime_validates(self):
+        """agent_runtime rejects values other than 'claude' or 'wksp'."""
+        config = ScanConfig(
+            repo_url="https://example.com/r",
+            skip_ai=True,
+            agent_runtime="bogus",
+        )
+        errors = config.validate()
+        assert any("agent_runtime" in e for e in errors)
+
+    def test_scan_config_roundtrips_through_json(self):
+        config = ScanConfig(
+            repo_url="https://github.com/test/repo",
+            agent_runtime="wksp",
+        )
+        restored = ScanConfig.from_json(config.to_json())
+        assert restored.agent_runtime == "wksp"
